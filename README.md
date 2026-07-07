@@ -1,0 +1,338 @@
+# QuanFormer
+
+## 简介
+
+QuanFormer 是一个基于 Python 的峰（特征）检测与定量方法，用于原始 profile 模式 LC-MS 数据。
+其核心思路是：结合 CNN 与 Transformer 训练目标检测网络，在 ROI 中识别真实峰（判断真峰/假峰）并定位峰边界以进行积分面积定量。
+本方法目前面向高分辨率 LC-MS 代谢组学数据开发，但也可应用于其他以峰为检测目标的场景。
+
+**支持的格式**: `.mzML`
+
+---
+
+## 操作系统兼容性
+
+| 操作系统 | CPU 模式 | GPU 模式 | 备注 |
+|----------|:--------:|:--------:|------|
+| Windows 10/11 | ✅ | ✅ NVIDIA CUDA | 推荐 |
+| Linux (Ubuntu 20.04+) | ✅ | ✅ NVIDIA CUDA | 推荐 |
+| macOS (Apple Silicon M1-M4) | ✅ | ⚠️ MPS 加速（实验性） | 见下方说明 |
+| macOS (Intel) | ✅ | ❌ | CPU only |
+
+> **GPU 说明**：
+> - **NVIDIA GPU**：使用 CUDA 加速，推理速度最快。
+> - **Apple Silicon (M1-M4)**：代码已支持 MPS 加速（`torch.backends.mps`），在 `predict_utils.py` 中会自动检测并使用。训练脚本也支持 `--device auto` 自动选择最佳设备。
+> - **AMD GPU (ROCm)**：PyTorch 官方未提供 Windows 上的 ROCm 支持；Linux 下可尝试 ROCm 版 PyTorch。
+> - **无 GPU**：自动回退 CPU 模式。
+
+---
+
+## 环境要求
+
+| 项目 | 要求 |
+|------|------|
+| Python | **3.10 ~ 3.11**（⚠️ 不要用 3.8 或 3.12+） |
+| PyTorch | 2.6.0（CUDA 12.4 或 CPU） |
+| Conda | 推荐 Miniconda / Anaconda |
+| R (可选) | 4.0+（仅 untargeted 模式需要） |
+
+> **Python 版本说明**：PyTorch 2.6.0 不支持 Python 3.8 及 3.12+。本项目的 `requirements.txt` 和 `environment.yml` 均以 Python 3.10/3.11 为准。
+
+---
+
+## 安装
+
+### 方式一：Conda（推荐 ✅）
+
+```bash
+# 1. 进入项目目录
+cd Quanformer/main_model
+
+# 2. 创建 conda 环境（Python 3.11）
+conda env create -f environment.yml
+conda activate quanformer
+
+# 3. 无 GPU 时替换为 CPU 版 PyTorch:
+# pip install --index-url https://download.pytorch.org/whl/cpu torch==2.6.0 torchvision==0.21.0
+
+# 4. 验证安装
+python -c "import torch; print('CUDA:', torch.cuda.is_available())"
+python -c "import torch; print('MPS:', torch.backends.mps.is_available())"
+python -c "import pymzml; print('pymzml OK')"
+```
+
+### 方式二：pip + venv
+
+```bash
+cd Quanformer/main_model
+
+# 创建虚拟环境
+python -3.11 -m venv venv
+
+# 激活
+# Windows:
+venv\Scripts\activate
+# Linux/macOS:
+source venv/bin/activate
+
+# 有 GPU (NVIDIA CUDA 12.4):
+pip install -r requirements.txt
+
+# 无 GPU:
+pip install -r requirements-cpu.txt
+
+# 验证
+python -c "import torch; print('OK')"
+```
+
+> **注意**：确保 `resources/checkpoint0029.pth` 模型文件存在且大于 300MB。
+> 若缺失可从 [模型权重](resources/checkpoint0029.pth) 下载。
+
+---
+
+## 不同平台注意事项
+
+### Windows
+- 路径中如有空格（如 `C:\Program Files\...`），untargeted 模式下调用 R 可能会失败。建议使用不含空格的路径。
+- `pycocotools` 在 Windows 上安装可能需要 Visual C++ Build Tools。如遇安装问题可尝试 `pip install pycocotools-windows`。
+
+### Linux (Ubuntu)
+- 无桌面环境的服务器运行 GUI 模式需要 X11 转发（`ssh -X`）或虚拟显示器（`xvfb`）。
+- Untargeted 模式需要安装 R 和 Bioconductor 包（见下方说明）。
+
+### macOS
+- **Apple Silicon (M1-M4)**：PyTorch 会自动使用 MPS 加速，推理性能优于纯 CPU。
+- **Intel Mac**：仅支持 CPU 模式。
+- 首次运行 GUI 可能需要允许未签名应用（「系统偏好设置 → 安全性与隐私」）。
+
+---
+
+## 使用
+
+### 1. 数据准备
+
+1. 在 `mzML` 文件夹中放入 `.mzML` 文件，并准备 `feature.csv`：
+   ```
+   ├── mzML
+      ├── BC1.mzML
+      ├── BC2.mzML
+      └── BC3.mzML
+   ```
+2. 若运行 targeted 定量，需准备以下格式的 `feature.csv`；否则跳过：
+   ```
+   feature.csv 包含以下列：
+   1. Compound Name（唯一编号）
+   2. mz
+   3. RT
+   ```
+
+### 2. 参数说明
+
+#### 通用参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--type` | `mzML` | 原始数据类型，目前仅支持 mzML |
+| `--ppm` | `10` | ROI 提取的 PPM 容差 |
+| `--source` | `resources/example/centroided` | 原始数据目录 |
+| `--feature` | `resources/example/centroided_feature.csv` | 特征文件路径。非空则使用 targeted 模式；留空则使用 untargeted 模式 |
+| `--images_path` | `resources/example/centroided_output` | ROI 输出路径 |
+| `--output` | `.../area.csv` | 结果输出路径 |
+| `--threshold` | `0.99` | 仅保留置信度 > 0.99 的预测 |
+| `--model` | `resources/checkpoint0029.pth` | 峰检测模型路径 |
+| `--roi_plot` | `True` | 是否绘制 ROI（首次运行须为 True） |
+| `--plot` | `True` | 是否绘制预测结果 |
+| `--num_classes` | `1` | 类别数 |
+| `--smooth_sigma` | `0` | 平滑 sigma 值 |
+| `--processes_number` | `1` | 并行进程数 |
+
+#### Untargeted 模式参数 (centWave 算法)
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--polarity` | `positive` | 极性 (positive/negative) |
+| `--minWidth` | `5` | 最小峰宽 |
+| `--maxWidth` | `50` | 最大峰宽 |
+| `--s2n` | `5` | 信噪比阈值 |
+| `--noise` | `100` | 噪声水平 |
+| `--mzDiff` | `0.005` | m/z 差异 |
+| `--prefilter` | `3` | 预过滤参数 |
+
+### 3. 命令行运行
+
+#### 3.1 Targeted 模式（Centroided 数据）
+
+```shell
+python main.py --ppm 10 \
+  --source resources/example/centroided \
+  --feature resources/example/centroided_feature.csv \
+  --images_path resources/example/centroided_output \
+  --output resources/example/centroided_output/area.csv \
+  --model resources/checkpoint0029.pth
+```
+
+#### 3.2 Targeted 模式（Profile 数据）
+
+示例数据下载：[Google Drive](https://drive.google.com/drive/folders/1JopRY0mgMxRGg45iXiBgbT-i7uG3M3tS?usp=drive_link)
+
+```shell
+python main.py --ppm 10 \
+  --source resources/example/profile \
+  --feature resources/example/profile_feature.csv \
+  --images_path resources/example/profile_output \
+  --output resources/example/profile_output/area.csv \
+  --model resources/checkpoint0029.pth
+```
+
+#### 3.3 安装 R（Untargeted 模式前置条件）
+
+- **R 版本**：4.4.2，xcms 版本：4.4.0
+- R 依赖包打包下载：[Google Drive](https://drive.google.com/file/d/1oEIANtyXztyRkKUcWpUh3jznCG2trHwv/view?usp=drive_link)
+
+首先检查 R 是否已安装：
+
+```shell
+R --version
+```
+
+**Ubuntu/Debian 安装 R**（详见 [CRAN](https://cran.r-project.org/bin/linux/ubuntu/)）：
+
+```shell
+sudo apt-get update
+sudo apt update -qq
+sudo apt install --no-install-recommends software-properties-common dirmngr
+wget -qO- https://cloud.r-project.org/bin/linux/ubuntu/marutter_pubkey.asc | sudo tee -a /etc/apt/trusted.gpg.d/cran_ubuntu_key.asc
+sudo add-apt-repository "deb https://cloud.r-project.org/bin/linux/ubuntu $(lsb_release -cs)-cran40/"
+sudo apt install --no-install-recommends r-base
+sudo apt-get install libxml2-dev
+```
+
+安装 R 包（详见 [Bioconductor](https://www.bioconductor.org/packages/release/bioc/html/xcms.html)）：
+
+```shell
+sudo R
+```
+
+在 R 控制台中执行：
+
+```r
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("xcms")
+BiocManager::install("MSnbase")
+install.packages("dplyr")
+```
+
+#### 3.4 Untargeted 模式
+
+`--feature` 参数留空或不设置即可进入 untargeted 模式：
+
+```shell
+python main.py --ppm 10 \
+  --source resources/example/centroided \
+  --polarity positive --minWidth 5 --maxWidth 50 \
+  --s2n 5 --noise 100 --mzDiff 0.005 --prefilter 3 \
+  --images_path resources/example/untargeted_centroided_output \
+  --output resources/example/untargeted_centroided_output/area.csv \
+  --model resources/checkpoint0029.pth \
+  --processes_number 2
+```
+
+> **注意**：若出现 `FileNotFoundError: ... xcms_peak_list.csv`，说明 R 环境或依赖包未正确安装，请回到步骤 3.3。
+
+### 4. GUI 模式
+
+#### 4.1 Targeted 模式
+
+```shell
+python GUI/ms-main.py
+```
+
+#### 4.2 Untargeted 模式
+
+由于 centWave 模块配置复杂且运行耗时，建议先在命令行中运行 ROI 搜索，再用 GUI 读取生成的 feature 表：
+
+```shell
+python getFeature.py --source resources/example/centroided \
+  --polarity positive --ppm 10 --minWidth 5 --maxWidth 50 \
+  --s2n 5 --noise 100 --mzDiff 0.015 --prefilter 3
+```
+
+![GUI](resources/GUI.png)
+
+---
+
+## 依赖版本说明
+
+核心依赖及其版本锁定策略：
+
+| 包 | 版本 | 说明 |
+|----|------|------|
+| `torch` | 2.6.0 | 含 CUDA 12.4 支持 |
+| `torchvision` | 0.21.0 | 与 torch 配套 |
+| `numpy` | 1.26.4 | 精确锁定，避免兼容问题 |
+| `pandas` | 2.2.2 | 精确锁定 |
+| `scipy` | 1.13.1 | 精确锁定 |
+| `pymzml` | 2.5.10 | 质谱数据解析 |
+| `pyside6` | ≥6.7.0, <6.8.0 | GUI 框架 |
+| `pycocotools` | ≥2.0.0 | COCO 评估工具 |
+| `matplotlib` | 3.9.2 | 绑图 |
+| `joblib` | 1.4.2 | 并行处理 |
+| `pillow` | ≥10.0.0, <11.0.0 | 图像处理 |
+
+> 若遇到依赖冲突，可将 `requirements.txt` 中 `==` 改为 `>=` 尝试。
+
+---
+
+## 训练模型（高级）
+
+```shell
+cd main_model
+python quanformer/main.py \
+  --coco_path data/peak-all \
+  --output_dir output \
+  --device auto
+```
+
+`--device auto` 会自动选择最佳可用设备（CUDA > MPS > CPU）。
+
+---
+
+## 常见问题 (FAQ)
+
+<details>
+<summary><b>Q: 运行时提示 CUDA 不可用？</b></summary>
+
+确认 NVIDIA 驱动已安装且 `nvidia-smi` 正常。运行：
+```shell
+python -c "import torch; print(torch.cuda.is_available())"
+```
+若返回 `False`，请重装对应 CUDA 版本的 PyTorch。
+</details>
+
+<details>
+<summary><b>Q: macOS M1/M2/M3/M4 上如何加速？</b></summary>
+
+代码会自动检测 MPS 并使用。验证：
+```shell
+python -c "import torch; print(torch.backends.mps.is_available())"
+```
+若返回 `True`，推理将自动使用 GPU 加速。
+</details>
+
+<details>
+<summary><b>Q: 无 GPU 可以运行吗？</b></summary>
+
+可以。使用 `requirements-cpu.txt` 安装 CPU 版 PyTorch，代码会自动使用 CPU。
+</details>
+
+<details>
+<summary><b>Q: Windows 上出现路径相关错误？</b></summary>
+
+尽量避免路径中包含**空格**和**中文字符**。推荐使用类似 `D:\data\quanformer\` 的简洁路径。
+</details>
+
+---
+
+更详细的模型训练说明参见：[User Guide.pdf](User%20Guide.pdf)。

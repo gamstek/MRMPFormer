@@ -1,0 +1,26 @@
+name: quanformer
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.11
+  - pip
+  - numpy=1.26.4
+  - pandas=2.2.2
+  - scipy=1.13.1
+  - matplotlib=3.9.2
+  - pillow>=10.0.0
+  - joblib=1.4.2
+  - packaging>=24.0
+  - pip:
+      - pymzml==2.5.10
+      - natsort==8.4.0
+      - pyside6>=6.7.0,<6.8.0
+      - pycocotools>=2.0.0
+      - seaborn>=0.13.0
+      # PyTorch with CUDA 12.4 - 如需 CPU 版请替换为:
+      # --index-url https://download.pytorch.org/whl/cpu
+      - torch==2.6.0
+      - torchvision==0.21.0
