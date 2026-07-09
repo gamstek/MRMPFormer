@@ -29,6 +29,9 @@ def extract_eic(path, df_info, ppm):
             if spec.ms_level == 1:
                 _mzs = spec.mz
                 _intensities = spec.i
+                if len(_mzs) == 0:          # 空 MS1 谱图 — 跳过
+                    flag = flag + 1
+                    continue
                 if spec.scan_time[1] == 'second':
                     matrix[0, i-flag] = spec.scan_time[0] / 60
                 else:

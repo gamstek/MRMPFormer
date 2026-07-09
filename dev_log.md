@@ -44,3 +44,5 @@ QuanFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 - 其他(PyTorch): 识别 RTX 5060 (sm_120) 与 PyTorch 2.6.0 不兼容 → 推荐升级到 2.11.0+cu128
 - 其他(性能诊断): 识别预测阶段 5 个瓶颈（batch_size=1 为首要）
 - 重构(requirements.txt): 整合 GPU/CPU 双文件为统一配置，按 GPU 架构分段 (RTX 50/40/30/20 系列 + CPU)，默认激活 RTX 50 系 cu128 配置
+- 文档生成(README.md): 新增项目目录结构章节；更新环境要求/安装/依赖表/FAQ 以反映统一 requirements
+- 调试(utils/extract_eic.py): 修复空 MS1 谱图 IndexError — 新增 `len(_mzs)==0` 守卫跳过空谱图

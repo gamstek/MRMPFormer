@@ -47,9 +47,9 @@
 | Q2 | 低 | P4 | UI 类名 `PeakFormer` vs 代码 `QuanFormer` 不一致 | `ms.ui` | 改名涉及 UI 文件和信号绑定，回归面大 |
 | Q3 | 低 | P4 | `quanformer` 和 `utils` 两个包职责重叠（各有 `plot_utils.py`） | 架构 | 合并包影响所有 import，需整体重构 |
 | Q4 | 低 | P3 | `import bisect` 实际正确，但极易与 `bisect` 混淆 | `plot_utils.py:7` | 单行改名，低风险 |
-| Q5 | 致命 | P0 | 空 MS1 谱图导致 IndexError 崩溃 | `extract_eic.py:38-40` | 加空值守卫，改动 2 行，几乎零风险 |
-
 ---
+
+
 
 ## 环境约束
 
@@ -83,3 +83,4 @@
 | 6 | GUI `listWidget_2` 切换样本时图片重复累积 | `GUI/ms-main.py:120` | 加 `clear()` + `blockSignals` |
 | 7 | README Python 版本 3.8 vs 实际 3.10/3.11 矛盾 | `README.md` | 统一为 3.10~3.11，全文汉化 |
 | 8 | PyTorch 2.6.0 不支持 RTX 5060 (sm_120) | — | 升级到 2.11.0+cu128 |
+| 9 | 空 MS1 谱图导致 IndexError 崩溃 | `utils/extract_eic.py:35-36` | 新增 `len(_mzs)==0` 守卫，跳过空谱图 |

@@ -10,6 +10,66 @@ QuanFormer 是一个基于 Python 的峰（特征）检测与定量方法，用�
 
 ---
 
+## 项目结构
+
+```
+Quanformer/
+├── README.md                         # 项目说明
+├── dev_log.md                        # 开发日志
+├── CLAUDE.md                         # 项目级 AI 辅助指令
+├── ion_zenith.py                     # 离子天顶角计算脚本
+├── data/                             # 测试数据
+│   ├── test1/                        # 测试集 1（含 mzML / label / train）
+│   └── test2/                        # 测试集 2
+├── docs/                             # 文档
+│   ├── PROJECT_PANORAMA.md           # 项目全景
+│   ├── Bugs.md                       # 已知问题
+│   ├── QuanFormer 跨平台部署指南.md   # 部署说明
+│   └── 项目方案设计模板.md            # 方案模板
+├── paper/                            # 论文 & 补充材料
+└── main_model/                       # ⭐ 核心代码
+    ├── requirements.txt              # 统一依赖（GPU/CPU 分段配置）
+    ├── environment.yml               # Conda 环境定义
+    ├── main.py                       # 命令行入口
+    ├── getFeature.py                 # Untargeted 特征提取
+    ├── GUI/                          # 图形界面
+    │   ├── ms-main.py                # GUI 入口
+    │   ├── ms.py                     # PySide6 UI 逻辑
+    │   └── ms.ui                     # Qt Designer 布局文件
+    ├── utils/                        # 工具模块
+    │   ├── predict_utils.py          # 推理核心（自动设备检测）
+    │   ├── extract_eic.py            # EIC 提取
+    │   ├── quantify.py               # 定量积分
+    │   ├── postprocess.py            # 后处理去重
+    │   ├── io_utils.py               # 跨版本模型加载
+    │   ├── detection_helper.py       # 检测辅助
+    │   ├── plot_utils.py             # 绑图工具
+    │   └── find_peaks.R              # R 脚本（untargeted 峰查找）
+    ├── quanformer/                   # DETR 模型包
+    │   ├── main.py                   # 训练入口
+    │   ├── engine.py                 # 训练/评估引擎
+    │   ├── hubconf.py                # Torch Hub 配置
+    │   ├── datasets/                 # COCO 数据集 & 数据增强
+    │   ├── models/                   # 模型定义
+    │   │   ├── backbone.py           # ResNet-50 backbone
+    │   │   ├── detr.py               # DETR 整体架构
+    │   │   ├── transformer.py        # Transformer 编解码器
+    │   │   ├── position_encoding.py  # 位置编码
+    │   │   ├── matcher.py            # 匈牙利匹配器
+    │   │   └── segmentation.py       # 分割头
+    │   └── util/                     # 模型工具（bbox / 可视化）
+    ├── resources/                    # 示例数据 & 模型权重
+    │   ├── checkpoint0029.pth        # 预训练权重 (>300MB)
+    │   └── example/                  # 示例 mzML / feature / 输出
+    └── workbooks/                    # 数据分析脚本
+        ├── boxplot&CV.ipynb          # 箱线图 & CV 分析
+        ├── calcQuantificationResults.py
+        ├── peakAlignment.py          # 峰对齐
+        └── ...
+```
+
+---
+
 ## 操作系统兼容性
 
 | 操作系统 | CPU 模式 | GPU 模式 | 备注 |
@@ -32,11 +92,19 @@ QuanFormer 是一个基于 Python 的峰（特征）检测与定量方法，用�
 | 项目 | 要求 |
 |------|------|
 | Python | **3.10 ~ 3.11**（⚠️ 不要用 3.8 或 3.12+） |
-| PyTorch | 2.6.0（CUDA 12.4 或 CPU） |
+| PyTorch | 按 GPU 型号选择对应版本（见下表） |
 | Conda | 推荐 Miniconda / Anaconda |
 | R (可选) | 4.0+（仅 untargeted 模式需要） |
 
-> **Python 版本说明**：PyTorch 2.6.0 不支持 Python 3.8 及 3.12+。本项目的 `requirements.txt` 和 `environment.yml` 均以 Python 3.10/3.11 为准。
+| GPU 系列 | CUDA | torch | torchvision |
+|----------|------|-------|-------------|
+| RTX 50 (5060–5090) | 12.8 (cu128) | ≥2.7.0 | ≥0.22.0 |
+| RTX 40 (4060–4090) | 12.4 (cu124) | 2.6.0 | 0.21.0 |
+| RTX 30 / 20 / GTX 16 | 12.4 (cu124) | 2.6.0 | 0.21.0 |
+| CPU / Apple Silicon | — | 2.6.0 | 0.21.0 |
+
+> **Python 版本说明**：PyTorch 不支持 Python 3.8 及 3.12+。本项目的 `requirements.txt` 和 `environment.yml` 均以 Python 3.10/3.11 为准。
+> `requirements.txt` 已内置上述所有配置段，按需取消注释即可。
 
 ---
 
@@ -75,11 +143,8 @@ venv\Scripts\activate
 # Linux/macOS:
 source venv/bin/activate
 
-# 有 GPU (NVIDIA CUDA 12.4):
+# 安装（RTX 50 系默认激活；其他 GPU 编辑 requirements.txt 切换对应段落后再执行）
 pip install -r requirements.txt
-
-# 无 GPU:
-pip install -r requirements-cpu.txt
 
 # 验证
 python -c "import torch; print('OK')"
@@ -269,8 +334,8 @@ python getFeature.py --source resources/example/centroided \
 
 | 包 | 版本 | 说明 |
 |----|------|------|
-| `torch` | 2.6.0 | 含 CUDA 12.4 支持 |
-| `torchvision` | 0.21.0 | 与 torch 配套 |
+| `torch` | 2.6.0 / ≥2.7.0 | 随 GPU 架构不同，见环境要求表 |
+| `torchvision` | 0.21.0 / ≥0.22.0 | 与 torch 版本配套 |
 | `numpy` | 1.26.4 | 精确锁定，避免兼容问题 |
 | `pandas` | 2.2.2 | 精确锁定 |
 | `scipy` | 1.13.1 | 精确锁定 |
@@ -324,7 +389,7 @@ python -c "import torch; print(torch.backends.mps.is_available())"
 <details>
 <summary><b>Q: 无 GPU 可以运行吗？</b></summary>
 
-可以。使用 `requirements-cpu.txt` 安装 CPU 版 PyTorch，代码会自动使用 CPU。
+可以。编辑 `requirements.txt`，取消 `CPU Only` 段注释（含 `--index-url .../cpu`），注释掉其他 GPU 段，再 `pip install -r requirements.txt` 即可。代码会自动使用 CPU。
 </details>
 
 <details>
@@ -336,3 +401,5 @@ python -c "import torch; print(torch.backends.mps.is_available())"
 ---
 
 更详细的模型训练说明参见：[User Guide.pdf](User%20Guide.pdf)。
+
+> 跨平台部署详情参见：[docs/QuanFormer 跨平台部署指南.md](docs/QuanFormer%20跨平台部署指南.md)。
