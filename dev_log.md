@@ -30,19 +30,16 @@ QuanFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 ### 2026-07-07
 
 - 需求分析(全局): 跨平台兼容性审阅 — 识别出 GPU 硬编码、路径分隔符、Python 版本矛盾等 15 个问题
-- 代码生成(utils/predict_utils.py): 新增 `_get_best_device()` 支持 CUDA/MPS/CPU 自动检测
-- 代码生成(utils/io_utils.py): 新增 `safe_torch_load()` 跨 PyTorch 版本兼容封装
-- 代码生成(quanformer/util/misc.py): 新增 `_get_dist_device()` + `safe_torch_load()`；替换 5 处 `device='cuda'` 硬编码
-- 调试(utils/postprocess.py): 修复 Unix 路径分隔符硬编码 → `os.path`
-- 调试(quanformer/main.py): `--device` 默认值 `cuda` → `auto` + 自动检测回退逻辑
-- 重构(GUI/ms-main.py): 全界面中文化 + QSS 简约主题 + 信号阻塞修复
-- 调试(GUI/ms-main.py): 修复 `listWidget_2` 切换样本时图片重复累积 bug
-- 文档生成(README.md): 全文汉化 + 跨平台兼容性矩阵 + 版本要求修正
-- 文档生成(DEPLOY.md): 同步更新部署说明
-- 文档生成(PROJECT_PANORAMA.md): 创建项目全景文档（目录树 + 数据流 + 依赖关系）
-- 文档生成(PROBLEM.md): 创建已知问题汇总（已修复 8 项 + 待修复 9 项）
-- 其他(PyTorch): 识别 RTX 5060 (sm_120) 与 PyTorch 2.6.0 不兼容 → 推荐升级到 2.11.0+cu128
-- 其他(性能诊断): 识别预测阶段 5 个瓶颈（batch_size=1 为首要）
-- 重构(requirements.txt): 整合 GPU/CPU 双文件为统一配置，按 GPU 架构分段 (RTX 50/40/30/20 系列 + CPU)，默认激活 RTX 50 系 cu128 配置
-- 文档生成(README.md): 新增项目目录结构章节；更新环境要求/安装/依赖表/FAQ 以反映统一 requirements
-- 调试(utils/extract_eic.py): 修复空 MS1 谱图 IndexError — 新增 `len(_mzs)==0` 守卫跳过空谱图
+- 代码生成(utils/): 新增 `_get_best_device()` (predict_utils) + `safe_torch_load()` (io_utils) + `_get_dist_device()` (misc)；替换 5 处 `device='cuda'` 硬编码为 auto
+- 调试(utils/): 修复 Unix 路径分隔符硬编码 (postprocess)；`--device` 默认值改为 auto (main)；空 MS1 谱图 IndexError 守卫 (extract_eic)
+- 重构(GUI/ms-main.py): 全界面中文化 + QSS 简约主题 + 信号阻塞修复 + 图片重复累积 bug 修复
+- 重构(requirements.txt): 整合 GPU/CPU 双文件为统一配置，按 GPU 架构分段 (RTX 50/40/30/20 + CPU)
+- 文档生成: README 全文汉化 + 跨平台兼容矩阵 + 目录结构；DEPLOY 部署说明同步；PROJECT_PANORAMA 全景文档；PROBLEM 已知问题汇总（已修复 8 项 + 待修复 9 项）
+- 其他: RTX 5060 (sm_120) 与 PyTorch 2.6.0 不兼容分析；预测阶段 5 个性能瓶颈识别
+
+### 2026-07-09
+
+- 文档生成(CLAUDE.md): 重写项目级 AI 指令文件，新增项目身份表、技术约束和代码修改记录规则
+- 代码生成(.github/skills/): 创建环境依赖检测与修复系统 —— check_env.py（全量检测/JSON/Markdown）、check_gui.py（tkinter 弹窗/一键修复）、fix_env.py（find-env/check/fix/verify）；配套 check-dependencies + fix-dependencies 两个 skill（精简后各 ~30 行）
+- 调试(check_env.py + check_gui.py): 修复 Windows GBK/UTF-8 编码错配导致中文乱码 — run_cmd() 统一 utf-8、GUI 改用 --outfile 绕过管道编码
+- 文档生成(README.md): 新增「环境检测」小节，一行命令启动 GUI 弹窗

@@ -110,6 +110,33 @@ Quanformer/
 
 ---
 
+## 环境检测（推荐先运行 ✅）
+
+在安装之前，运行以下命令即可**自动检测**当前机器是否满足所有依赖：
+
+```bash
+python .github/skills/check-dependencies/check_gui.py
+```
+
+弹窗会展示：
+
+| 检测内容 | 说明 |
+|----------|------|
+| Conda 环境 | 是否存在 `quanformer` 环境，支持一键创建 |
+| Python 版本 | 是否在 3.10 ~ 3.11 范围内 |
+| pip 包 | 逐一比对 `requirements.txt` 版本约束（`==` / `>=` / 范围） |
+| PyTorch / CUDA | 是否按 GPU 架构（RTX 50/40/30/20）正确安装 |
+| GPU | 型号 + 计算能力 |
+| 模型权重 | `checkpoint0029.pth` 是否存在且 >300MB |
+| R (可选) | Untargeted 模式所需运行时和包 |
+| 磁盘空间 | 是否 ≥ 2GB 可用 |
+
+如有缺失，弹窗支持**一键修复**（自动安装缺失的 pip 包到正确版本）。
+
+> 纯终端环境可用 `python .github/skills/check-dependencies/check_env.py` 输出文本报告。
+
+---
+
 ## 安装
 
 ### 方式一：Conda（推荐 ✅）
