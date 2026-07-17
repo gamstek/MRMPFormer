@@ -5,6 +5,31 @@
 
 ---
 
+## 26-07-15
+
+### 修改 #1
+- **改动人**: (待确认)
+- **类型**: 新增
+- **说明**: 创建 MRMPFormer SimCLR 对比学习完整框架；涉及 `MRMPFormer/` 目录下 8 个文件
+- **内容**: models/simclr.py（ResNet50 + ProjectionHead 2048→512→128）、utils/losses.py（NT-Xent/InfoNCE 对比损失）、augmentations.py（5 种 SimCLR 增强：RandomResizedCrop/HorizontalFlip/ColorJitter/Grayscale/GaussianBlur）、dataset.py（无标签图像数据集，返回增强对）、train.py（AdamW + CosineAnnealing + 梯度累积 + TensorBoard）、extract_features.py（推理提取 2048-d backbone 特征）、__init__.py × 2、data/images/ 目录
+- **理由**: 用户需要基于 ResNet50 构建特征提取器，选用对比学习方案以获取高质量通用特征
+
+### 修改 #2
+- **改动人**: (待确认)
+- **类型**: 文档生成
+- **说明**: 创建 MRMPFormer 设计文档；涉及 `docs/superpowers/specs/2026-07-15-mrmpformer-simclr-design.md`
+- **内容**: 包含目标、文件结构、模型架构、数据增强、损失函数、训练超参数、技术约束、自审清单
+- **理由**: brainstorming 流程要求设计文档
+
+### 修改 #3
+- **改动人**: (待确认)
+- **类型**: 文档生成
+- **说明**: 更新 dev_log.md 开发时间线；涉及 `dev_log.md`
+- **内容**: 新增 2026-07-15 条目（需求分析/代码生成/文档生成 3 条）
+- **理由**: CLAUDE.md 要求每次任务后更新开发日志
+
+---
+
 ## 26-07-09
 
 ### 修改 #1
