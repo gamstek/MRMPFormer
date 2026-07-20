@@ -49,3 +49,44 @@ class NT_XentLoss(nn.Module):
 
         loss = self.criterion(sim, labels)
         return loss / (2 * N)
+
+
+def alignment_loss(z_i, z_j):
+    """
+    Alignment: 正样本对之间的平均平方 L2 距离。
+
+    测量同一图像的两个增强视图在特征空间中多接近。值越小越好。
+    参考: Wang & Isola, "Understanding Contrastive Learning", ICML 2020.
+
+    Args:
+        z_i: (N, D) View A, L2 归一化
+        z_j: (N, D) View B, L2 归一化
+
+    Returns:
+        scalar, 范围 [0, 4]（L2 归一化向量差的平方最大为 4）
+    """
+    return (z_i - z_j).pow(2).sum(dim=1).mean()
+
+
+def uniformity_loss(z, t=2.0):
+    """
+    Uniformity: 特征在单位球面上分布的均匀程度。
+
+    测量所有特征向量之间高斯势的平均对数。值越小（越负）越均匀。
+    对于 128-d 单位球面，理论最优 ≈ -4.0。
+    参考: Wang & Isola, "Understanding Contrastive Learning", ICML 2020.
+
+    Args:
+        z: (N, D) L2 归一化特征向量
+        t: 高斯核带宽 (default: 2.0)
+
+    Returns:
+        scalar, 越负越好
+    """
+    N = z.shape[0]
+    if N <= 1:
+        return torch.tensor(0.0, device=z.device)
+    dist2 = torch.cdist(z, z, p=2).pow(2)           # (N, N) 平方欧氏距离
+    mask = ~torch.eye(N, dtype=torch.bool, device=z.device)
+    potentials = torch.exp(-t * dist2[mask])          # 排除对角线
+    return torch.log(potentials.mean())

@@ -5,6 +5,45 @@
 
 ---
 
+## 26-07-20
+
+### 修改 #1
+- **改动人**: (待确认)
+- **类型**: 新增
+- **说明**: 创建 MRMPFormer requirements.txt；涉及 `MRMPFormer/requirements.txt`
+- **内容**: 依据源码依赖追踪结果编写独立依赖配置，包含 numpy==1.26.4 / Pillow==10.4.0 / tqdm==4.68.4 / tensorboard>=2.14.0；PyTorch 按 GPU 架构分段 (RTX 50 cu128/RTX 40 cu124/RTX 30 cu124/RTX 20 cu124/CPU)，50 系默认启用
+- **理由**: MRMPFormer 作为独立子项目需要专属依赖文件，与 QuanFormer 的 model/requirements.txt 解耦（不引入 pymzml/pyside6/pycocotools 等无关包）
+
+### 修改 #2
+- **改动人**: (待确认)
+- **类型**: 文档生成
+- **说明**: 更新 dev_log.md 开发时间线；涉及 `dev_log.md`
+- **内容**: 新增 2026-07-20 条目（需求分析/代码生成 2 条）
+- **理由**: CLAUDE.md 要求每次任务后更新开发日志
+
+### 修改 #3
+- **改动人**: (待确认)
+- **类型**: 新增
+- **说明**: 实现早停策略 + tqdm 进度条美化；涉及 `MRMPFormer/utils/config.py`、`MRMPFormer/train.py`
+- **内容**: config.py 新增 early_stopping_enabled/patience/min_delta/min_epochs 四个字段；train.py 引入 tqdm 替换原 batch 级 print，进度条实时显示 running loss；训练循环内嵌早停逻辑 (相对改善率 < min_delta 累计 patience 次后触发)，保护期 100 epoch
+- **理由**: 分析阶段确定方案 A（相对改善率监控）为最优；用户要求美化进度条（原"每 20 batch 打印"体验差）
+
+### 修改 #4
+- **改动人**: (待确认)
+- **类型**: 新增
+- **说明**: 实现 backbone 分阶段冻结机制；涉及 `MRMPFormer/models/simclr.py`、`MRMPFormer/utils/config.py`、`MRMPFormer/train.py`
+- **内容**: simclr.py 拆分 backbone 为 stem/layer1~4/avgpool 独立属性（同时保留 Sequential 兼容），新增 freeze_stages 参数 (0~5) 和 _freeze_stages()/trainable_param_counts() 方法；config.py 新增 freeze_stages 配置（默认 0）；train.py 传入 freeze_stages 并输出"可训练 / 冻结"参数量统计
+- **理由**: 用户希望冻结前 3 个 stage（stem+layer1~3）仅训练 layer4+投影头——对色谱图小数据集的半迁移学习策略，减少过拟合、加速训练
+
+### 修改 #5
+- **改动人**: (待确认)
+- **类型**: 新增
+- **说明**: 实现评估体系（Alignment + Uniformity + Retrieval P@K）；涉及 `MRMPFormer/utils/losses.py`、`MRMPFormer/utils/__init__.py`、`MRMPFormer/utils/config.py`、`MRMPFormer/train.py`；新建 `MRMPFormer/evaluate.py`
+- **内容**: losses.py 新增 alignment_loss() (正样本对 MSE) 和 uniformity_loss() (高斯势对数)；__init__.py 导出；evaluate.py 支持单文件/双文件对比模式，含 infer_labels_from_paths() 从中文文件名自动推断化合物标签，compute_retrieval_metrics() (P@K) 和 compute_uniformity()，print_table() 格式化对比输出；train.py 新增 compute_alignment_uniformity() 每 N epoch 无梯度计算并写入 TensorBoard；config.py 新增 eval_metrics_every
+- **理由**: 上轮分析确定仅 loss 评价太局限，需要补充 probe-free 指标 (A+U) 和标签辅助指标 (P@K)；评估脚本用于基线 vs 训练后对比，为 SOTA 追踪提供量化依据
+
+---
+
 ## 26-07-15
 
 ### 修改 #1

@@ -49,3 +49,11 @@ QuanFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 - 需求分析(MRMPFormer/): 确定采用 SimCLR 对比学习方案（方案 B），ResNet50 骨干 + 128-d 投影头，自监督训练无需标注
 - 代码生成(MRMPFormer/): 创建完整 SimCLR 训练框架 —— simclr.py（ResNet50 + ProjectionHead）、losses.py（NT-Xent）、augmentations.py（5 种 SimCLR 增强）、dataset.py（无标签图像数据集）、train.py（CosineAnnealing + 梯度累积）、extract_features.py（推理输出 2048-d 特征）
 - 文档生成(docs/superpowers/specs/): 创建 2026-07-15-mrmpformer-simclr-design.md 设计文档
+
+### 2026-07-20
+
+- 需求分析(MRMPFormer/): 环境诊断 — 确认 MRMPFormer 复用 quanformer conda 环境 (PyTorch 2.11.0+cu128, RTX 5060)；从 8 个源文件追踪全部依赖链 (torch/torchvision/numpy/Pillow/tqdm/tensorboard)
+- 代码生成(MRMPFormer/): 创建 requirements.txt — 按 RTX 50/40/30/20 系 GPU + CPU 分段，50 系默认启用 cu128 索引（当前本机配置），其余注释备用；版本号与 quanformer 环境已验证版本对齐
+- 重构(MRMPFormer/train.py + utils/config.py): 实现早停策略 (方案 A: 相对改善率监控) — config 新增 4 个早停字段 (enabled/patience/min_delta/min_epochs)，train.py 训练循环内嵌早停检查逻辑；同时用 tqdm 替换原有 batch 级 print 进度显示，进度条实时展示 running loss
+- 重构(MRMPFormer/models/simclr.py + config.py + train.py): 实现 backbone 分阶段冻结 — simclr.py 拆分 Sequential 为 stem/layer1~4/avgpool 独立组件，新增 freeze_stages 参数 (0=全训练, 4=仅训练 layer4+投影头)；config.py 增加 freeze_stages 配置项；train.py 输出可训练/冻结参数量统计
+- 代码生成(MRMPFormer/): 实现评估体系 — losses.py 新增 alignment_loss() / uniformity_loss()（Wang & Isola 2020）；evaluate.py（Retrieval P@K + Uniformity 对比脚本，支持单文件/双文件模式，标签自动从中文文件名推断）；train.py 新增加 compute_alignment_uniformity()，每 N epoch 自动计算并写入 TensorBoard；config.py 增加 eval_metrics_every 配置
