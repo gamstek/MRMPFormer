@@ -37,7 +37,7 @@ QuanFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 - 文档生成: README 全文汉化 + 跨平台兼容矩阵 + 目录结构；DEPLOY 部署说明同步；PROJECT_PANORAMA 全景文档；PROBLEM 已知问题汇总（已修复 8 项 + 待修复 9 项）
 - 其他: RTX 5060 (sm_120) 与 PyTorch 2.6.0 不兼容分析；预测阶段 5 个性能瓶颈识别
 
-### 2026-07-08
+### 2026-07-23
 
 - 调试(predict_utils.py): 修复 P3 — plot_single_result 重复 Image.open() 读盘，改为 plot_results 主进程预加载图片传入（≤500 张阈值保护，超限回退路径模式）
 - 调试(predict_utils.py): 修复 P2 — plot_results 默认 n_jobs=-1 全核并行导致 I/O 争抢，改为 n_jobs=2
