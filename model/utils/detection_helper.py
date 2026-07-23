@@ -64,9 +64,7 @@ class PeakList():
                 "  R -e \"install.packages(c('BiocManager'))\"\n"
                 "  R -e \"BiocManager::install(c('MSnbase','xcms'))\""
             )
-        os.system("Rscript " + rscript + " " + path + " " + polarity + " " + str(
-            ppm) + " " + str(minWidth) + " " + str(maxWidth) + " " + fn + " " + str(noise) + " " + str(
-            s2n) + " " + str(prefilter) + " " + str(mzDiff) + " " + str(minFrac))
+        os.system(f'Rscript "{rscript}" "{path}" {polarity} {ppm} {minWidth} {maxWidth} "{fn}" {noise} {s2n} {prefilter} {mzDiff} {minFrac}')
         self.readXCMSPeakList(os.path.join(path, fn))
 
 

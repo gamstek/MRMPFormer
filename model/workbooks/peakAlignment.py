@@ -9,7 +9,7 @@ from scipy.ndimage import gaussian_filter1d
 with open('xic_list3.pkl', 'rb') as f:
     xic_list_load = pickle.load(f)
 
-areas = pd.read_csv("D:/example/output452/area.csv")
+areas = pd.read_csv("example/output452/area.csv")
 benchmark_rt = areas['Retention Time'].mean()
 
 rt_list = []
@@ -61,5 +61,5 @@ for i in range(int(len(rt_list) / 2)):
 
 plt.legend()
 # plt.show()
-plt.savefig('D:/example/output452/452.pdf')
+plt.savefig('example/output452/452.pdf')
 

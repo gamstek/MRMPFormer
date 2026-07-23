@@ -4,7 +4,7 @@ from matplotlib.ticker import ScalarFormatter
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib import pyplot as plt
 import os
-import bisect
+from bisect import bisect_left, bisect_right
 
 
 def smooth_xic(inten, rt, sigma):
@@ -21,8 +21,8 @@ def calc_coordinate(info, intensity, rt, k, windows_size=2):
     t_rt = info[k][2]
     lrt = t_rt - windows_size / 2 if t_rt - windows_size / 2 > 0 else 0
     rrt = t_rt + windows_size / 2 if t_rt + windows_size / 2 < rt[-1] else rt[-1]
-    lindex = bisect.bisect_left(rt, lrt)
-    rindex = bisect.bisect_right(rt, rrt)
+    lindex = bisect_left(rt, lrt)
+    rindex = bisect_right(rt, rrt)
     if rindex - lindex >= 0:
         calc_intensity = intensity[lindex:rindex]
         calc_rt = rt[lindex:rindex]

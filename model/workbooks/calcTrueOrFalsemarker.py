@@ -3,7 +3,8 @@ import pandas as pd
 from statsmodels.stats.multitest import multipletests
 
 # use = ['Fold change', 'p-value', 'fc','Compound Name']
-df = pd.read_csv(r"C:\Users\zhangzhengyi\Desktop\temp\1012\data\MZMINE3\TOF.csv", encoding_errors='ignore')
+# TODO: update to your own data path
+df = pd.read_csv("data/MZMINE3/TOF.csv", encoding_errors='ignore')
 
 from scipy import stats
 
@@ -55,7 +56,7 @@ reject, corrected_p_values, _, _ = multipletests(p_values, alpha=fdr_level, meth
 
 # 将校正后的 p 值添加到 DataFrame 中
 df['corrected_p_value'] = corrected_p_values
-df.to_csv(r"C:\Users\zhangzhengyi\Desktop\temp\1012\data\MZMINE3\TOF.csv", index=False)
+df.to_csv("data/MZMINE3/TOF.csv", index=False)
 
 
 df1 = df[((df['Fold change'] > 2) | (df['Fold change'] < 0.5)) & (df['p-value'] < 0.05)]

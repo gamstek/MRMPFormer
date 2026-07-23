@@ -29,9 +29,10 @@ numPeaksPerRound = 10 #number of peaks to label per active learning iteration
 numCores = -1 #number of processor cores to use
 numDataPoints = 3 #number of consequetive scans above noise to count as ROI
 
-peakFile='/home/zzy/data/raw-mzml/good-mzml/QE-feature-ex-1.csv'
-mzmlFolder='/home/zzy/data/raw-mzml/good-mzml/QE_TEST'
-weightsPath = '/home/zzy/peakdetective/example_data_for_colab/xcms_example_data/PeakDetectiveObject/'
+# TODO: update to your own data paths
+peakFile = ''
+mzmlFolder = ''
+weightsPath = ''
 integ = PeakDetective.PeakDetective(numCores=numCores, resolution=resolution)
 
 align=True

@@ -1,3 +1,4 @@
+import os
 import pickle
 from pathlib import Path
 from PIL import Image
@@ -54,16 +55,25 @@ def rescale_bboxes(out_bbox, size, device):
     return b
 
 
-def plot_results(results, n_jobs=-1):
-    # Using joblib to parallelize the processing of images
+def plot_results(results, n_jobs=2):
+    # Pre-load images in main process to avoid repeated disk I/O in workers.
+    # Fall back to path-based loading if there are too many images to avoid memory pressure.
+    if len(results) <= 500:
+        loaded = [(Image.open(path).convert('RGB'), prob, boxes, path) for path, prob, boxes in results]
+    else:
+        loaded = [(path, prob, boxes, path) for path, prob, boxes in results]
     Parallel(n_jobs=n_jobs)(
-        delayed(plot_single_result)(pil_img, prob, boxes, pil_img)
-        for pil_img, prob, boxes in results
+        delayed(plot_single_result)(im, prob, boxes,
+                                    os.path.splitext(path)[0] + '_detected' + os.path.splitext(path)[1])
+        for im, prob, boxes, path in loaded
     )
 
 
 def plot_single_result(pil_img, prob, boxes, save_path=""):
-    im = Image.open(pil_img).convert('RGB')
+    if isinstance(pil_img, str):
+        im = Image.open(pil_img).convert('RGB')
+    else:
+        im = pil_img  # PIL Image already in memory
     plt.figure(figsize=(4, 3))
     plt.imshow(im)
     ax = plt.gca()
@@ -92,7 +102,6 @@ def predict(images_path, model, transform, threshold=0.9):
             # mean-std normalize the input image (batch-size: 1)
             anImg = transform(im).to(device)
             im.close()
-            # data = nested_tensor_from_tensor_list([anImg])
 
             # propagate through the model
             outputs = model([anImg])

@@ -24,11 +24,11 @@ def calculate_metrics(df):
 
 if __name__ == '__main__':
     # Figure 3
-    path0 = r"C:\Users\zhangzhengyi\Desktop\temp\1012\data\FeatureQEShift.csv"
-    path1 = r"C:\Users\zhangzhengyi\Desktop\temp\1012\data\MZMINE3\QEShift_MZ.csv"
-    path2 = r"C:\Users\zhangzhengyi\Desktop\temp\1012\data\PEAKDETECTIVE\QEShift_PD.csv"
-    # path3 = r"C:\Users\zhangzhengyi\Desktop\temp\1012\data\peakonly\TOF_PO.csv"
-    path4 = r"C:\Users\zhangzhengyi\Desktop\temp\1012\data\Mine\QEShift\QEShift_QF.csv"
+    # TODO: update to your own data paths
+    path0 = "data/FeatureQEShift.csv"
+    path1 = "data/MZMINE3/QEShift_MZ.csv"
+    path2 = "data/PEAKDETECTIVE/QEShift_PD.csv"
+    path4 = "data/Mine/QEShift/QEShift_QF.csv"
 
     # mz, pd_df, po, qf = merge_results(path0, path1, path2, path3, path4)
     mz, pd_df, qf = merge_results(path0, path1, path2, path4)
