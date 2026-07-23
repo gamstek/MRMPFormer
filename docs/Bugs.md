@@ -84,3 +84,9 @@
 | 7 | README Python 版本 3.8 vs 实际 3.10/3.11 矛盾 | `README.md` | 统一为 3.10~3.11，全文汉化 |
 | 8 | PyTorch 2.6.0 不支持 RTX 5060 (sm_120) | — | 升级到 2.11.0+cu128 |
 | 9 | 空 MS1 谱图导致 IndexError 崩溃 | `utils/extract_eic.py:35-36` | 新增 `len(_mzs)==0` 守卫，跳过空谱图 |
+| 10 | `detection_helper.py` R 命令未加引号，Windows 路径含空格时失败 | `utils/detect_helper.py:67` | 路径参数加双引号包裹 |
+| 11 | `plot_single_result` 重复 `Image.open()` 读盘，数据已在 `predict()` 中读过  | `model/utils/predict_utils.py L57, L71` |plot_results 主进程预加载图片传入， plot_single_result 兼容 PIL Image|
+| 12 | `plot_results` 用 `joblib(n_jobs=-1)` 全核并行 matplotlib，进程过多导致 I/O 争抢 | `model/utils/predict_utils.py L57` |默认值改为 n_jobs=2|
+| 13 | `plot_results` 覆盖原 ROI 图（`save_path` = 原路径）| `model/utils/predict_utils.py L65-66` |输出加 _detected 后缀 + 阈值保护（≤500 张预加载）|
+| 14 | `import bisect` 实际正确，但极易与 `bisect` 混淆 | `model/utils/plot_utils.py L7, L24-25` |改为 from bisect import bisect_left, bisect_right|
+| 15 | `workbooks/` 中多个脚本包含原作者绝对路径硬编码 | `calcQuantificationResults.py L27-31、 peakdetective-application.py L32-34 、 calcTrueOrFalsemarker.py L6, L58 、 peakAlignment.py  L12, L64` |统一改为相对路径或空占位符|
