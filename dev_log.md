@@ -37,6 +37,15 @@ QuanFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 - 文档生成: README 全文汉化 + 跨平台兼容矩阵 + 目录结构；DEPLOY 部署说明同步；PROJECT_PANORAMA 全景文档；PROBLEM 已知问题汇总（已修复 8 项 + 待修复 9 项）
 - 其他: RTX 5060 (sm_120) 与 PyTorch 2.6.0 不兼容分析；预测阶段 5 个性能瓶颈识别
 
+### 2026-07-08
+
+- 调试(predict_utils.py): 修复 P3 — plot_single_result 重复 Image.open() 读盘，改为 plot_results 主进程预加载图片传入（≤500 张阈值保护，超限回退路径模式）
+- 调试(predict_utils.py): 修复 P2 — plot_results 默认 n_jobs=-1 全核并行导致 I/O 争抢，改为 n_jobs=2
+- 调试(predict_utils.py): 修复 P4 — plot_results 覆盖原 ROI 图，输出改为原文件名_detected 后缀
+- 调试(detection_helper.py): 修复 C1 — Rscript 命令路径参数未加引号，Windows 路径含空格时解析失败
+- 调试(plot_utils.py): 修复 Q4 — import bisect 易与标准库混淆，改为 from bisect import bisect_left, bisect_right
+- 调试(workbooks/): 修复 Q1 — calcQuantificationResults、peakdetective-application、calcTrueOrFalsemarker、peakAlignment 四个脚本硬编码原作者绝对路径，统一改为相对路径或空占位符
+
 ### 2026-07-09
 
 - 文档生成(CLAUDE.md): 重写项目级 AI 指令文件，新增项目身份表、技术约束和代码修改记录规则
