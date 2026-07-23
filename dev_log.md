@@ -37,14 +37,6 @@ QuanFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 - 文档生成: README 全文汉化 + 跨平台兼容矩阵 + 目录结构；DEPLOY 部署说明同步；PROJECT_PANORAMA 全景文档；PROBLEM 已知问题汇总（已修复 8 项 + 待修复 9 项）
 - 其他: RTX 5060 (sm_120) 与 PyTorch 2.6.0 不兼容分析；预测阶段 5 个性能瓶颈识别
 
-### 2026-07-23
-
-- 调试(predict_utils.py): 修复 P3 — plot_single_result 重复 Image.open() 读盘，改为 plot_results 主进程预加载图片传入（≤500 张阈值保护，超限回退路径模式）
-- 调试(predict_utils.py): 修复 P2 — plot_results 默认 n_jobs=-1 全核并行导致 I/O 争抢，改为 n_jobs=2
-- 调试(predict_utils.py): 修复 P4 — plot_results 覆盖原 ROI 图，输出改为原文件名_detected 后缀
-- 调试(detection_helper.py): 修复 C1 — Rscript 命令路径参数未加引号，Windows 路径含空格时解析失败
-- 调试(plot_utils.py): 修复 Q4 — import bisect 易与标准库混淆，改为 from bisect import bisect_left, bisect_right
-- 调试(workbooks/): 修复 Q1 — calcQuantificationResults、peakdetective-application、calcTrueOrFalsemarker、peakAlignment 四个脚本硬编码原作者绝对路径，统一改为相对路径或空占位符
 
 ### 2026-07-09
 
@@ -66,3 +58,12 @@ QuanFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 - 重构(MRMPFormer/train.py + utils/config.py): 实现早停策略 (方案 A: 相对改善率监控) — config 新增 4 个早停字段 (enabled/patience/min_delta/min_epochs)，train.py 训练循环内嵌早停检查逻辑；同时用 tqdm 替换原有 batch 级 print 进度显示，进度条实时展示 running loss
 - 重构(MRMPFormer/models/simclr.py + config.py + train.py): 实现 backbone 分阶段冻结 — simclr.py 拆分 Sequential 为 stem/layer1~4/avgpool 独立组件，新增 freeze_stages 参数 (0=全训练, 4=仅训练 layer4+投影头)；config.py 增加 freeze_stages 配置项；train.py 输出可训练/冻结参数量统计
 - 代码生成(MRMPFormer/): 实现评估体系 — losses.py 新增 alignment_loss() / uniformity_loss()（Wang & Isola 2020）；evaluate.py（Retrieval P@K + Uniformity 对比脚本，支持单文件/双文件模式，标签自动从中文文件名推断）；train.py 新增加 compute_alignment_uniformity()，每 N epoch 自动计算并写入 TensorBoard；config.py 增加 eval_metrics_every 配置
+
+### 2026-07-23
+
+- 调试(predict_utils.py): 修复 P3 — plot_single_result 重复 Image.open() 读盘，改为 plot_results 主进程预加载图片传入（≤500 张阈值保护，超限回退路径模式）
+- 调试(predict_utils.py): 修复 P2 — plot_results 默认 n_jobs=-1 全核并行导致 I/O 争抢，改为 n_jobs=2
+- 调试(predict_utils.py): 修复 P4 — plot_results 覆盖原 ROI 图，输出改为原文件名_detected 后缀
+- 调试(detection_helper.py): 修复 C1 — Rscript 命令路径参数未加引号，Windows 路径含空格时解析失败
+- 调试(plot_utils.py): 修复 Q4 — import bisect 易与标准库混淆，改为 from bisect import bisect_left, bisect_right
+- 调试(workbooks/): 修复 Q1 — calcQuantificationResults、peakdetective-application、calcTrueOrFalsemarker、peakAlignment 四个脚本硬编码原作者绝对路径，统一改为相对路径或空占位符
