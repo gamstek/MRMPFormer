@@ -21,18 +21,13 @@
 | # | 严重度 | 优先级 | 问题 | 文件 | 修复风险 |
 |---|:--:|:--:|------|------|------|
 | P1 | 致命 | P2 | batch_size=1 逐张推理，GPU 利用率约 15% | `predict_utils.py:83` | 改动推理管线，需验证输出一致性 |
-| P2 | 高 | P2 | `plot_results` 用 `joblib(n_jobs=-1)` 全核并行 matplotlib，进程过多导致 I/O 争抢 | `predict_utils.py:56` | 改 n_jobs 为固定值，低风险 |
-| P3 | 高 | P1 | `plot_single_result` 重复 `Image.open()` 读盘，数据已在 `predict()` 中读过 | `predict_utils.py:65` | 传内存数据替代路径，低风险 |
-| P4 | 中 | P3 | `plot_results` 覆盖原 ROI 图（`save_path` = 原路径） | `predict_utils.py:57` | 改输出路径，需确保下游兼容 |
 | P5 | 中 | P3 | 模型每次预测都重新 `torch.load`（GUI 内） | `predict_utils.py:101` | 加缓存需考虑显存生命周期 |
-
 ---
 
 ## 待修复 - 跨平台
 
 | # | 严重度 | 优先级 | 问题 | 文件 | 修复风险 |
 |---|:--:|:--:|------|------|------|
-| C1 | 高 | P1 | `detection_helper.py` R 命令未加引号，Windows 路径含空格时失败 | `utils/detect_helper.py:67` | 加引号即可，几乎零风险 |
 | C2 | 中 | P4 | `pycocotools` 在 Windows 需编译工具链（但 pip 已有 cp311 wheel） | `requirements.txt` | 仅文档/配置，无代码影响 |
 | C3 | 中 | P3 | Linux headless 服务器 `matplotlib` 可能无 GUI 后端 | `plot_utils.py` | 需后端自动检测，改动范围中等 |
 | C4 | 低 | P4 | macOS 首次启动 PySide6 需安全授权 | `GUI/ms-main.py` | 非代码问题，文档说明即可 |
@@ -43,10 +38,8 @@
 
 | # | 严重度 | 优先级 | 问题 | 文件 | 修复风险 |
 |---|:--:|:--:|------|------|------|
-| Q1 | 中 | P3 | `workbooks/` 中多个脚本包含原作者绝对路径硬编码 | `calcQuantificationResults.py:28` 等 | 改路径可能影响其他脚本引用 |
 | Q2 | 低 | P4 | UI 类名 `PeakFormer` vs 代码 `QuanFormer` 不一致 | `ms.ui` | 改名涉及 UI 文件和信号绑定，回归面大 |
 | Q3 | 低 | P4 | `quanformer` 和 `utils` 两个包职责重叠（各有 `plot_utils.py`） | 架构 | 合并包影响所有 import，需整体重构 |
-| Q4 | 低 | P3 | `import bisect` 实际正确，但极易与 `bisect` 混淆 | `plot_utils.py:7` | 单行改名，低风险 |
 ---
 
 
