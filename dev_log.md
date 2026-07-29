@@ -35,6 +35,7 @@ QuanFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 - 重构(tools/mzml/): 合并 mzml_export_one_chrom.py 与 read_mzml_one_group.py → 新建 chromatogram.py，统一 `list/show/export` 三个子命令
 - 代码生成(tools/mzml/chromatogram.py): 共享 inspect.py 依赖，修复旧脚本 import 路径 bug（mzml_inspect_to_csv→inspect）；统一色谱定位、编码处理、数据提取逻辑
 - 文档生成(tools/mzml/): 旧脚本加弃用标记，指向 chromatogram.py
+- 文档生成(README.md): 全面更新 —— 修正核心目录名 main_model→model、重写项目结构树（新增 gamstekpeaking/ms2mzml/tools/管线脚本）、版本号 v0.3.0→v2.0.0、新增「辅助工具」章节
 
 ### 2026-07-07
 

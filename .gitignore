@@ -2,10 +2,10 @@
 *.jpeg
 *.png
 *.mzML
+*.pth
 __pycache__/
 
 # MRMPFormer 训练产物
-MRMPFormer/checkpoints/
 MRMPFormer/logs/
 
 # Default ignored files
@@ -16,3 +16,4 @@ MRMPFormer/logs/
 # Datasource local storage ignored files
 /dataSources/
 /dataSources.local.xml
+

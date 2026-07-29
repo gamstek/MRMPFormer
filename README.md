@@ -1,73 +1,100 @@
-# QuanFormer
+# MRMPFormer
 
 ## 简介
 
-QuanFormer 是一个基于 Python 的峰（特征）检测与定量方法，用于原始 profile 模式 LC-MS 数据。
+MRMPFormer 是一个基于 Python 的峰（特征）检测与定量方法，用于原始 profile 模式 LC-MS 数据。
 其核心思路是：结合 CNN 与 Transformer 训练目标检测网络，在 ROI 中识别真实峰（判断真峰/假峰）并定位峰边界以进行积分面积定量。
 本方法目前面向高分辨率 LC-MS 代谢组学数据开发，但也可应用于其他以峰为检测目标的场景。
 
 **支持的格式**: `.mzML`
 
-当前开发版本：v0.3.0
+当前开发版本：v2.0.0
 
 ---
 
 ## 项目结构
 
 ```
-Quanformer/
+MRMPFormer/
 ├── README.md                         # 项目说明
 ├── dev_log.md                        # 开发日志
 ├── CLAUDE.md                         # 项目级 AI 辅助指令
 ├── ion_zenith.py                     # 离子天顶角计算脚本
 ├── data/                             # 测试数据
+│   ├── JiangNanU_Sample/             # 江南大学样本数据
 │   ├── test1/                        # 测试集 1（含 mzML / label / train）
-│   └── test2/                        # 测试集 2
+│   └── mzML/                         # 原始 mzML 数据
 ├── docs/                             # 文档
 │   ├── PROJECT_PANORAMA.md           # 项目全景
 │   ├── Bugs.md                       # 已知问题
+│   ├── Modified.md                   # 代码修改记录
 │   ├── QuanFormer 跨平台部署指南.md   # 部署说明
-│   └── 项目方案设计模板.md            # 方案模板
+│   └── superpowers/                  # 设计文档 & 规划
 ├── paper/                            # 论文 & 补充材料
-└── main_model/                       # ⭐ 核心代码
+├── processed/                        # 后处理脚本
+├── gamstekpeaking/                   # 🖥️ 下一代统一桌面应用 (Streamlit)
+│   ├── main.py                       # 应用入口
+│   ├── app.py                        # 应用配置
+│   ├── pages/                        # 功能页面（峰查找/预处理/设置）
+│   ├── workers/                      # 后台线程（转换/离子天顶角）
+│   └── engine/                       # 模型推理引擎（预留）
+├── ms2mzml/                          # 🔄 msdata → mzML 批量转换
+│   ├── ms2mzml.py                    # 批量转换主脚本
+│   ├── rename_cn.py                  # 中文文件名重命名
+│   └── bin/                          # msdata2mzml.exe 运行时
+└── model/                            # ⭐ 核心代码
     ├── requirements.txt              # 统一依赖（GPU/CPU 分段配置）
     ├── environment.yml               # Conda 环境定义
-    ├── main.py                       # 命令行入口
+    ├── main.py                       # 命令行推理入口
     ├── getFeature.py                 # Untargeted 特征提取
-    ├── GUI/                          # 图形界面
-    │   ├── ms-main.py                # GUI 入口
-    │   ├── ms.py                     # PySide6 UI 逻辑
-    │   └── ms.ui                     # Qt Designer 布局文件
+    ├── run_unified_peak_workflow.py  # 统一峰检测管线
+    ├── run_two_round_detection.py    # 两轮检测
+    ├── mzml_box_outside_snr_pipeline.py  # SNR 管线
+    ├── newtest.py                    # 新版测试入口
+    ├── newtest_valley_split.py       # 谷点分割
+    ├── integrate_prediction.py       # 积分预测
+    ├── build_standard_curves.py      # 标准曲线构建
+    ├── calc_r2_integrate_prediction.py  # R² 计算
+    ├── testXIC.py                    # XIC 测试
     ├── utils/                        # 工具模块
     │   ├── predict_utils.py          # 推理核心（自动设备检测）
     │   ├── extract_eic.py            # EIC 提取
     │   ├── quantify.py               # 定量积分
+    │   ├── quantify_v2.py            # 定量积分 v2
+    │   ├── quantify_correct.py       # 定量校正
     │   ├── postprocess.py            # 后处理去重
     │   ├── io_utils.py               # 跨版本模型加载
-    │   ├── detection_helper.py       # 检测辅助
     │   ├── plot_utils.py             # 绑图工具
+    │   ├── adaptive_integration.py   # 自适应积分
+    │   ├── integrate_peak_adaptive.py # 自适应峰积分
+    │   ├── xic_peak_utils.py         # XIC 峰工具
+    │   ├── roi_quality_params.py     # ROI 质量参数
+    │   ├── roi_rt_mapping.py         # ROI-RT 映射
+    │   ├── mzml_load.py              # mzML 加载
+    │   ├── mzml_chromatogram_ids.py  # 色谱图 ID
+    │   ├── torch_device.py           # 设备选择
     │   └── find_peaks.R              # R 脚本（untargeted 峰查找）
     ├── quanformer/                   # DETR 模型包
     │   ├── main.py                   # 训练入口
     │   ├── engine.py                 # 训练/评估引擎
     │   ├── hubconf.py                # Torch Hub 配置
     │   ├── datasets/                 # COCO 数据集 & 数据增强
-    │   ├── models/                   # 模型定义
-    │   │   ├── backbone.py           # ResNet-50 backbone
-    │   │   ├── detr.py               # DETR 整体架构
-    │   │   ├── transformer.py        # Transformer 编解码器
-    │   │   ├── position_encoding.py  # 位置编码
-    │   │   ├── matcher.py            # 匈牙利匹配器
-    │   │   └── segmentation.py       # 分割头
-    │   └── util/                     # 模型工具（bbox / 可视化）
-    ├── resources/                    # 示例数据 & 模型权重
-    │   ├── checkpoint0029.pth        # 预训练权重 (>300MB)
-    │   └── example/                  # 示例 mzML / feature / 输出
-    └── workbooks/                    # 数据分析脚本
-        ├── boxplot&CV.ipynb          # 箱线图 & CV 分析
-        ├── calcQuantificationResults.py
-        ├── peakAlignment.py          # 峰对齐
-        └── ...
+    │   ├── models/                   # 模型定义 (backbone/detr/transformer...)
+    │   └── util/                     # 模型工具
+    ├── tools/                        # 🔧 辅助工具集
+    │   ├── batch/                    # 批量处理（reprocess / JSON批次）
+    │   ├── mzml/                     # mzML 工具（chromatogram / inspect）
+    │   ├── benchmark/                # 性能基准测试
+    │   ├── diagnostics/              # 诊断工具
+    │   ├── experiments/              # 实验脚本
+    │   ├── visualization/            # 可视化工具
+    │   ├── tests/                    # 测试脚本
+    │   ├── archive/                  # 归档
+    │   ├── legacy/                   # 旧版代码
+    │   └── maintenance/              # 维护脚本
+    └── resources/                    # 示例数据 & 模型权重
+        ├── checkpoint0029.pth        # 预训练权重 (>300MB)
+        └── example/                  # 示例 mzML / feature / 输出
 ```
 
 ---
@@ -142,8 +169,8 @@ python .github/skills/check-dependencies/check_gui.py
 ### 方式一：Conda（推荐 ✅）
 
 ```bash
-# 1. 进入项目目录
-cd Quanformer/main_model
+# 1. 进入核心代码目录
+cd model
 
 # 2. 创建 conda 环境（Python 3.11）
 conda env create -f environment.yml
@@ -161,7 +188,7 @@ python -c "import pymzml; print('pymzml OK')"
 ### 方式二：pip + venv
 
 ```bash
-cd Quanformer/main_model
+cd model
 
 # 创建虚拟环境
 python -3.11 -m venv venv
@@ -357,6 +384,65 @@ python getFeature.py --source resources/example/centroided \
 
 ---
 
+## 辅助工具
+
+### 🖥️ GamSTekPeaking — 下一代统一桌面应用
+
+基于 Streamlit 的质谱代谢组学全流程工作台，提供现代化的 Web UI：
+
+```bash
+cd gamstekpeaking
+pip install -r requirements.txt
+python main.py
+```
+
+| 模块 | 说明 |
+|------|------|
+| `pages/peak_finding.py` | 峰查找与检测 |
+| `pages/preprocessing.py` | 数据预处理 |
+| `pages/settings.py` | 应用设置 |
+| `workers/converter.py` | msdata → mzML 后台转换 |
+| `workers/ion_zenith.py` | 离子天顶角计算 |
+| `engine/` | 模型推理引擎（预留） |
+
+### 🔄 ms2mzml — 批量格式转换
+
+将厂商原始 `.msdata` 文件批量转换为标准 `.mzML` 格式（基于 OpenMS 工具链）：
+
+```bash
+cd ms2mzml
+python rename_cn.py          # 中文文件名→英文（仅首次）
+python ms2mzml.py            # 批量转换
+```
+
+> 要求 `bin/` 目录包含完整的 `msdata2mzml.exe` 及 OpenMS 运行时。项目路径不得含中文。
+
+### 🔧 工具集（`model/tools/`）
+
+| 子模块 | 用途 | 入口示例 |
+|--------|------|----------|
+| `batch/` | 批量重处理（SNR / post / 联合） | `python -m tools.batch.reprocess --stage snr` |
+| `mzml/` | 色谱图查看/导出/检查 | `python -m tools.mzml.chromatogram list <file>` |
+| `benchmark/` | 性能基准测试与报告 | `python -m tools.benchmark.runner --help` |
+| `diagnostics/` | 诊断与调试工具 | — |
+| `experiments/` | 实验性脚本 | — |
+| `visualization/` | 可视化工具 | — |
+| `tests/` | 测试脚本 | — |
+
+### 📊 高级管线脚本（`model/`）
+
+| 脚本 | 说明 |
+|------|------|
+| `run_unified_peak_workflow.py` | 统一峰检测管线：区间校正 + 小峰检测 + 谷点回退 |
+| `run_two_round_detection.py` | 两轮检测：首轮检测 → 区间调整 → 二轮精修 |
+| `mzml_box_outside_snr_pipeline.py` | 框外 SNR 计算管线 |
+| `newtest_valley_split.py` | 谷点分割（防撞峰） |
+| `integrate_prediction.py` | 预测结果积分 |
+| `build_standard_curves.py` | 标准曲线构建 |
+| `calc_r2_integrate_prediction.py` | R² 拟合优度计算 |
+
+---
+
 ## 依赖版本说明
 
 核心依赖及其版本锁定策略：
@@ -382,7 +468,7 @@ python getFeature.py --source resources/example/centroided \
 ## 训练模型（高级）
 
 ```shell
-cd main_model
+cd model
 python quanformer/main.py \
   --coco_path data/peak-all \
   --output_dir output \
@@ -424,7 +510,7 @@ python -c "import torch; print(torch.backends.mps.is_available())"
 <details>
 <summary><b>Q: Windows 上出现路径相关错误？</b></summary>
 
-尽量避免路径中包含**空格**和**中文字符**。推荐使用类似 `D:\data\quanformer\` 的简洁路径。
+尽量避免路径中包含**空格**和**中文字符**。推荐使用类似 `D:\data\mrmpformer\` 的简洁路径。
 </details>
 
 ---

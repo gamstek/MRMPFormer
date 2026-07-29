@@ -42,12 +42,19 @@
 - **内容**: 两文件 docstring 加 `.. deprecated:: 2026-07-29` 及指向 chromatogram.py 各子命令的迁移指引
 - **理由**: 向后兼容保留旧文件，引导用户迁移到统一入口
 
-### 修改 #6 — 更新开发日志
+### 修改 #6 — 更新开发日志（mzML 色谱工具）
 - **改动人**: AI Copilot
 - **类型**: 文档生成
 - **说明**: dev_log.md 补充 2026-07-29 mzML 色谱工具合并条目
 - **内容**: 新增三项记录：chromatogram.py 创建、旧脚本弃用、import 路径 bug 修复
 - **理由**: 按 CLAUDE.md 强制规则同步更新
+
+### 修改 #7 — 全面更新 README.md
+- **改动人**: AI Copilot
+- **类型**: 文档生成
+- **说明**: 修正目录名、重写项目结构树、新增辅助工具章节、版本号升级
+- **内容**: README.md — 5 处替换：(1) 版本号 v0.3.0→v2.0.0；(2) 项目结构树全面重写（新增 gamstekpeaking/ms2mzml/processed/tools 及 10+ 新管线脚本）；(3) 所有 `main_model`→`model`、`Quanformer/main_model`→`model`；(4) 新增「辅助工具」章节（GamSTekPeaking/ms2mzml/工具集/管线脚本）；(5) 命令路径修正
+- **理由**: 原有 README 与实际目录结构严重脱节（核心目录名错误、缺失大量新组件），按 CLAUDE.md 强制规则同步更新
 
 ---
 
