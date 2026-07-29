@@ -1,0 +1,32 @@
+
+============================================================
+[2026-07-28T09:23:58.680778] 未捕获异常
+Traceback (most recent call last):
+  File "d:\Quanformer\gamstekpeaking\main.py", line 106, in <module>
+    main()
+  File "d:\Quanformer\gamstekpeaking\main.py", line 85, in main
+    app.setStyleSheet(global_stylesheet())
+                      ^^^^^^^^^^^^^^^^^^^
+  File "d:\Quanformer\gamstekpeaking\theme.py", line 294, in global_stylesheet
+    image: url({_arrow});
+                ^^^^^^
+NameError: name '_arrow' is not defined
+
+============================================================
+[2026-07-28T09:25:09.432628] 未捕获异常
+Traceback (most recent call last):
+  File "d:\Quanformer\gamstekpeaking\main.py", line 106, in <module>
+    main()
+  File "d:\Quanformer\gamstekpeaking\main.py", line 85, in main
+    app.setStyleSheet(global_stylesheet())
+                      ^^^^^^^^^^^^^^^^^^^
+  File "d:\Quanformer\gamstekpeaking\theme.py", line 79, in global_stylesheet
+    _arrow_up, _arrow_down = _ensure_spin_arrows()
+                             ^^^^^^^^^^^^^^^^^^^^^
+  File "d:\Quanformer\gamstekpeaking\theme.py", line 27, in _ensure_spin_arrows
+    rotated = pm.transformed(QTransform().rotate(180), mode=1)  # mode=SmoothTransformation
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: 'PySide6.QtGui.QPixmap.transformed' called with wrong argument values:
+  PySide6.QtGui.QPixmap.transformed(PySide6.QtGui.QTransform(-1.000000, 0.000000, 0.000000, 0.000000, -1.000000, 0.000000, 0.000000, 0.000000, 1.000000),)
+Found signature:
+  PySide6.QtGui.QPixmap.transformed(PySide6.QtGui.QTransform, PySide6.QtCore.Qt.TransformationMode = Instance(Qt.FastTransformation))

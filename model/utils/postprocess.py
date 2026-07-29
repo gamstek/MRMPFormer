@@ -1,4 +1,3 @@
-import os
 import pandas as pd
 
 
@@ -34,9 +33,9 @@ def reset_col(old_df, output_path, xic_info):
     df_new.reset_index(inplace=False)
 
     df_merged = pd.merge(df_new, xic_info, "inner", on='Compound Name')
-    output_dir = os.path.dirname(output_path)
-    output_name = 'post-' + os.path.basename(output_path)
-    new_path = os.path.join(output_dir, output_name)
+    parts = output_path.split('/')
+    parts[-1] = 'post-' + parts[-1]
+    new_path = '/'.join(parts)
     df_merged.to_csv(new_path, index=False)
 
 
@@ -46,4 +45,4 @@ def post_process(path, xic_info):
 
 
 if __name__ == "__main__":
-    post_process("output/area.csv", "resources/example/test_feature.csv")
+    post_process("D:/example/output_text/area.csv", "D:/example/test_feature.csv")

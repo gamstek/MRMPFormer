@@ -1,22 +1,19 @@
+# utils/io_utils.py
+
 import csv
 import time
 import functools
 from pathlib import Path
 import pandas as pd
 from natsort import natsorted
-from packaging import version
-import torch
 
 
-def safe_torch_load(path, map_location='cpu', **kwargs):
-    """Safe wrapper for torch.load that handles weights_only parameter
-    across PyTorch versions (>=1.13 and >=2.0)."""
-    if version.parse(torch.__version__) >= version.parse('2.0'):
-        kwargs.setdefault('weights_only', False)
-    return torch.load(path, map_location=map_location, **kwargs)
-
+# ==============================
+# 🕒 Decorator
+# ==============================
 
 def time_master(func):
+    """Decorator to measure execution time of a function."""
     @functools.wraps(func)
     def wrapper_time_master(*args, **kwargs):
         start_time = time.time()
@@ -27,33 +24,27 @@ def time_master(func):
     return wrapper_time_master
 
 
+# ==============================
+# 📁 File & Path Utilities
+# ==============================
+
 def get_files(path, suffix):
     """
-    Read and return paths to all .mzML files in the specified directory and its subdirectories.
+    Recursively find all files with given suffix in the directory.
 
     Parameters:
-    - files_path (str): The path to the directory where the search should begin.
+    - path (str): Root directory to search.
+    - suffix (str): File extension (e.g., 'mzML', 'mzXML').
 
     Returns:
-    - list: A list of Path objects pointing to .mzML files.
-
-    Note:
-    - The function does not return anything if no .mzML files are found in the specified directory.
-    - Assumes files_path is a valid directory path. No checks are performed for security risks.
+    - list[Path]: Sorted list of matching file paths.
     """
     try:
-        # Initialize Path object with the provided directory path
         p = Path(path).resolve()
-
-        # Ensure the provided path is a valid directory
         if not p.is_dir():
             raise NotADirectoryError(f"{path} is not a valid directory.")
-
-        # Collect paths to all .mzML files in the directory and its subdirectories
         paths = [path for path in p.rglob(f"*.{suffix}")]
-        # Return the collected paths
         return natsorted(paths)
-
     except FileNotFoundError:
         print(f"The directory {path} does not exist.")
         return []
@@ -66,81 +57,171 @@ def get_files(path, suffix):
 
 
 def validate_file_path(path):
-    # Initialize Path object with the provided directory path
+    """Ensure the given path points to an existing file."""
     p = Path(path)
-
-    # Ensure the provided path is a valid directory
     if not p.exists():
-        raise FileNotFoundError(f"The directory {path} does not exist.")
+        raise FileNotFoundError(f"The file {path} does not exist.")
     if not p.is_file():
         raise ValueError("The provided path is not a file.")
 
 
+# ==============================
+# 🖼️ Image Loading
+# ==============================
+
+def load_images(images_path, suffix='jpeg'):
+    """
+    Load all ROI images from a directory (supports .jpg, .jpeg, etc.).
+
+    Parameters:
+    - images_path (str): Directory containing ROI images.
+    - suffix (str): Image file extension (default: 'jpeg').
+
+    Returns:
+    - list[str]: Natural-sorted list of full image paths.
+    """
+    p = Path(images_path).resolve()
+    if not p.exists():
+        raise FileNotFoundError(f"Image directory not found: {images_path}")
+    paths = [str(path) for path in p.rglob(f"*.{suffix}")]
+    sorted_paths = natsorted(paths)
+    print(f"[INFO] Loaded {len(sorted_paths)} ROI images from {images_path}")
+    return sorted_paths
+
+
+# ==============================
+# 🧪 Feature CSV Handling
+# ==============================
+
 def replace_special_characters(series):
-
+    """
+    Replace special characters in compound names that may cause file/path issues.
+    """
     replaced_series = series.copy()
-
     for index, value in series.items():
-        if isinstance(value, str) and (':' in value or ' ' in value):
-            replaced_series[index] = value.replace(":", "_").replace(" ", "_")
-
+        if isinstance(value, str):
+            for char in [":", " ", "(", ")", "（", "）"]:
+                value = value.replace(char, "_")
+            # Optional: remove leading/trailing underscores
+            value = value.strip("_")
+            replaced_series[index] = value
     return replaced_series
 
 
-def read_targeted_features(path):
+def load_features(csv_path, preserve_order=False):
+    """
+    Load and clean targeted feature CSV file (same format as main.py / testXIC output).
 
-    validate_file_path(path)
+    Expected columns: 'Compound Name', 'mz', 'RT'
+    Optional columns: 'q3' (fragment m/z)；'native_id'（与 mzML chromatogram id 一致，用于区分 transition）
+
+    Parameters:
+    - csv_path: Path to feature CSV.
+    - preserve_order: If True, do not sort and do not drop rows (only drop where all of
+      Compound Name, mz, RT are NaN). Use when CSV row order must match xic_matrix.npy
+      (e.g. after testXIC.py). If False, dropna and natsort by Compound Name (traditional mode).
+
+    Returns:
+    - pd.DataFrame: Columns at least ['Compound Name', 'mz', 'RT']; plus 'q3' if present in file.
+    """
+    validate_file_path(csv_path)
 
     try:
-        data = pd.read_csv(path, encoding_errors='ignore')
+        data = pd.read_csv(csv_path, encoding_errors='ignore')
+
+        if 'Compound Name' not in data.columns:
+            raise ValueError("CSV must contain 'Compound Name' column.")
+        if 'mz' not in data.columns or 'RT' not in data.columns:
+            raise ValueError("CSV must contain 'mz' and 'RT' columns.")
+
+        # Clean compound names
         data['Compound Name'] = replace_special_characters(data['Compound Name'])
-        data['mz'] = data['mz'].astype(float)
-        data['RT'] = data['RT'].astype(float)
 
-        features_info = data[['Compound Name', 'mz', 'RT']].dropna()
+        # Ensure numeric types
+        data['mz'] = pd.to_numeric(data['mz'], errors='coerce')
+        data['RT'] = pd.to_numeric(data['RT'], errors='coerce')
+        if 'q3' in data.columns:
+            data['q3'] = pd.to_numeric(data['q3'], errors='coerce')
 
-        features_info = features_info.sort_values(by=['Compound Name'], key=natsorted)
+        if preserve_order:
+            # Keep row order to match xic_matrix.npy; drop only rows with all key fields NaN
+            key_cols = ['Compound Name', 'mz', 'RT']
+            out_cols = key_cols + (['q3'] if 'q3' in data.columns else [])
+            if 'native_id' in data.columns:
+                out_cols.append('native_id')
+            features_info = data[out_cols].copy()
+            drop_mask = features_info[['Compound Name', 'mz', 'RT']].isna().all(axis=1)
+            features_info = features_info.loc[~drop_mask].reset_index(drop=True)
+            print(f"[INFO] Loaded {len(features_info)} compounds from {csv_path} (order preserved).")
+        else:
+            # Traditional: dropna on key columns and sort by Compound Name
+            features_info = data[['Compound Name', 'mz', 'RT']].dropna()
+            if 'q3' in data.columns:
+                features_info['q3'] = data.loc[features_info.index, 'q3']
+            if 'native_id' in data.columns:
+                features_info['native_id'] = data.loc[features_info.index, 'native_id']
+            features_info = features_info.sort_values(
+                by='Compound Name',
+                key=lambda x: natsorted(x.tolist())
+            ).reset_index(drop=True)
+            print(f"[INFO] Loaded {len(features_info)} valid compounds from {csv_path}")
+
         return features_info
+
     except pd.errors.EmptyDataError:
         raise ValueError("The provided CSV file is empty.")
-    except pd.errors.ParserError:
-        raise ValueError("There was an error parsing the provided CSV file. Check for formatting issues.")
-    except FileNotFoundError:
-        raise ValueError("The provided file path does not exist.")
-    except ValueError as ve:
-        if "provided path" in str(ve):
-            raise ValueError("The provided path is not a file.") from ve
-        else:
-            raise ve
+    except pd.errors.ParserError as e:
+        raise ValueError(f"CSV parsing error: {e}")
+    except Exception as e:
+        raise ValueError(f"Failed to load features: {e}")
 
 
-def export_results(area, name):
-    csv_file_path = f'{name}'
-    # dir, name, mz, true_rt, left, right, max_x, max_intensity, trapz(filter_y, filter_x), score
-    with open(csv_file_path, mode='w', newline='') as file:
+# ==============================
+# 💾 Export Results
+# ==============================
+
+def export_results(area, output_path):
+    """
+    Export quantification results to CSV.
+
+    Expected `area` format: list of tuples/lists with 11 elements:
+    [image_path, compound_name, mz, old_rt, rt_min, rt_max, rt_peak,
+     intensity_max, area, score, point_count]
+
+    Parameters:
+    - area (list): Quantification results.
+    - output_path (str): Output CSV file path.
+    """
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+    with open(output_path, mode='w', newline='', encoding='utf-8') as file:
         writer = csv.writer(file)
-        writer.writerow(['Image_Path',
-                         'Compound Name',
-                         'M/Z',
-                         'Old RT',
-                         'Retention Time',
-                         'rt_min',
-                         'rt_max',
-                         'intensity_max',
-                         'Area',
-                         'Score',
-                         'Point counts'])
+        writer.writerow([
+            'Image_Path',
+            'Compound Name',
+            'M/Z',
+            'Old RT',
+            'rt_min',
+            'rt_max',
+            'Retention Time',
+            'intensity_max',
+            'Area',
+            'Score',
+            'Point counts'
+        ])
         for item in area:
-            writer.writerow([str(item[0]),
-                             str(item[1]),
-                             float(item[2]),
-                             float(round(item[3], 3)),
-                             float(item[6]),
-                             float(item[4]),
-                             float(item[5]),
-                             float(round(item[7], 3)),
-                             float(round(item[8], 3)),
-                             float(round(item[9], 3)),
-                             int(item[10])])
+            writer.writerow([
+                str(item[0]),
+                str(item[1]),
+                float(item[2]),
+                float(round(item[3], 3)),
+                float(item[4]),
+                float(item[5]),
+                float(item[6]),
+                float(round(item[7], 3)),
+                float(round(item[8], 3)),
+                float(round(item[9], 3)),
+                int(item[10])
+            ])
 
-    print(f"Successfully exported results to {csv_file_path}")
+    print(f"[INFO] Successfully exported results to {output_path}")

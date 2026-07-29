@@ -51,20 +51,9 @@ class PeakList():
 
     def runXCMS(self, path, fn, polarity, ppm, minWidth, maxWidth, noise=1000, s2n=1, prefilter=2, mzDiff=0.0001, minFrac=0.5):
         dir = os.path.dirname(__file__)
-        rscript = os.path.join(dir, "find_peaks.R")
-        if not os.path.exists(rscript):
-            raise FileNotFoundError(f"R script not found: {rscript}")
-        # Check if Rscript is available
-        ret = os.system("Rscript --version >nul 2>&1" if os.name == "nt" else "Rscript --version >/dev/null 2>&1")
-        if ret != 0:
-            raise RuntimeError(
-                "R is not installed or not in PATH. "
-                "Untargeted feature detection requires R with 'MSnbase' and 'xcms' packages.\n"
-                "Install R from https://cran.r-project.org/ then run:\n"
-                "  R -e \"install.packages(c('BiocManager'))\"\n"
-                "  R -e \"BiocManager::install(c('MSnbase','xcms'))\""
-            )
-        os.system(f'Rscript "{rscript}" "{path}" {polarity} {ppm} {minWidth} {maxWidth} "{fn}" {noise} {s2n} {prefilter} {mzDiff} {minFrac}')
+        os.system("Rscript " + os.path.join(dir, "find_peaks.R") + " " + path + " " + polarity + " " + str(
+            ppm) + " " + str(minWidth) + " " + str(maxWidth) + " " + fn + " " + str(noise) + " " + str(
+            s2n) + " " + str(prefilter) + " " + str(mzDiff) + " " + str(minFrac))
         self.readXCMSPeakList(os.path.join(path, fn))
 
 

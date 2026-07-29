@@ -5,42 +5,102 @@
 
 ---
 
-## 26-07-20
+## 26-07-29
 
-### 修改 #1
-- **改动人**: (待确认)
-- **类型**: 新增
-- **说明**: 创建 MRMPFormer requirements.txt；涉及 `MRMPFormer/requirements.txt`
-- **内容**: 依据源码依赖追踪结果编写独立依赖配置，包含 numpy==1.26.4 / Pillow==10.4.0 / tqdm==4.68.4 / tensorboard>=2.14.0；PyTorch 按 GPU 架构分段 (RTX 50 cu128/RTX 40 cu124/RTX 30 cu124/RTX 20 cu124/CPU)，50 系默认启用
-- **理由**: MRMPFormer 作为独立子项目需要专属依赖文件，与 QuanFormer 的 model/requirements.txt 解耦（不引入 pymzml/pyside6/pycocotools 等无关包）
+### 修改 #1 — 新建 reprocess.py（合并批处理脚本）
+- **改动人**: AI Copilot
+- **类型**: 重构
+- **说明**: 将 batch_post_newtest_under_snr_filtered.py 与 rerun_snr_under_snr_filtered.py 合并为 reprocess.py，统一 `--stage snr/post/snr-post` 三模式
+- **内容**: model/tools/batch/reprocess.py — 新建；统一参数 CLI（SNR + post_newtest 全部参数），post 阶段统一用 subprocess 调用以保证参数传递一致性
+- **理由**: 两脚本 post_newtest 参数集各自演化已不一致；合并消除参数分叉，降低维护成本
 
-### 修改 #2
-- **改动人**: (待确认)
+### 修改 #2 — 弃用旧批处理脚本
+- **改动人**: AI Copilot
 - **类型**: 文档生成
-- **说明**: 更新 dev_log.md 开发时间线；涉及 `dev_log.md`
-- **内容**: 新增 2026-07-20 条目（需求分析/代码生成 2 条）
-- **理由**: CLAUDE.md 要求每次任务后更新开发日志
+- **说明**: batch_post_newtest_under_snr_filtered.py、rerun_snr_under_snr_filtered.py 头部加弃用注释
+- **内容**: 两文件 docstring 加 `.. deprecated:: 2026-07-29` 及指向 reprocess.py 的迁移指引
+- **理由**: 向后兼容保留旧文件，引导用户迁移到统一入口
 
-### 修改 #3
-- **改动人**: (待确认)
-- **类型**: 新增
-- **说明**: 实现早停策略 + tqdm 进度条美化；涉及 `MRMPFormer/utils/config.py`、`MRMPFormer/train.py`
-- **内容**: config.py 新增 early_stopping_enabled/patience/min_delta/min_epochs 四个字段；train.py 引入 tqdm 替换原 batch 级 print，进度条实时显示 running loss；训练循环内嵌早停逻辑 (相对改善率 < min_delta 累计 patience 次后触发)，保护期 100 epoch
-- **理由**: 分析阶段确定方案 A（相对改善率监控）为最优；用户要求美化进度条（原"每 20 batch 打印"体验差）
+### 修改 #3 — 更新开发日志
+- **改动人**: AI Copilot
+- **类型**: 文档生成
+- **说明**: dev_log.md 新增 2026-07-29 条目
+- **内容**: 记录合并重构、新文件创建、弃用标记三项
+- **理由**: 按 CLAUDE.md 强制规则同步更新
 
-### 修改 #4
-- **改动人**: (待确认)
-- **类型**: 新增
-- **说明**: 实现 backbone 分阶段冻结机制；涉及 `MRMPFormer/models/simclr.py`、`MRMPFormer/utils/config.py`、`MRMPFormer/train.py`
-- **内容**: simclr.py 拆分 backbone 为 stem/layer1~4/avgpool 独立属性（同时保留 Sequential 兼容），新增 freeze_stages 参数 (0~5) 和 _freeze_stages()/trainable_param_counts() 方法；config.py 新增 freeze_stages 配置（默认 0）；train.py 传入 freeze_stages 并输出"可训练 / 冻结"参数量统计
-- **理由**: 用户希望冻结前 3 个 stage（stem+layer1~3）仅训练 layer4+投影头——对色谱图小数据集的半迁移学习策略，减少过拟合、加速训练
+### 修改 #4 — 新建 chromatogram.py（合并 mzML 色谱工具）
+- **改动人**: AI Copilot
+- **类型**: 重构
+- **说明**: 将 mzml_export_one_chrom.py 与 read_mzml_one_group.py 合并为 chromatogram.py，统一 `list/show/export` 三个子命令
+- **内容**: model/tools/mzml/chromatogram.py — 新建；共享 inspect.py 依赖，修复旧脚本 import 路径 bug（mzml_inspect_to_csv→inspect），统一色谱定位、编码处理、Q1/Q3 提取
+- **理由**: 两脚本 ~70% 代码重复；共享同一依赖和概念模型；子命令模式更符合 CLI 工具惯例
 
-### 修改 #5
-- **改动人**: (待确认)
-- **类型**: 新增
-- **说明**: 实现评估体系（Alignment + Uniformity + Retrieval P@K）；涉及 `MRMPFormer/utils/losses.py`、`MRMPFormer/utils/__init__.py`、`MRMPFormer/utils/config.py`、`MRMPFormer/train.py`；新建 `MRMPFormer/evaluate.py`
-- **内容**: losses.py 新增 alignment_loss() (正样本对 MSE) 和 uniformity_loss() (高斯势对数)；__init__.py 导出；evaluate.py 支持单文件/双文件对比模式，含 infer_labels_from_paths() 从中文文件名自动推断化合物标签，compute_retrieval_metrics() (P@K) 和 compute_uniformity()，print_table() 格式化对比输出；train.py 新增 compute_alignment_uniformity() 每 N epoch 无梯度计算并写入 TensorBoard；config.py 新增 eval_metrics_every
-- **理由**: 上轮分析确定仅 loss 评价太局限，需要补充 probe-free 指标 (A+U) 和标签辅助指标 (P@K)；评估脚本用于基线 vs 训练后对比，为 SOTA 追踪提供量化依据
+### 修改 #5 — 弃用旧 mzML 色谱脚本
+- **改动人**: AI Copilot
+- **类型**: 文档生成
+- **说明**: mzml_export_one_chrom.py、read_mzml_one_group.py 头部加弃用注释
+- **内容**: 两文件 docstring 加 `.. deprecated:: 2026-07-29` 及指向 chromatogram.py 各子命令的迁移指引
+- **理由**: 向后兼容保留旧文件，引导用户迁移到统一入口
+
+### 修改 #6 — 更新开发日志
+- **改动人**: AI Copilot
+- **类型**: 文档生成
+- **说明**: dev_log.md 补充 2026-07-29 mzML 色谱工具合并条目
+- **内容**: 新增三项记录：chromatogram.py 创建、旧脚本弃用、import 路径 bug 修复
+- **理由**: 按 CLAUDE.md 强制规则同步更新
+
+---
+
+## 26-07-28
+
+### 修改 #1 — QComboBox 下拉箭头
+- **改动人**: AI Copilot
+- **类型**: 调试
+- **说明**: QComboBox::down-arrow 子控件缺失导致下拉按钮全白
+- **内容**: theme.py — 新增 QComboBox::down-arrow 引用 combo_down_arrow.png；QComboBox::drop-down 加背景色 #EEF2F7 + hover 态
+- **理由**: QSS 中 ::drop-down 有样式但 ::down-arrow 未定义，Qt 不渲染箭头；白底+无箭头=全白不可辨
+
+### 修改 #2 — QSpinBox 上下箭头
+- **改动人**: AI Copilot
+- **类型**: 调试
+- **说明**: QSpinBox/QDoubleSpinBox ::up-arrow/::down-arrow 缺失，高级参数面板按钮不可见
+- **内容**: theme.py — 新增 ::up-button/::down-button（透明背景+圆角对齐）+ ::up-arrow/::down-arrow；_ensure_assets() 用 QTransform.rotate(180) 从 combo_down_arrow.png 生成 spin_up_arrow.png
+- **理由**: 与 QComboBox 同根因——子控件未定义则不渲染；上箭头旋转复用避免手动绘制色差
+
+### 修改 #3 — 红框误触发
+- **改动人**: AI Copilot
+- **类型**: 调试
+- **说明**: IonZenithCard 输入框在用户未交互时即显示红色错误边框
+- **内容**: preprocessing.py — IonZenithCard.__init__ 新增 _has_interacted=False；_validate() 开头 guard `if not self._has_interacted: return`；_on_browse_input() 中置 True
+- **理由**: textChanged 信号在 widget 构造时就以空串 "" 触发，Path("").exists()=False 导致红框；需等用户首次交互后才启用校验
+
+### 修改 #4 — SpinBox 按钮透明化
+- **改动人**: AI Copilot
+- **类型**: 重构
+- **说明**: SpinBox 按钮默认背景色覆盖外层圆角，视觉上"盖在圆角上"
+- **内容**: theme.py — ::up-button/::down-button background-color 由 #EEF2F7 改为 transparent；hover 由 #D1D5DB 改为 #EEF2F7；border-radius 由 5px 对齐 6px
+- **理由**: 透明按钮不干扰外层 border-radius，hover 时微浮现提示可点击
+
+### 修改 #5 — 复选框打勾
+- **改动人**: AI Copilot
+- **类型**: 重构
+- **说明**: QCheckBox 选中状态全红填充，视觉效果像错误态
+- **内容**: theme.py — QCheckBox::indicator:checked 改为白底+红框+image:url(check_icon.png)；_ensure_assets() 用 QPainter.drawPolyline 绘制 ✓ 勾号
+- **理由**: 白底红勾为标准复选框范式；_ensure_assets() 统一管理所有自动生成图标
+
+### 修改 #6 — 高级参数帮助按钮
+- **改动人**: AI Copilot
+- **类型**: 代码生成
+- **说明**: 高级参数区域缺少参数说明入口
+- **内容**: preprocessing.py — IonZenithCard._build_ui() 中新增 QPushButton("?") flat 圆形按钮，tooltip 列出 m/z 范围/容差/强度/谱图数/重建索引 6 项参数说明
+- **理由**: 首次用户不了解各参数含义，悬停 tooltip 降低学习成本
+
+### 修改 #7 — 最大谱图数宽度
+- **改动人**: AI Copilot
+- **类型**: 调试
+- **说明**: max_spec_spin 默认宽度不足以完整显示 specialValueText "0 (全部)"
+- **内容**: preprocessing.py — self.max_spec_spin.setFixedWidth(130)
+- **理由**: 中文 specialValueText "0 (全部)" 需 5 字符宽，默认 ~70px 不够
 
 ---
 
