@@ -48,19 +48,19 @@ pycocotools>=2.0.0
 
 # ----------------------------------------------------------
 # NVIDIA RTX 50 系列 (Blackwell: 5060 / 5070 / 5080 / 5090)
-#   CUDA 12.8 | 计算能力 12.x | ⬇ 当前本机配置
+#   CUDA 12.8 | 计算能力 12.x
 # ----------------------------------------------------------
---index-url https://download.pytorch.org/whl/cu128
-torch==2.7.0
-torchvision==0.22.0
+# --index-url https://download.pytorch.org/whl/cu128
+# torch==2.7.0
+# torchvision==0.22.0
 
 # ----------------------------------------------------------
 # NVIDIA RTX 40 系列 (Ada Lovelace: 4060 / 4070 / 4080 / 4090)
-#   CUDA 12.4 | 计算能力 8.9
+#   CUDA 12.4 | 计算能力 8.9 | ⬇ 当前本机配置 (4090D)
 # ----------------------------------------------------------
-# --index-url https://download.pytorch.org/whl/cu124
-# torch==2.6.0
-# torchvision==0.21.0
+--index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0
+torchvision==0.21.0
 
 # ----------------------------------------------------------
 # NVIDIA RTX 30 系列 (Ampere: 3050 / 3060 / 3070 / 3080 / 3090)

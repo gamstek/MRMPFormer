@@ -16,7 +16,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from .sampler import GpuVramSampler, fmt_gpu_vram_line as _fmt_gpu_vram_line
+from .sampler import GpuVramSampler
 from .aggregate import (
     collect_values,
     load_jsonl,
@@ -62,7 +62,7 @@ def _default_main_argv():
     return [
         "--mode", "pipeline_mzml",
         "--mzml", "",
-        "--model", str(_REPO_ROOT / "resources" / "checkpoint0029.pth"),
+        "--model", str(_REPO_ROOT / "checkpoint" / "checkpoint0029.pth"),
         "--output_dir", DEFAULT_OUTPUT_DIR,
         "--threshold", "0.90",
         "--smooth_sigma", "0.0",

@@ -26,14 +26,23 @@ python main.py
 | `bin/` | msdata2mzml 运行时 | [README_bin.md](bin/README_bin.md) |
 | `assets/` | 静态资源 | [README_assets.md](assets/README_assets.md) |
 
+## 技术栈
+
+前端基于 **PySide6**（Qt for Python）构建，采用深色科技风主题。
+
 ## 依赖
 
 | 包 | 版本 | 用途 |
 |----|------|------|
-| PySide6 | ≥ 6.5.0 | GUI 框架 |
-| pymzml | ≥ 0.9.0 | mzML 文件解析 |
-| numpy | ≥ 1.24.0 | 数值计算 |
-| tqdm | ≥ 4.65.0 | 进度显示 |
+| PySide6 | 6.9.3 | GUI 框架（Qt for Python） |
+| pymzml | 2.5.11 | mzML 文件解析 |
+| numpy | 1.26.4 | 数值计算 |
+| tqdm | 4.69.1 | 进度显示 |
+| pandas | 2.2.2 | 数据处理 |
+| matplotlib | 3.9.2 | 绘图 |
+| scipy | 1.13.1 | 科学计算 |
+| PyOpenMS | 3.3.0 | 质谱数据处理 |
+| torch | 2.6.0+cu124 | 深度学习（RTX 4090D） |
 
 ## 架构概览
 

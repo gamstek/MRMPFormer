@@ -42,7 +42,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 REQUIREMENTS_PATH = PROJECT_ROOT / "model" / "requirements.txt"
 
 # 模型权重路径
-CHECKPOINT_PATH = PROJECT_ROOT / "model" / "resources" / "checkpoint0029.pth"
+CHECKPOINT_PATH = PROJECT_ROOT / "model" / "checkpoint" / "checkpoint0029.pth"
 
 # 期望的 Python 版本范围
 PYTHON_MIN = (3, 10)
@@ -677,7 +677,7 @@ def run_all_checks() -> List[CheckResult]:
         f"存在且 >{CHECKPOINT_MIN_MB}MB",
         f"{'存在' if cp['exists'] else '缺失'} ({cp['size_mb']}MB)",
         cp["exists"] and cp["size_mb"] >= CHECKPOINT_MIN_MB,
-        fix="请将模型权重文件放置到 model/resources/checkpoint0029.pth（需 >300MB）"
+        fix="请将模型权重文件放置到 model/checkpoint/checkpoint0029.pth（需 >300MB）"
     ))
 
     # ---- 磁盘空间 ----

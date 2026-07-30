@@ -2,13 +2,296 @@
 
 ## 简介
 
-MRMPFormer 是一个基于 Python 的峰（特征）检测与定量方法，用于原始 profile 模式 LC-MS 数据。
-其核心思路是：结合 CNN 与 Transformer 训练目标检测网络，在 ROI 中识别真实峰（判断真峰/假峰）并定位峰边界以进行积分面积定量。
-本方法目前面向高分辨率 LC-MS 代谢组学数据开发，但也可应用于其他以峰为检测目标的场景。
+MRMPFormer 是基于 **DETR（ResNet-50 + Transformer）** 的 LC-MS 代谢组学峰检测与定量工具。
+核心思路：在提取离子色谱图（EIC）生成的 ROI 图像上训练目标检测网络，识别真实色谱峰并定位峰边界，实现积分面积定量。
 
-**支持的格式**: `.mzML`
+- **输入**：`.mzML` 原始质谱数据
+- **输出**：峰面积 CSV + 预测标注图
+- **模型**：CNN 骨干 + 1 层 Transformer 编解码器
+- **开发版本**：v2.0.0
 
-当前开发版本：v2.0.0
+---
+
+## 快速开始
+
+### 环境要求
+
+| 项目 | 要求 |
+|------|------|
+| Python | **3.10 ~ 3.11**（不支持 3.8 及 3.12+） |
+| 包管理器 | Conda（推荐）或 pip + venv |
+| R（可选） | 4.0+，仅 Untargeted 模式需要 |
+
+**PyTorch 版本**（按 GPU 选择）：
+
+| GPU 系列 | CUDA | torch | torchvision |
+|----------|------|-------|-------------|
+| RTX 50 (5060–5090) | 12.8 (cu128) | ≥2.7.0 | ≥0.22.0 |
+| RTX 40 / 30 / 20 | 12.4 (cu124) | 2.6.0 | 0.21.0 |
+| CPU / Apple Silicon (MPS) | — | 2.6.0 | 0.21.0 |
+
+> `model/requirements.txt` 已内置上述所有配置段，按需取消/注释对应行即可。当前默认启用 **RTX 40 系 (CUDA 12.4)**。
+
+### 安装
+
+**Conda（推荐）**：
+
+```bash
+cd model
+conda env create -f environment.yml
+conda activate quanformer
+```
+
+**pip + venv**：
+
+```bash
+cd model
+python3.11 -m venv venv
+source venv/bin/activate          # Linux/macOS
+# venv\Scripts\activate           # Windows
+pip install -r requirements.txt
+```
+
+**验证**：
+
+```bash
+python -c "import torch; print('CUDA:', torch.cuda.is_available())"
+python -c "import pymzml; print('pymzml OK')"
+```
+
+> ⚠️ 模型权重文件 `checkpoint/checkpoint0029.pth`（>300MB）必须存在于 `model/` 目录下。
+
+### 环境检测（可选）
+
+```bash
+# GUI 弹窗检测（含一键修复）
+python .github/skills/check-dependencies/check_gui.py
+
+# 纯终端文本报告
+python .github/skills/check-dependencies/check_env.py
+```
+
+---
+
+## 推理
+
+统一入口 `model/main.py`，通过 `--mode` 切换 7 种运行模式：
+
+| 模式 | 说明 | 适用场景 |
+|------|------|----------|
+| `pipeline_batch_mzml` | 完整管线：批量 mzML | ⭐ 生产环境（推荐） |
+| `pipeline_mzml` | 完整管线：单个 mzML | 单样品端到端测试 |
+| `single` | 单张图 JSON 输入/输出 | 调试 / API 集成 |
+| `mzml` | 单个 mzML（仅预测） | 快速测试 |
+| `batch_mzml` | 批量 mzML（仅预测） | 多样品轻量处理 |
+| `batch_dir` | 已有 XIC 中间结果的目录 | 续跑 / 断点恢复 |
+| `batch_json_dir` | 目录下所有 JSON 逐张处理 | JSON 数据集批处理 |
+
+---
+
+### 完整管线（推荐）
+
+端到端：ROI 提取 → 模型预测 → SNR 筛选 → 峰区间精修。
+
+```bash
+cd model
+
+# 批量 mzML（最常用）
+python main.py --mode pipeline_batch_mzml \
+  --model checkpoint/checkpoint0029.pth \
+  --batch_dir data/test1/mzML \
+  --output_dir results/pipeline_batch \
+  --threshold 0.99 --plot \
+  --snr_min 3.0 \
+  --pipeline_min_max_intensity 1000 \
+  --pipeline_min_chrom_points 10
+
+# 单个 mzML
+python main.py --mode pipeline_mzml \
+  --model checkpoint/checkpoint0029.pth \
+  --mzml data/test1/mzML/B1.mzML \
+  --output_dir results/pipeline_single \
+  --threshold 0.99 --plot
+```
+
+**输出结构**：
+
+```
+results/pipeline_batch/
+├── xic-roi-batch/           # EIC 提取 + ROI 图像
+├── batch_predictions/       # 模型预测 CSV
+├── snr_filtered/            # SNR 筛选结果
+└── prediction_refined.csv   # 最终精修结果（峰面积 + 置信度）
+```
+
+---
+
+### 轻量模式
+
+不需要 SNR 筛选和区间精修时使用：
+
+```bash
+# 单张图（JSON，适合调试/API）
+python main.py --mode single \
+  --model checkpoint/checkpoint0029.pth \
+  --input input.json --threshold 0.99 --plot
+
+# stdin 管道
+echo '{"rt":[1,2,3,4,5],"intensity":[100,500,800,400,50]}' | \
+  python main.py --mode single --model checkpoint/checkpoint0029.pth
+
+# 单个 mzML
+python main.py --mode mzml \
+  --model checkpoint/checkpoint0029.pth \
+  --mzml data/test1/mzML/B1.mzML --output_dir results/single
+
+# 批量 mzML
+python main.py --mode batch_mzml \
+  --model checkpoint/checkpoint0029.pth \
+  --batch_dir data/test1/mzML --output_dir results/batch
+```
+
+**单张图 JSON 格式**：
+
+输入：
+```json
+{"rt": [1.0, 2.0, 3.0], "intensity": [100, 500, 200], "baseline_x": [], "baseline_y": []}
+```
+
+输出：
+```json
+{"detections": [{"x1":120, "x2":180, "score":0.998, "area":12345.6, "rt_min":2.1, "rt_max":3.4}]}
+```
+
+---
+
+### 推理参数速查
+
+**通用参数**：
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `--model` | **必填** | 模型 `.pth` 路径 |
+| `--mode` | `single` | 运行模式 |
+| `--threshold` | `0.99` | 置信度阈值 |
+| `--integration_method` | `linear` | `linear` / `raw` / `external_baseline` |
+| `--smooth_sigma` | `0.0` | 高斯平滑 sigma |
+| `--plot` | — | 生成预测框标注图 |
+| `--output_dir` | 自动 | 输出目录 |
+
+**Pipeline 参数**：
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `--snr_min` | `3.0` | 框外 SNR 最低阈值 |
+| `--pipeline_min_max_intensity` | `1000` | XIC 最大强度低于此值跳过 |
+| `--pipeline_min_chrom_points` | `10` | 色谱点数少于此跳过 |
+| `--post_min_confidence` | `0.99` | 精修后最低置信度 |
+
+---
+
+### Untargeted 模式（R + CentWave）
+
+> 仅做 Targeted 定量可跳过本节。
+
+#### 安装 R 环境
+
+```bash
+# 检查
+R --version
+
+# Ubuntu/Debian
+sudo apt install --no-install-recommends r-base libxml2-dev
+```
+
+在 R 控制台安装 Bioconductor 包：
+
+```r
+if (!require("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+BiocManager::install("xcms")
+BiocManager::install("MSnbase")
+install.packages("dplyr")
+```
+
+#### 运行特征提取
+
+```bash
+cd model
+
+python getFeature.py \
+  --source resources/example/centroided \
+  --polarity positive --ppm 10 \
+  --minWidth 5 --maxWidth 50 \
+  --s2n 5 --noise 100 \
+  --mzDiff 0.015 --prefilter 3
+```
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `--source` | `resources/example` | mzML 数据目录 |
+| `--polarity` | `positive` | 极性 |
+| `--ppm` | `10` | MS1 ppm 容差 |
+| `--minWidth` / `--maxWidth` | `5` / `50` | 峰宽范围 |
+| `--s2n` | `5` | 信噪比阈值 |
+| `--mzDiff` | `0.015` | m/z 差异阈值 |
+
+---
+
+## 训练
+
+### 训练命令
+
+```bash
+cd model
+
+python quanformer/main.py \
+  --coco_path data/peak-all \
+  --output_dir output \
+  --device auto \
+  --epochs 30 --batch_size 4 \
+  --lr 1e-4 --lr_backbone 1e-5
+```
+
+### COCO 数据格式
+
+```
+<coco_path>/
+├── train2017/                    # EIC 图像 (JPEG)
+├── val2017/                      # 验证图像
+└── annotations/
+    ├── instances_train2017.json  # 标注（bbox + category_id）
+    └── instances_val2017.json
+```
+
+### 关键参数
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `--coco_path` | `data/coco` | 数据集根目录 |
+| `--device` | `auto` | CUDA > MPS > CPU 自动选择 |
+| `--epochs` | `30` | 训练轮数 |
+| `--batch_size` | `4` | 批大小 |
+| `--lr` / `--lr_backbone` | `1e-4` / `1e-5` | 学习率 |
+| `--enc_layers` / `--dec_layers` | `1` / `1` | Transformer 层数 |
+| `--num_queries` | `10` | 最大检出峰数 |
+| `--resume` | — | 从检查点恢复 |
+| `--eval` | — | 仅评估，不训练 |
+
+### 微调与评估
+
+```bash
+# 从预训练权重继续训练
+python quanformer/main.py \
+  --coco_path data/peak-all --output_dir output_finetune \
+  --device auto --resume checkpoint/checkpoint0029.pth --epochs 50
+
+# 仅评估
+python quanformer/main.py \
+  --coco_path data/peak-all \
+  --resume checkpoint/checkpoint0029.pth --device auto --eval
+```
+
+> ⚠️ 恢复训练时会自动跳过 `class_embed` 和 `query_embed` 权重（维度可能不匹配）。
 
 ---
 
@@ -16,379 +299,33 @@ MRMPFormer 是一个基于 Python 的峰（特征）检测与定量方法，用�
 
 ```
 MRMPFormer/
-├── README.md                         # 项目说明
-├── dev_log.md                        # 开发日志
-├── CLAUDE.md                         # 项目级 AI 辅助指令
-├── ion_zenith.py                     # 离子天顶角计算脚本
-├── data/                             # 测试数据
-│   ├── JiangNanU_Sample/             # 江南大学样本数据
-│   ├── test1/                        # 测试集 1（含 mzML / label / train）
-│   └── mzML/                         # 原始 mzML 数据
-├── docs/                             # 文档
-│   ├── PROJECT_PANORAMA.md           # 项目全景
-│   ├── Bugs.md                       # 已知问题
-│   ├── Modified.md                   # 代码修改记录
-│   ├── QuanFormer 跨平台部署指南.md   # 部署说明
-│   └── superpowers/                  # 设计文档 & 规划
-├── paper/                            # 论文 & 补充材料
-├── processed/                        # 后处理脚本
-├── gamstekpeaking/                   # 🖥️ 下一代统一桌面应用 (Streamlit)
-│   ├── main.py                       # 应用入口
-│   ├── app.py                        # 应用配置
-│   ├── pages/                        # 功能页面（峰查找/预处理/设置）
-│   ├── workers/                      # 后台线程（转换/离子天顶角）
-│   └── engine/                       # 模型推理引擎（预留）
-├── ms2mzml/                          # 🔄 msdata → mzML 批量转换
-│   ├── ms2mzml.py                    # 批量转换主脚本
-│   ├── rename_cn.py                  # 中文文件名重命名
-│   └── bin/                          # msdata2mzml.exe 运行时
-└── model/                            # ⭐ 核心代码
-    ├── requirements.txt              # 统一依赖（GPU/CPU 分段配置）
-    ├── environment.yml               # Conda 环境定义
-    ├── main.py                       # 命令行推理入口
-    ├── getFeature.py                 # Untargeted 特征提取
-    ├── run_unified_peak_workflow.py  # 统一峰检测管线
-    ├── run_two_round_detection.py    # 两轮检测
-    ├── mzml_box_outside_snr_pipeline.py  # SNR 管线
-    ├── newtest.py                    # 新版测试入口
-    ├── newtest_valley_split.py       # 谷点分割
-    ├── integrate_prediction.py       # 积分预测
-    ├── build_standard_curves.py      # 标准曲线构建
-    ├── calc_r2_integrate_prediction.py  # R² 计算
-    ├── testXIC.py                    # XIC 测试
-    ├── utils/                        # 工具模块
-    │   ├── predict_utils.py          # 推理核心（自动设备检测）
-    │   ├── extract_eic.py            # EIC 提取
-    │   ├── quantify.py               # 定量积分
-    │   ├── quantify_v2.py            # 定量积分 v2
-    │   ├── quantify_correct.py       # 定量校正
-    │   ├── postprocess.py            # 后处理去重
-    │   ├── io_utils.py               # 跨版本模型加载
-    │   ├── plot_utils.py             # 绑图工具
-    │   ├── adaptive_integration.py   # 自适应积分
-    │   ├── integrate_peak_adaptive.py # 自适应峰积分
-    │   ├── xic_peak_utils.py         # XIC 峰工具
-    │   ├── roi_quality_params.py     # ROI 质量参数
-    │   ├── roi_rt_mapping.py         # ROI-RT 映射
-    │   ├── mzml_load.py              # mzML 加载
-    │   ├── mzml_chromatogram_ids.py  # 色谱图 ID
-    │   ├── torch_device.py           # 设备选择
-    │   └── find_peaks.R              # R 脚本（untargeted 峰查找）
-    ├── quanformer/                   # DETR 模型包
-    │   ├── main.py                   # 训练入口
-    │   ├── engine.py                 # 训练/评估引擎
-    │   ├── hubconf.py                # Torch Hub 配置
-    │   ├── datasets/                 # COCO 数据集 & 数据增强
-    │   ├── models/                   # 模型定义 (backbone/detr/transformer...)
-    │   └── util/                     # 模型工具
-    ├── tools/                        # 🔧 辅助工具集
-    │   ├── batch/                    # 批量处理（reprocess / JSON批次）
-    │   ├── mzml/                     # mzML 工具（chromatogram / inspect）
-    │   ├── benchmark/                # 性能基准测试
-    │   ├── diagnostics/              # 诊断工具
-    │   ├── experiments/              # 实验脚本
-    │   ├── visualization/            # 可视化工具
-    │   ├── tests/                    # 测试脚本
-    │   ├── archive/                  # 归档
-    │   ├── legacy/                   # 旧版代码
-    │   └── maintenance/              # 维护脚本
-    └── resources/                    # 示例数据 & 模型权重
-        ├── checkpoint0029.pth        # 预训练权重 (>300MB)
-        └── example/                  # 示例 mzML / feature / 输出
+├── model/                        # ⭐ 核心代码
+│   ├── main.py                   # 推理入口（--mode 驱动）
+│   ├── getFeature.py             # Untargeted 特征提取
+│   ├── requirements.txt          # pip 依赖（GPU 分段）
+│   ├── environment.yml           # Conda 环境
+│   ├── quanformer/               # DETR 训练框架
+│   │   ├── main.py               #   训练入口
+│   │   ├── models/               #   模型定义
+│   │   └── datasets/             #   COCO 数据加载
+│   ├── utils/                    # 推理辅助（EIC/定量/绑图）
+│   ├── tools/                    # 批处理/诊断/可视化
+│   ├── checkpoint/               # 模型权重
+│   └── resources/                # 示例数据
+├── gamstekpeaking/               # Streamlit Web 工作台
+├── ms2mzml/                      # msdata → mzML 批量转换
+├── data/                         # 测试数据
+├── docs/                         # 项目文档
+└── paper/                        # 论文
 ```
-
----
-
-## 操作系统兼容性
-
-| 操作系统 | CPU 模式 | GPU 模式 | 备注 |
-|----------|:--------:|:--------:|------|
-| Windows 10/11 | ✅ | ✅ NVIDIA CUDA | 推荐 |
-| Linux (Ubuntu 20.04+) | ✅ | ✅ NVIDIA CUDA | 推荐 |
-| macOS (Apple Silicon M1-M4) | ✅ | ⚠️ MPS 加速（实验性） | 见下方说明 |
-| macOS (Intel) | ✅ | ❌ | CPU only |
-
-> **GPU 说明**：
-> - **NVIDIA GPU**：使用 CUDA 加速，推理速度最快。
-> - **Apple Silicon (M1-M4)**：代码已支持 MPS 加速（`torch.backends.mps`），在 `predict_utils.py` 中会自动检测并使用。训练脚本也支持 `--device auto` 自动选择最佳设备。
-> - **AMD GPU (ROCm)**：PyTorch 官方未提供 Windows 上的 ROCm 支持；Linux 下可尝试 ROCm 版 PyTorch。
-> - **无 GPU**：自动回退 CPU 模式。
-
----
-
-## 环境要求
-
-| 项目 | 要求 |
-|------|------|
-| Python | **3.10 ~ 3.11**（⚠️ 不要用 3.8 或 3.12+） |
-| PyTorch | 按 GPU 型号选择对应版本（见下表） |
-| Conda | 推荐 Miniconda / Anaconda |
-| R (可选) | 4.0+（仅 untargeted 模式需要） |
-
-| GPU 系列 | CUDA | torch | torchvision |
-|----------|------|-------|-------------|
-| RTX 50 (5060–5090) | 12.8 (cu128) | ≥2.7.0 | ≥0.22.0 |
-| RTX 40 (4060–4090) | 12.4 (cu124) | 2.6.0 | 0.21.0 |
-| RTX 30 / 20 / GTX 16 | 12.4 (cu124) | 2.6.0 | 0.21.0 |
-| CPU / Apple Silicon | — | 2.6.0 | 0.21.0 |
-
-> **Python 版本说明**：PyTorch 不支持 Python 3.8 及 3.12+。本项目的 `requirements.txt` 和 `environment.yml` 均以 Python 3.10/3.11 为准。
-> `requirements.txt` 已内置上述所有配置段，按需取消注释即可。
-
----
-
-## 环境检测（推荐先运行 ✅）
-
-在安装之前，运行以下命令即可**自动检测**当前机器是否满足所有依赖：
-
-```bash
-python .github/skills/check-dependencies/check_gui.py
-```
-
-弹窗会展示：
-
-| 检测内容 | 说明 |
-|----------|------|
-| Conda 环境 | 是否存在 `quanformer` 环境，支持一键创建 |
-| Python 版本 | 是否在 3.10 ~ 3.11 范围内 |
-| pip 包 | 逐一比对 `requirements.txt` 版本约束（`==` / `>=` / 范围） |
-| PyTorch / CUDA | 是否按 GPU 架构（RTX 50/40/30/20）正确安装 |
-| GPU | 型号 + 计算能力 |
-| 模型权重 | `checkpoint0029.pth` 是否存在且 >300MB |
-| R (可选) | Untargeted 模式所需运行时和包 |
-| 磁盘空间 | 是否 ≥ 2GB 可用 |
-
-如有缺失，弹窗支持**一键修复**（自动安装缺失的 pip 包到正确版本）。
-
-> 纯终端环境可用 `python .github/skills/check-dependencies/check_env.py` 输出文本报告。
-
----
-
-## 安装
-
-### 方式一：Conda（推荐 ✅）
-
-```bash
-# 1. 进入核心代码目录
-cd model
-
-# 2. 创建 conda 环境（Python 3.11）
-conda env create -f environment.yml
-conda activate quanformer
-
-# 3. 无 GPU 时替换为 CPU 版 PyTorch:
-# pip install --index-url https://download.pytorch.org/whl/cpu torch==2.6.0 torchvision==0.21.0
-
-# 4. 验证安装
-python -c "import torch; print('CUDA:', torch.cuda.is_available())"
-python -c "import torch; print('MPS:', torch.backends.mps.is_available())"
-python -c "import pymzml; print('pymzml OK')"
-```
-
-### 方式二：pip + venv
-
-```bash
-cd model
-
-# 创建虚拟环境
-python -3.11 -m venv venv
-
-# 激活
-# Windows:
-venv\Scripts\activate
-# Linux/macOS:
-source venv/bin/activate
-
-# 安装（RTX 50 系默认激活；其他 GPU 编辑 requirements.txt 切换对应段落后再执行）
-pip install -r requirements.txt
-
-# 验证
-python -c "import torch; print('OK')"
-```
-
-> **注意**：确保 `resources/checkpoint0029.pth` 模型文件存在且大于 300MB。
-> 若缺失可从 [模型权重](resources/checkpoint0029.pth) 下载。
-
----
-
-## 不同平台注意事项
-
-### Windows
-- 路径中如有空格（如 `C:\Program Files\...`），untargeted 模式下调用 R 可能会失败。建议使用不含空格的路径。
-- `pycocotools` 在 Windows 上安装可能需要 Visual C++ Build Tools。如遇安装问题可尝试 `pip install pycocotools-windows`。
-
-### Linux (Ubuntu)
-- 无桌面环境的服务器运行 GUI 模式需要 X11 转发（`ssh -X`）或虚拟显示器（`xvfb`）。
-- Untargeted 模式需要安装 R 和 Bioconductor 包（见下方说明）。
-
-### macOS
-- **Apple Silicon (M1-M4)**：PyTorch 会自动使用 MPS 加速，推理性能优于纯 CPU。
-- **Intel Mac**：仅支持 CPU 模式。
-- 首次运行 GUI 可能需要允许未签名应用（「系统偏好设置 → 安全性与隐私」）。
-
----
-
-## 使用
-
-### 1. 数据准备
-
-1. 在 `mzML` 文件夹中放入 `.mzML` 文件，并准备 `feature.csv`：
-   ```
-   ├── mzML
-      ├── BC1.mzML
-      ├── BC2.mzML
-      └── BC3.mzML
-   ```
-2. 若运行 targeted 定量，需准备以下格式的 `feature.csv`；否则跳过：
-   ```
-   feature.csv 包含以下列：
-   1. Compound Name（唯一编号）
-   2. mz
-   3. RT
-   ```
-
-### 2. 参数说明
-
-#### 通用参数
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `--type` | `mzML` | 原始数据类型，目前仅支持 mzML |
-| `--ppm` | `10` | ROI 提取的 PPM 容差 |
-| `--source` | `resources/example/centroided` | 原始数据目录 |
-| `--feature` | `resources/example/centroided_feature.csv` | 特征文件路径。非空则使用 targeted 模式；留空则使用 untargeted 模式 |
-| `--images_path` | `resources/example/centroided_output` | ROI 输出路径 |
-| `--output` | `.../area.csv` | 结果输出路径 |
-| `--threshold` | `0.99` | 仅保留置信度 > 0.99 的预测 |
-| `--model` | `resources/checkpoint0029.pth` | 峰检测模型路径 |
-| `--roi_plot` | `True` | 是否绘制 ROI（首次运行须为 True） |
-| `--plot` | `True` | 是否绘制预测结果 |
-| `--num_classes` | `1` | 类别数 |
-| `--smooth_sigma` | `0` | 平滑 sigma 值 |
-| `--processes_number` | `1` | 并行进程数 |
-
-#### Untargeted 模式参数 (centWave 算法)
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `--polarity` | `positive` | 极性 (positive/negative) |
-| `--minWidth` | `5` | 最小峰宽 |
-| `--maxWidth` | `50` | 最大峰宽 |
-| `--s2n` | `5` | 信噪比阈值 |
-| `--noise` | `100` | 噪声水平 |
-| `--mzDiff` | `0.005` | m/z 差异 |
-| `--prefilter` | `3` | 预过滤参数 |
-
-### 3. 命令行运行
-
-#### 3.1 Targeted 模式（Centroided 数据）
-
-```shell
-python main.py --ppm 10 \
-  --source resources/example/centroided \
-  --feature resources/example/centroided_feature.csv \
-  --images_path resources/example/centroided_output \
-  --output resources/example/centroided_output/area.csv \
-  --model resources/checkpoint0029.pth
-```
-
-#### 3.2 Targeted 模式（Profile 数据）
-
-示例数据下载：[Google Drive](https://drive.google.com/drive/folders/1JopRY0mgMxRGg45iXiBgbT-i7uG3M3tS?usp=drive_link)
-
-```shell
-python main.py --ppm 10 \
-  --source resources/example/profile \
-  --feature resources/example/profile_feature.csv \
-  --images_path resources/example/profile_output \
-  --output resources/example/profile_output/area.csv \
-  --model resources/checkpoint0029.pth
-```
-
-#### 3.3 安装 R（Untargeted 模式前置条件）
-
-- **R 版本**：4.4.2，xcms 版本：4.4.0
-- R 依赖包打包下载：[Google Drive](https://drive.google.com/file/d/1oEIANtyXztyRkKUcWpUh3jznCG2trHwv/view?usp=drive_link)
-
-首先检查 R 是否已安装：
-
-```shell
-R --version
-```
-
-**Ubuntu/Debian 安装 R**（详见 [CRAN](https://cran.r-project.org/bin/linux/ubuntu/)）：
-
-```shell
-sudo apt-get update
-sudo apt update -qq
-sudo apt install --no-install-recommends software-properties-common dirmngr
-wget -qO- https://cloud.r-project.org/bin/linux/ubuntu/marutter_pubkey.asc | sudo tee -a /etc/apt/trusted.gpg.d/cran_ubuntu_key.asc
-sudo add-apt-repository "deb https://cloud.r-project.org/bin/linux/ubuntu $(lsb_release -cs)-cran40/"
-sudo apt install --no-install-recommends r-base
-sudo apt-get install libxml2-dev
-```
-
-安装 R 包（详见 [Bioconductor](https://www.bioconductor.org/packages/release/bioc/html/xcms.html)）：
-
-```shell
-sudo R
-```
-
-在 R 控制台中执行：
-
-```r
-if (!require("BiocManager", quietly = TRUE))
-    install.packages("BiocManager")
-
-BiocManager::install("xcms")
-BiocManager::install("MSnbase")
-install.packages("dplyr")
-```
-
-#### 3.4 Untargeted 模式
-
-`--feature` 参数留空或不设置即可进入 untargeted 模式：
-
-```shell
-python main.py --ppm 10 \
-  --source resources/example/centroided \
-  --polarity positive --minWidth 5 --maxWidth 50 \
-  --s2n 5 --noise 100 --mzDiff 0.005 --prefilter 3 \
-  --images_path resources/example/untargeted_centroided_output \
-  --output resources/example/untargeted_centroided_output/area.csv \
-  --model resources/checkpoint0029.pth \
-  --processes_number 2
-```
-
-> **注意**：若出现 `FileNotFoundError: ... xcms_peak_list.csv`，说明 R 环境或依赖包未正确安装，请回到步骤 3.3。
-
-### 4. GUI 模式
-
-#### 4.1 Targeted 模式
-
-```shell
-python GUI/ms-main.py
-```
-
-#### 4.2 Untargeted 模式
-
-由于 centWave 模块配置复杂且运行耗时，建议先在命令行中运行 ROI 搜索，再用 GUI 读取生成的 feature 表：
-
-```shell
-python getFeature.py --source resources/example/centroided \
-  --polarity positive --ppm 10 --minWidth 5 --maxWidth 50 \
-  --s2n 5 --noise 100 --mzDiff 0.015 --prefilter 3
-```
-
-![GUI](resources/GUI.png)
 
 ---
 
 ## 辅助工具
 
-### 🖥️ GamSTekPeaking — 下一代统一桌面应用
+### GamSTekPeaking — Web 工作台
 
-基于 Streamlit 的质谱代谢组学全流程工作台，提供现代化的 Web UI：
+基于 Streamlit 的代谢组学全流程界面：
 
 ```bash
 cd gamstekpeaking
@@ -396,125 +333,70 @@ pip install -r requirements.txt
 python main.py
 ```
 
-| 模块 | 说明 |
-|------|------|
-| `pages/peak_finding.py` | 峰查找与检测 |
-| `pages/preprocessing.py` | 数据预处理 |
-| `pages/settings.py` | 应用设置 |
-| `workers/converter.py` | msdata → mzML 后台转换 |
-| `workers/ion_zenith.py` | 离子天顶角计算 |
-| `engine/` | 模型推理引擎（预留） |
+### ms2mzml — 格式转换
 
-### 🔄 ms2mzml — 批量格式转换
-
-将厂商原始 `.msdata` 文件批量转换为标准 `.mzML` 格式（基于 OpenMS 工具链）：
+厂商 `.msdata` → 标准 `.mzML`：
 
 ```bash
 cd ms2mzml
-python rename_cn.py          # 中文文件名→英文（仅首次）
-python ms2mzml.py            # 批量转换
+python rename_cn.py      # 中文文件名→英文（首次）
+python ms2mzml.py        # 批量转换
 ```
 
-> 要求 `bin/` 目录包含完整的 `msdata2mzml.exe` 及 OpenMS 运行时。项目路径不得含中文。
+> 要求 `bin/` 包含 OpenMS 运行时，项目路径不得含中文。
 
-### 🔧 工具集（`model/tools/`）
+### 工具集（`model/tools/`）
 
 | 子模块 | 用途 | 入口示例 |
 |--------|------|----------|
-| `batch/` | 批量重处理（SNR / post / 联合） | `python -m tools.batch.reprocess --stage snr` |
-| `mzml/` | 色谱图查看/导出/检查 | `python -m tools.mzml.chromatogram list <file>` |
-| `benchmark/` | 性能基准测试与报告 | `python -m tools.benchmark.runner --help` |
-| `diagnostics/` | 诊断与调试工具 | — |
-| `experiments/` | 实验性脚本 | — |
-| `visualization/` | 可视化工具 | — |
+| `batch/` | 批量重处理（SNR / post） | `python -m tools.batch.reprocess --stage snr` |
+| `mzml/` | 色谱图查看/导出 | `python -m tools.mzml.chromatogram list <file>` |
+| `benchmark/` | 性能基准测试 | `python -m tools.benchmark.runner --help` |
+| `visualization/` | 可视化 | — |
 | `tests/` | 测试脚本 | — |
 
-### 📊 高级管线脚本（`model/`）
+---
 
-| 脚本 | 说明 |
-|------|------|
-| `run_unified_peak_workflow.py` | 统一峰检测管线：区间校正 + 小峰检测 + 谷点回退 |
-| `run_two_round_detection.py` | 两轮检测：首轮检测 → 区间调整 → 二轮精修 |
-| `mzml_box_outside_snr_pipeline.py` | 框外 SNR 计算管线 |
-| `newtest_valley_split.py` | 谷点分割（防撞峰） |
-| `integrate_prediction.py` | 预测结果积分 |
-| `build_standard_curves.py` | 标准曲线构建 |
-| `calc_r2_integrate_prediction.py` | R² 拟合优度计算 |
+## 平台注意事项
+
+| 平台 | 注意事项 |
+|------|----------|
+| **Windows** | 路径避免空格（影响 R 调用）；`pycocotools` 可能需 Visual C++ Build Tools |
+| **Linux** | 无桌面环境运行 GUI 需 X11 转发（`ssh -X`）或 `xvfb` |
+| **macOS** | Apple Silicon 自动使用 MPS 加速；Intel Mac 仅 CPU |
 
 ---
 
-## 依赖版本说明
-
-核心依赖及其版本锁定策略：
-
-| 包 | 版本 | 说明 |
-|----|------|------|
-| `torch` | 2.6.0 / ≥2.7.0 | 随 GPU 架构不同，见环境要求表 |
-| `torchvision` | 0.21.0 / ≥0.22.0 | 与 torch 版本配套 |
-| `numpy` | 1.26.4 | 精确锁定，避免兼容问题 |
-| `pandas` | 2.2.2 | 精确锁定 |
-| `scipy` | 1.13.1 | 精确锁定 |
-| `pymzml` | 2.5.10 | 质谱数据解析 |
-| `pyside6` | ≥6.7.0, <6.8.0 | GUI 框架 |
-| `pycocotools` | ≥2.0.0 | COCO 评估工具 |
-| `matplotlib` | 3.9.2 | 绑图 |
-| `joblib` | 1.4.2 | 并行处理 |
-| `pillow` | ≥10.0.0, <11.0.0 | 图像处理 |
-
-> 若遇到依赖冲突，可将 `requirements.txt` 中 `==` 改为 `>=` 尝试。
-
----
-
-## 训练模型（高级）
-
-```shell
-cd model
-python quanformer/main.py \
-  --coco_path data/peak-all \
-  --output_dir output \
-  --device auto
-```
-
-`--device auto` 会自动选择最佳可用设备（CUDA > MPS > CPU）。
-
----
-
-## 常见问题 (FAQ)
+## 常见问题
 
 <details>
-<summary><b>Q: 运行时提示 CUDA 不可用？</b></summary>
+<summary><b>CUDA 不可用？</b></summary>
 
-确认 NVIDIA 驱动已安装且 `nvidia-smi` 正常。运行：
-```shell
+```bash
+nvidia-smi                          # 确认驱动正常
 python -c "import torch; print(torch.cuda.is_available())"
 ```
-若返回 `False`，请重装对应 CUDA 版本的 PyTorch。
+若返回 `False`，重装对应 GPU 的 PyTorch 版本。
 </details>
 
 <details>
-<summary><b>Q: macOS M1/M2/M3/M4 上如何加速？</b></summary>
+<summary><b>无 GPU 可以运行吗？</b></summary>
 
-代码会自动检测 MPS 并使用。验证：
-```shell
-python -c "import torch; print(torch.backends.mps.is_available())"
-```
-若返回 `True`，推理将自动使用 GPU 加速。
+可以。编辑 `model/requirements.txt`，启用 `CPU Only` 段（`--index-url .../cpu`），注释其他 GPU 段后重装。代码自动回退 CPU。
 </details>
 
 <details>
-<summary><b>Q: 无 GPU 可以运行吗？</b></summary>
+<summary><b>Untargeted 模式报错 FileNotFoundError: xcms_peak_list.csv？</b></summary>
 
-可以。编辑 `requirements.txt`，取消 `CPU Only` 段注释（含 `--index-url .../cpu`），注释掉其他 GPU 段，再 `pip install -r requirements.txt` 即可。代码会自动使用 CPU。
+R 或 Bioconductor 包未正确安装，请按照上方「Untargeted 模式」节重新安装 R 环境。
 </details>
 
 <details>
-<summary><b>Q: Windows 上出现路径相关错误？</b></summary>
+<summary><b>Windows 路径相关错误？</b></summary>
 
-尽量避免路径中包含**空格**和**中文字符**。推荐使用类似 `D:\data\mrmpformer\` 的简洁路径。
+避免路径含**空格**和**中文**。推荐 `D:\data\mrmpformer\` 之类简洁路径。
 </details>
 
 ---
 
-更详细的模型训练说明参见：[User Guide.pdf](User%20Guide.pdf)。
-
-> 跨平台部署详情参见：[docs/QuanFormer 跨平台部署指南.md](docs/QuanFormer%20跨平台部署指南.md)。
+> 更多细节：[项目全景](docs/PROJECT_PANORAMA.md) · [已知问题](docs/Bugs.md) · [跨平台部署](docs/QuanFormer%20跨平台部署指南.md)

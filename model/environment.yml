@@ -20,7 +20,9 @@ dependencies:
       - pyside6>=6.7.0,<6.8.0
       - pycocotools>=2.0.0
       - seaborn>=0.13.0
-      # PyTorch with CUDA 12.4 - 如需 CPU 版请替换为:
-      # --index-url https://download.pytorch.org/whl/cpu
+      # PyTorch with CUDA 12.4 (RTX 4090D / RTX 40 系列)
+      # 如需 CPU 版请替换 --extra-index-url 为:
+      #   --extra-index-url https://download.pytorch.org/whl/cpu
+      - --extra-index-url https://download.pytorch.org/whl/cu124
       - torch==2.6.0
       - torchvision==0.21.0

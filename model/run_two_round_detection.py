@@ -10,7 +10,7 @@
 5. 在原 XIC 平滑图上绘制 1 或 2 个区间框及置信度
 
 用法:
-  python run_two_round_detection.py --batch_predictions results/batch_predictions --images_root xic-roi-batch --model resources/checkpoint0029.pth
+  python run_two_round_detection.py --batch_predictions results/batch_predictions --images_root xic-roi-batch --model checkpoint/checkpoint0029.pth
   python run_two_round_detection.py ... --min_confidence 0.99 --min_snr 3 --min_secondary_ratio 0.05
 """
 import argparse
