@@ -59,3 +59,10 @@ QuanFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 - 需求分析(MRMPFormer/): 确定采用 SimCLR 对比学习方案（方案 B），ResNet50 骨干 + 128-d 投影头，自监督训练无需标注
 - 代码生成(MRMPFormer/): 创建完整 SimCLR 训练框架 —— simclr.py（ResNet50 + ProjectionHead）、losses.py（NT-Xent）、augmentations.py（5 种 SimCLR 增强）、dataset.py（无标签图像数据集）、train.py（CosineAnnealing + 梯度累积）、extract_features.py（推理输出 2048-d 特征）
 - 文档生成(docs/superpowers/specs/): 创建 2026-07-15-mrmpformer-simclr-design.md 设计文档
+
+### 2026-08-03
+
+- 文档生成(README.md): 修复完整管线部分 —— 数据路径改为 `../data/...`（`cd model` 后根目录数据）、输出结构图修正（`prediction_refined.csv` 实际位于 `snr_filtered/<样品>/SNR_box_<阈值>/` 下，补充 `predicted_plots/`、`refined_plots/`、计时日志）、轻量模式路径统一
+- 文档生成(README.md): 安装部分拆分为「第一步 安装 Python 环境」+「第二步 安装项目依赖」两节，明确 Python 3.10~3.11 与 pip/conda 两种路径
+- 文档生成(README.md): 推理参数速查新增「完整参数模板」—— 覆盖 `model/main.py` argparse 全部 42 个参数（基础/QC/SNR/Post 四组），每个参数配注释填写说明，可直接复制运行（bash 语法已验证）
+- 其他(model/environment.yml): 补充缺失的 `pyopenms==3.3.0`，与 `requirements.txt` 对齐（testXIC.py 顶层硬依赖，缺失会导致管线无法启动）

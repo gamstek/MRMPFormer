@@ -176,6 +176,48 @@
 ### 修改 #6
 - **改动人**: 罗钊
 - **类型**: 重构
-- **说明**: code-change-logger SKILL.md 触发模式从每次编辑弹窗改为回答末尾询问；涉及 `.github/skills/code-change-logger/SKILL.md`；联动 `CLAUDE.md`
-- **内容**: 删除「每次触发时必须先提问」规则，改为 AI 在含代码编辑的回答末尾加一句「是否登记改动人？」，用户回复后批量写入
-- **理由**: 高频编辑场景下每次弹窗严重打断工作流，简化为末尾询问兼顾追溯性和用户体验
+- **说明**: code-change-logger SKILL.md 触发模式从每次编辑弹窗改为回答末尾询问；
+涉及 `.github/skills/code-change-logger/SKILL.md`；联动 `CLAUDE.md`
+- **内容**: 删除「每次触发时必须先提问」规则，改为 AI 在含代码编辑的回答末尾加一
+句「是否登记改动人？」，用户回复后批量写入
+- **理由**: 高频编辑场景下每次弹窗严重打断工作流，简化为末尾询问兼顾追溯性和用户
+体验
+
+---
+
+## 26-08-03
+
+### 修改 #7 — README 安装部分拆分为两步
+- **改动人**: Hulot
+- **类型**: 文档生成
+- **说明**: README.md 安装章节重构为「第一步 安装 Python 环境」+「第二步 安装项目依赖」；涉及 `README.md` 安装小节
+- **内容**: 第一步：Conda `conda create -n quanformer python=3.11` / venv `python3.11 -m venv`；第二步：`pip install -r requirements.txt`；`environment.yml` 一键创建作为等价快捷方式保留
+- **理由**: 用户要求区分 Python 环境安装与依赖安装，避免 `conda env create` 与 pip 路径混淆
+
+### 修改 #8 — README 新增完整参数模板（全部 42 个 parse 名）
+- **改动人**: Hulot
+- **类型**: 文档生成
+- **说明**: README.md「推理参数速查」新增可复制的「完整参数模板」；涉及 `README.md` 推理参数速查小节
+- **内容**: 覆盖 `model/main.py` argparse 全部 42 个参数，按基础/QC/SNR/Post 四组排列，每个参数配 `#` 注释填写说明（默认值、可选值、flag 语义），最后一行收尾；bash 语法已通过 `bash -n` 验证
+- **理由**: 用户要求列出所有 parse 名并注释填写说明，便于直接复制改参运行
+
+### 修改 #9 — README 输出结构图修正
+- **改动人**: Hulot
+- **类型**: 文档生成
+- **说明**: README.md「输出结构」图与代码实际输出对齐；涉及 `README.md` 完整管线小节
+- **内容**: `prediction_refined.csv` 更正为位于 `snr_filtered/<样品>/SNR_box_3.0/` 下（`--post_output_name` 写入 `--results_dir`），补充 `batch_predictions/<样品>/predicted_plots/`、`refined_plots/`、`pipeline_timing.log`/`pipeline_timing_runs.jsonl`
+- **理由**: 原图将最终精修 CSV 画在输出根目录，与 `main.py`/`run_unified_peak_workflow.py` 实际行为不符，误导用户找文件
+
+### 修改 #10 — README 轻量模式路径统一
+- **改动人**: Hulot
+- **类型**: 文档生成
+- **说明**: README.md 轻量模式命令路径与完整管线一致；涉及 `README.md` 轻量模式小节
+- **内容**: `--mzml data/test1/mzML/B1.mzML`、`--batch_dir data/test1/mzML` → `../data/test1/mzML`（`cd model` 后数据位于项目根目录）
+- **理由**: 原路径 `model/data` 不存在，命令必然报错
+
+### 修改 #11 — environment.yml 补充 pyopenms
+- **改动人**: Hulot
+- **类型**: 调整
+- **说明**: model/environment.yml 的 pip 段补充 `pyopenms==3.3.0`，与 `model/requirements.txt` 对齐；涉及 `model/environment.yml`
+- **内容**: `pip:` 段在 `pymzml==2.5.10` 后新增 `pyopenms==3.3.0`
+- **理由**: `testXIC.py:27` 顶层 `from pyopenms import MzMLFile, MSExperiment` 为硬依赖，environment.yml 缺失导致 Conda 安装用户管线无法启动（requirements.txt 已由用户补上，此处补齐另一份清单）

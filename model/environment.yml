@@ -16,6 +16,7 @@ dependencies:
   - packaging>=24.0
   - pip:
       - pymzml==2.5.10
+      - pyopenms==3.3.0
       - natsort==8.4.0
       - pyside6>=6.7.0,<6.8.0
       - pycocotools>=2.0.0

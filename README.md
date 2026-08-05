@@ -34,23 +34,43 @@ MRMPFormer 是基于 **DETR（ResNet-50 + Transformer）** 的 LC-MS 代谢组�
 
 ### 安装
 
-**Conda（推荐）**：
+安装分为两步：**① 安装 Python 环境 → ② 安装项目依赖**。
+
+#### 第一步：安装 Python 环境
+
+> 项目要求 **Python 3.10 ~ 3.11**（不支持 3.8 及 3.12+），以下两种方式任选其一。
+
+**方式 A：Conda（推荐）**
 
 ```bash
-cd model
-conda env create -f environment.yml
+# 创建独立环境并指定 Python 版本（3.10 或 3.11）
+conda create -n quanformer python=3.11
 conda activate quanformer
 ```
 
-**pip + venv**：
+**方式 B：pip + venv**（本机需已安装 Python 3.10 或 3.11）
 
 ```bash
 cd model
 python3.11 -m venv venv
 source venv/bin/activate          # Linux/macOS
 # venv\Scripts\activate           # Windows
+```
+
+#### 第二步：安装项目依赖
+
+```bash
+cd model
 pip install -r requirements.txt
 ```
+
+> 💡 想一步完成「Python 环境 + 依赖」？也可直接使用 `environment.yml`（内置 Python 3.11 与全部依赖，等价于上面两步）：
+>
+> ```bash
+> cd model
+> conda env create -f environment.yml
+> conda activate quanformer
+> ```
 
 **验证**：
 
@@ -99,8 +119,8 @@ cd model
 # 批量 mzML（最常用）
 python main.py --mode pipeline_batch_mzml \
   --model checkpoint/checkpoint0029.pth \
-  --batch_dir data/test1/mzML \
-  --output_dir results/pipeline_batch \
+  --batch_dir ../data/test1/mzML \
+  --output_dir ../output/pipeline_batch \
   --threshold 0.99 --plot \
   --snr_min 3.0 \
   --pipeline_min_max_intensity 1000 \
@@ -109,19 +129,28 @@ python main.py --mode pipeline_batch_mzml \
 # 单个 mzML
 python main.py --mode pipeline_mzml \
   --model checkpoint/checkpoint0029.pth \
-  --mzml data/test1/mzML/B1.mzML \
-  --output_dir results/pipeline_single \
+  --mzml ../data/test_oulu_23.mzML \
+  --output_dir ../output/pipeline_single \
   --threshold 0.99 --plot
 ```
 
-**输出结构**：
+**输出结构**（以 `--output_dir ../output/pipeline_batch` 为例，`<样品>` 为 mzML 文件名去后缀）：
 
 ```
-results/pipeline_batch/
-├── xic-roi-batch/           # EIC 提取 + ROI 图像
-├── batch_predictions/       # 模型预测 CSV
-├── snr_filtered/            # SNR 筛选结果
-└── prediction_refined.csv   # 最终精修结果（峰面积 + 置信度）
+../output/pipeline_batch/
+├── xic-roi-batch/                       # EIC 提取 + ROI 图像（每样品一个子目录）
+├── batch_predictions/                   # 模型预测 CSV
+│   └── <样品>/
+│       ├── prediction.csv               # 模型预测结果（峰面积 + 置信度）
+│       └── predicted_plots/             # 预测框标注图（--plot 时生成）
+├── snr_filtered/                        # SNR 筛选 + 峰区间精修
+│   └── <样品>/
+│       └── SNR_box_3.0/                 # 目录名随 --snr_min 变化（3.0 → SNR_box_3.0）
+│           ├── prediction.csv           # SNR 筛选后预测
+│           ├── prediction_refined.csv   # ⭐ 最终精修结果（峰面积 + 置信度）
+│           └── refined_plots/           # 精修标注图（--plot 时生成）
+├── pipeline_timing.log                  # 阶段计时日志
+└── pipeline_timing_runs.jsonl           # 计时记录（JSONL）
 ```
 
 ---
@@ -143,12 +172,12 @@ echo '{"rt":[1,2,3,4,5],"intensity":[100,500,800,400,50]}' | \
 # 单个 mzML
 python main.py --mode mzml \
   --model checkpoint/checkpoint0029.pth \
-  --mzml data/test1/mzML/B1.mzML --output_dir results/single
+  --mzml ../data/test1/mzML/B1.mzML --output_dir results/single
 
 # 批量 mzML
 python main.py --mode batch_mzml \
   --model checkpoint/checkpoint0029.pth \
-  --batch_dir data/test1/mzML --output_dir results/batch
+  --batch_dir ../data/test1/mzML --output_dir results/batch
 ```
 
 **单张图 JSON 格式**：
@@ -166,6 +195,108 @@ python main.py --mode batch_mzml \
 ---
 
 ### 推理参数速查
+
+> 以下为 `model/main.py` **全部**命令行参数（与 argparse 定义一一对应）。
+> 「完整参数模板」可直接复制到终端，按注释填写/删减；除 `--model` 外所有参数均可省略（使用默认值）。
+
+**完整参数模板**（注释即填写说明）：
+
+```bash
+python main.py \
+  # ==================== 基础参数 ====================
+  # 运行模式（默认 single），可选：
+  #   single / mzml / batch_mzml / batch_dir / batch_json_dir / pipeline_mzml / pipeline_batch_mzml
+  --mode pipeline_batch_mzml \
+  # 【必填】模型权重 .pth 路径（相对 model/ 目录）
+  --model checkpoint/checkpoint0029.pth \
+  # [single] 输入 JSON 文件路径，- 表示 stdin（默认 -）
+  --input input.json \
+  # [single] 输出 JSON 文件路径，- 表示 stdout（默认 -）
+  --output output.json \
+  # 置信度阈值（默认 0.99，建议 0.99 起步，过低会引入假峰）
+  --threshold 0.99 \
+  # 积分方式（默认 linear）：linear / raw / external_baseline
+  --integration_method linear \
+  # 高斯平滑 sigma（默认 0.0，越大峰越平滑但可能合并近邻峰）
+  --smooth_sigma 0.0 \
+  # 输出目录（默认自动生成）
+  --output_dir ../output/pipeline_batch \
+  # [single] 保留临时文件（flag，不加则不保留）
+  --keep_temp \
+  # [mzml / pipeline_mzml] 输入 mzML 文件路径
+  --mzml ../data/test1/mzML/B1.mzML \
+  # [batch_mzml / pipeline_batch_mzml] mzML 目录；
+  # [batch_dir] testXIC 输出目录；[batch_json_dir] JSON 目录
+  --batch_dir ../data/test1/mzML \
+  # 生成预测框标注图（flag，不加则不生成图）
+  --plot \
+  # [batch_json_dir] 所有预测图统一目录（默认 <batch_dir>/predicted_plots_all）
+  --batch_plot_dir ../output/plots_all \
+  # ==================== Pipeline QC 参数 ====================
+  # [已弃用] 标准品 CSV，传入仅打印提示，不再参与 ROI 定位
+  # --standard_refs_csv xxx.csv \
+  # [QC] XIC 平滑后最大强度低于此值 → 不生成 ROI（默认 1000；0=关闭）
+  --pipeline_min_max_intensity 1000 \
+  # [QC] 单条色谱 RT 点数少于此值 → 剔除（默认 10；0=关闭）
+  --pipeline_min_chrom_points 10 \
+  # ==================== SNR 筛选参数 ====================
+  # 框外 SNR 最低阈值（默认 3.0，越高要求信噪比越严）
+  --snr_min 3.0 \
+  # SNR 计算时强度高斯平滑 sigma（默认 0.8）
+  --snr_gaussian_sigma 0.8 \
+  # 框外噪声至少点数（默认 5）
+  --snr_min_noise_points 5 \
+  # ==================== Post 精修参数 ====================
+  # 精修输出 CSV 文件名（默认 prediction_refined.csv）
+  --post_output_name prediction_refined.csv \
+  # 小峰相对主峰的 RT 容差（默认 0.25 min）
+  --post_small_peak_rt_tol 0.25 \
+  # 次峰相对主峰动态最小比例（默认 0.04，略降有利于弱次峰通过）
+  --post_min_secondary_ratio 0.04 \
+  # 噪声阻碍系数（默认 0.45，略降有利于弱次峰通过）
+  --post_noise_barrier_ratio 0.45 \
+  # ROI 次峰全局门槛放宽系数（默认 0.055）
+  --post_secondary_roi_global_gate_relax_frac 0.055 \
+  # 峰顶单侧估计截停时的最大 RT 跨度 min（默认 0.24）
+  --post_edge_max_span_min 0.24 \
+  # 单侧低噪声分位数（默认 55；越高→截停阈值越高→边界外推越短）
+  --post_edge_noise_percentile 55.0 \
+  # 小峰边界外扩 padding（默认 0.08）
+  --post_small_boundary_pad 0.08 \
+  # 边界外推后验窗口点数（默认 0；0=仅首点阈值，外扩更少）
+  --post_boundary_posterior_lookahead 0 \
+  # 后验均值相对阈值倍数上限（默认 1.25，lookahead>0 时生效）
+  --post_boundary_posterior_mean_scale 1.25 \
+  # 关闭谷值回退（默认启用谷值回退；传入此 flag 才关闭）
+  --post_disable_valley_fallback \
+  # 小峰失败时关闭左右重预测（默认开启；传入此 flag 才关闭）
+  --post_disable_lr_repredict_on_small_fail \
+  # 精修后最低置信度（默认 0.99）
+  --post_min_confidence 0.99 \
+  # 精修后最低 SNR（默认 3.0）
+  --post_min_snr 3.0 \
+  # 小峰噪声窗口半宽（默认 0.30）
+  --post_small_noise_window_half 0.30 \
+  # 主峰边界噪声分位数（默认 20.0）
+  --post_main_boundary_noise_percentile 20.0 \
+  # 精修绘图平滑 sigma（默认 0.8）
+  --post_plot_sigma 0.8 \
+  # 精修绘图子目录名（默认 refined_plots）
+  --post_plot_dir_name refined_plots \
+  # 边框阈值模式（默认 roi_bottom_decile_mean）：
+  #   roi_bottom_decile_mean / stable_tail_mean / low_percentile
+  --post_edge_noise_stop_mode roi_bottom_decile_mean \
+  # 三连微降早停（相对峰高，默认 0.010；0=关闭）
+  --post_edge_flat_triplet_step_frac 0.010 \
+  # 修正框宽上限：≤ 原始预测宽 × 倍数（默认 1.08，不强行扩框）
+  --post_refine_width_max_expand_vs_pred 1.08 \
+  # 修正框宽上限：≤ ROI 窗口 × 比例（默认 0.45）
+  --post_refine_width_max_frac_of_roi 0.45 \
+  # 启用小峰相对主峰的 RT 门控（默认关闭；传入此 flag 才启用）
+  --post_enable_small_peak_rt_gate
+```
+
+**常用参数速查**：
 
 **通用参数**：
 
