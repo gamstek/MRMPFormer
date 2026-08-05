@@ -7,7 +7,7 @@ MRMPFormer 是基于 **DETR（ResNet-50 + Transformer）** 的 LC-MS 代谢组�
 
 - **输入**：`.mzML` 原始质谱数据
 - **输出**：峰面积 CSV + 预测标注图
-- **模型**：CNN 骨干 + 1 层 Transformer 编解码器
+- **模型**：ResNet骨干 + 1层Encoder + 3层Decoder
 - **开发版本**：v2.0.0
 
 ---
