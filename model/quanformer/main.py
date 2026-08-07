@@ -1,10 +1,3 @@
-# --------------------------------------------------------------------
-# QuanFormer
-# Copyright (c) LinShuhaiLAB, Xiamen University. All Rights Reserved.
-# --------------------------------------------------------------------
-# Modified from DETR(https://github.com/facebookresearch/detr)
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-# --------------------------------------------------------------------
 import argparse
 import datetime
 import json
