@@ -449,8 +449,8 @@ MRMPFormer/
 │   ├── tools/                    # 批处理/诊断/可视化
 │   ├── checkpoint/               # 模型权重
 │   └── resources/                # 示例数据
-├── gamstekpeaking/               # Streamlit Web 工作台
-├── ms2mzml/                      # msdata → mzML 批量转换
+├── converters/                   # 格式转换（msdata/wiff → mzML）
+├── gamstekpeaking/               # Streamlit Web 工作台（已废弃，见 desktop/）
 ├── data/                         # 测试数据
 ├── docs/                         # 项目文档
 └── paper/                        # 论文
@@ -470,17 +470,22 @@ pip install -r requirements.txt
 python main.py
 ```
 
-### ms2mzml — 格式转换
+### converters — 格式转换
 
-厂商 `.msdata` → 标准 `.mzML`：
+支持两种厂商格式 → 标准 `.mzML`：
 
 ```bash
-cd ms2mzml
+cd converters
+
+# msdata → mzML（OpenMS 工具链）
 python rename_cn.py      # 中文文件名→英文（首次）
-python ms2mzml.py        # 批量转换
+python msdata.py         # 批量转换
+
+# wiff → mzML（ProteoWizard 工具链）
+python wiff.py           # 批量转换
 ```
 
-> 要求 `bin/` 包含 OpenMS 运行时，项目路径不得含中文。
+> 要求对应 `*_bin/` 包含运行时依赖，项目路径不得含中文。
 
 ### 工具集（`model/tools/`）
 

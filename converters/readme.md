@@ -1,63 +1,51 @@
-# wiff2mzml
+# converters — 格式转换工具集
 
-使用 ProteoWizard msconvert 将 AB Sciex 的 `.wiff` / `.wiff2` 文件批量转换为 `.mzML` 格式。
+将厂商原始质谱数据批量转换为标准 `.mzML` 格式。
+
+## 功能一览
+
+| 脚本 | 输入格式 | 输出格式 | 工具链 |
+|------|----------|----------|--------|
+| `msdata.py` | `.msdata` | `.mzML` | `msdata2mzml.exe`（OpenMS） |
+| `wiff.py` | `.wiff` / `.wiff2` | `.mzML` | `msconvert.exe`（ProteoWizard） |
+| `rename_cn.py` | — | — | 中文文件名 → 英文（msdata 预处理） |
 
 ## 目录结构
 
 ```
-wiff2mzml/
-├── wiff2mzml.py          # 批量转换脚本
-├── data/                 # 放 .wiff 文件（需自行创建）
-│   ├── sample.wiff
-│   ├── sample.wiff.scan  # WIFF 通常需要配套的 .wiff.scan 文件
-│   └── sample/           # 转换输出自动生成到此
-└── bin/                  # msconvert.exe 及运行时依赖
+converters/
+├── msdata.py              # msdata → mzML 批量转换
+├── wiff.py                # wiff → mzML 批量转换
+├── rename_cn.py           # 中文文件名重命名工具
+├── readme.md              # 本文档
+├── readme.txt             # msdata 转换详细说明
+├── conversion_report.txt  # 最近一次转换报告
+├── exp_log.md             # 实验日志
+├── msdata_bin/            # msdata2mzml.exe + OpenMS 运行时
+├── wiff_bin/              # msconvert.exe + ProteoWizard 运行时
+└── desktop_bin/           # desktop/ 自包含副本
 ```
 
 ## 快速开始
 
-```powershell
-cd wiff2mzml
+```bash
+cd converters
 
-# 1. 预览待转换文件
-python wiff2mzml.py --dry-run
+# === msdata → mzML ===
+python rename_cn.py            # 预览中文文件名映射
+python rename_cn.py --no-dry-run  # 确认执行重命名
+python msdata.py --dry-run     # 预览待转换文件
+python msdata.py               # 批量转换全部
 
-# 2. 批量转换
-python wiff2mzml.py
+# === wiff → mzML ===
+python wiff.py --dry-run       # 预览待转换文件
+python wiff.py                 # 批量转换全部
+python wiff.py --no-peak-picking  # 保留 profile 模式
 ```
-
-## 命令行参数
-
-| 参数 | 说明 |
-|------|------|
-| `--input <路径>` | 仅转换指定文件 |
-| `--dry-run` | 仅列出文件，不转换 |
-| `--no-peak-picking` | 保留原始 profile 数据（默认会做峰检测，输出更小） |
-
-示例：
-
-```powershell
-# 转换单个文件
-python wiff2mzml.py --input "data/20230222_YYF_Blood_Meta_POS.wiff"
-
-# 保留 profile 模式
-python wiff2mzml.py --no-peak-picking
-```
-
-## 输出
-
-每个 `.wiff` 转换后在 `data/<文件名>/` 下生成若干 `.mzML` 文件（数量取决于 WIFF 中包含的 sample 数）。脚本末尾会打印汇总统计。
-
-转换过程中如遇损坏的 run 会自动跳过并继续处理其余数据。
 
 ## 注意事项
 
-- 路径不能包含中文，否则会报错
-- WIFF 文件需要同名 `.wiff.scan` 配套文件在相同目录下
-- 大文件转换耗时长、吃内存，建议转换时关闭其他程序
-- 默认开启 `peakPicking`（centroid 化），输出文件更小
-
-## 依赖
-
-- Python 3（标准库即可，无需额外安装）
-- `bin/msconvert.exe`（ProteoWizard，已附带）
+- 项目路径不得含中文（OpenMS C++ 层限制）
+- WIFF 文件需要同名 `.wiff.scan` 配套文件
+- 大文件转换耗时长、吃内存
+- 详见各 `readme.txt` 和 `exp_log.md`

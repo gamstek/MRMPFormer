@@ -56,6 +56,41 @@
 - **内容**: 记录 README 校正的 6 项修改
 - **理由**: 按 CLAUDE.md 强制规则同步更新
 
+### 修改 #8 — 新建 logutil.py（运行时日志过滤模块）
+- **改动人**: AI Copilot
+- **类型**: 代码生成
+- **说明**: 创建 mrmpformer/util/logutil.py，通过替换 sys.stdout 实现按行前缀级别过滤日志输出
+- **内容**: model/mrmpformer/util/logutil.py — 新建；`_FilteredStdout` 类按行缓冲并检查 [INFO]/[WARN]/[ERROR] 前缀，默认级别 WARNING（抑制 INFO）；支持 `configure_log_level()` API 与环境变量 `MRMPFORMER_LOG_LEVEL`
+- **理由**: 项目使用 print("[INFO] ...") 模式，常规日志刷屏严重；无需改动任何现有 print 调用即可全局过滤
+
+### 修改 #9 — main.py CLI 新增 --verbose/--quiet 参数
+- **改动人**: AI Copilot
+- **类型**: 代码生成
+- **说明**: main_cli() 新增 `--verbose` / `--quiet` 互斥标志；解析后调用 install_filter() 安装日志过滤器
+- **内容**: model/main.py — 新增两 argparse 参数（-v / -q）；在 parse_args() 后根据参数设置日志级别并安装过滤器
+- **理由**: 用户可灵活控制输出冗余度：默认静默 INFO、-v 恢复全量日志、-q 仅显示错误
+
+### 修改 #10 — 修复 __init__.py 导入错误
+- **改动人**: AI Copilot
+- **类型**: 调试
+- **说明**: mrmpformer/util/__init__.py 中 `safe_torch_load` 实际位于 misc.py 而非 io.py，拆分导入语句
+- **内容**: model/mrmpformer/util/__init__.py — 将 `from mrmpformer.util.io import safe_torch_load,...` 拆分为 `from mrmpformer.util.misc import safe_torch_load` + `from mrmpformer.util.io import ...`
+- **理由**: 预存 bug 导致任何 `from mrmpformer.util import ...` 均触发 ImportError；blocker 级修复
+
+### 修改 #11 — README conda 环境切换
+- **改动人**: AI Copilot
+- **类型**: 文档生成
+- **说明**: README 中所有 conda 环境引用从 `mrmpformer` 切换为 `gamstekpeaking`（该环境含全部依赖，开箱即用）
+- **内容**: README.md — 环境要求表、PyTorch 版本说明、安装命令、提示信息共 4 处更新
+- **理由**: `gamstekpeaking` 环境已完整安装所有依赖（pymzml/pyopenms/PySide6 等），而 `mrmpformer` 环境缺少多个关键包
+
+### 修改 #12 — 更新开发日志（日志过滤 + 环境切换）
+- **改动人**: AI Copilot
+- **类型**: 文档生成
+- **说明**: dev_log.md 补充 2026-08-10 条目：logutil 创建、CLI 日志参数、导入修复、README 环境切换
+- **内容**: 更新 dev_log.md 2026-08-10 条目
+- **理由**: 按 CLAUDE.md 强制规则同步更新
+
 ---
 
 ## 26-07-29

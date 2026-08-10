@@ -887,7 +887,29 @@ def main_cli():
         help="[post] 启用小峰相对主峰的 RT 门控；不显式传入则关闭（允许多峰不按 RT 限制）",
     )
 
+    # ==================== 日志级别 ====================
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="显示 INFO 级别日志（默认仅显示 WARNING 及以上）",
+    )
+    parser.add_argument(
+        "--quiet", "-q",
+        action="store_true",
+        help="仅显示 ERROR 级别日志",
+    )
+
     args = parser.parse_args()
+
+    # ---- 配置运行时日志过滤 ----
+    from mrmpformer.util.logutil import configure_log_level, install_filter
+
+    if args.quiet:
+        configure_log_level("ERROR")
+    elif args.verbose:
+        configure_log_level("INFO")
+    # 否则保持默认 WARNING（抑制 [INFO] 行）
+    install_filter()
 
     if args.mode in {"pipeline_mzml", "pipeline_batch_mzml"}:
         from newtest import main as newtest_main
