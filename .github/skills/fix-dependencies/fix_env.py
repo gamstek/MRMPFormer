@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-QuanFormer 环境依赖修复脚本
+MRMPFormer 环境依赖修复脚本
 =============================
 由 fix-dependencies skill 调用，处理机械性修复操作。
 
@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Optional, Tuple
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 CHECK_SCRIPT = Path(__file__).resolve().parent.parent / "check-dependencies" / "check_env.py"
-DEFAULT_ENV_NAME = "quanformer"
+DEFAULT_ENV_NAME = "mrmpformer"
 DEFAULT_PYTHON = "3.11"
 
 # 不可自动修复的类别
@@ -63,8 +63,8 @@ def list_conda_envs() -> Dict[str, Any]:
     """列出所有 conda 环境，检查 quanformer 是否存在."""
     result: Dict[str, Any] = {
         "conda_available": False,
-        "quanformer_exists": False,
-        "quanformer_path": None,
+        "mrmpformer_exists": False,
+        "mrmpformer_path": None,
         "all_envs": [],
     }
 
@@ -92,11 +92,11 @@ def list_conda_envs() -> Dict[str, Any]:
             continue
         result["all_envs"].append(name)
         if name == DEFAULT_ENV_NAME:
-            result["quanformer_exists"] = True
+            result["mrmpformer_exists"] = True
             # 提取路径
             for p in parts[1:]:
                 if p not in ("*", ""):
-                    result["quanformer_path"] = p
+                    result["mrmpformer_path"] = p
                     break
 
     return result
@@ -250,7 +250,7 @@ def apply_fixes(env_name: str, fixable_items: List[Dict[str, Any]], dry_run: boo
 
 def main():
     parser = argparse.ArgumentParser(
-        description="QuanFormer 环境依赖修复",
+        description="MRMPFormer 环境依赖修复",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command", help="操作")
@@ -282,7 +282,7 @@ def main():
     if args.command == "find-env":
         envs = list_conda_envs()
         print(json.dumps(envs, ensure_ascii=False, indent=2))
-        sys.exit(0 if envs["quanformer_exists"] else 1)
+        sys.exit(0 if envs["mrmpformer_exists"] else 1)
 
     elif args.command == "create-env":
         ok = create_conda_env(args.name, args.python)

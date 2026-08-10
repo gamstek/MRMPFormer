@@ -1,7 +1,7 @@
 ---
 name: check-dependencies
-description: "Use when: 检查环境依赖/check dependencies/环境检测/依赖检查/验证环境/本机是否满足依赖/环境就绪/依赖诊断. Diagnoses whether the local machine meets ALL QuanFormer project requirements — Python version, pip packages, PyTorch/CUDA compatibility, R/Bioconductor, model weights, and system prerequisites. Produces a structured pass/fail report with fix suggestions."
-argument-hint: "检查本机是否满足 QuanFormer 全部依赖"
+description: "Use when: 检查环境依赖/check dependencies/环境检测/依赖检查/验证环境/本机是否满足依赖/环境就绪/依赖诊断. Diagnoses whether the local machine meets ALL MRMPFormer project requirements — Python version, pip packages, PyTorch/CUDA compatibility, R/Bioconductor, model weights, and system prerequisites. Produces a structured pass/fail report with fix suggestions."
+argument-hint: "检查本机是否满足 MRMPFormer 全部依赖"
 user-invocable: true
 ---
 
@@ -21,7 +21,7 @@ python .github/skills/check-dependencies/check_env.py
 # 仅失败项 / JSON / 指定 conda 环境
 python .github/skills/check-dependencies/check_env.py --quiet
 python .github/skills/check-dependencies/check_env.py --json
-python .github/skills/check-dependencies/check_env.py --target-env quanformer
+python .github/skills/check-dependencies/check_env.py --target-env mrmpformer
 ```
 
 检测基于 `model/requirements.txt`，覆盖 `==`、`>=`、`>=X,<Y` 等版本约束。对 PyTorch 会按 GPU 计算能力自动匹配正确版本。

@@ -180,7 +180,7 @@ def build_predictor(
         model = None
         
         try:
-            from quanformer.models.detr import build
+            from mrmpformer.models.detr import build
             result = build(train_args)  # 返回 (model, criterion, postprocessors)
             
             # ✅ 关键：从元组中提取模型

@@ -1,4 +1,4 @@
-# QuanFormer 项目全景文档
+# MRMPFormer 项目全景文档
 
 > 自动生成于 2026-07-07 · 基于全项目遍历
 
@@ -7,7 +7,7 @@
 ## 📁 项目目录树
 
 ```
-QuanFormer/
+MRMPFormer/
 ├── CLAUDE.md                          ← 项目级 AI 指令（开发日志规则）
 ├── dev_log.md                         ← 项目开发日志
 ├── PROJECT_PANORAMA.md                ← 本文件
@@ -15,9 +15,9 @@ QuanFormer/
 ├── 项目方案设计模板.md                   ← 通用方案设计模板
 │
 ├── paper/                             ← 📄 论文
-│   ├── QuanFormer-A Transformer Based Precise Peak.pdf
-│   ├── QuanFormer-translated.pdf
-│   └── QuanFormer_Supporting Information.pdf
+│   ├── MRMPFormer-A Transformer Based Precise Peak.pdf
+│   ├── MRMPFormer-translated.pdf
+│   └── MRMPFormer_Supporting Information.pdf
 │
 ├── data/                              ← 🏷️ 训练/测试数据
 │   └── test/
@@ -45,7 +45,7 @@ QuanFormer/
     │   ├── ms.py       (~800行)       ← 自动生成的 UI 代码
     │   └── ms.ui       (~300行)       ← Qt Designer XML
     │
-    ├── quanformer/                    ← 🧬 深度学习核心库
+    ├── mrmpformer/                    ← 🧬 深度学习核心库
     │   ├── main.py     (~150行)       ← 【训练入口】
     │   ├── engine.py   (~120行)       ← 训练/评估引擎
     │   ├── hubconf.py  (~30行)        ← PyTorch Hub 入口

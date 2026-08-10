@@ -3,7 +3,7 @@
 ## 项目概述
 
 ### 目标
-QuanFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量工具。结合 CNN（ResNet-50）与 Transformer（DETR 架构），在提取离子色谱图（EIC/ROI）中识别真峰/假峰并定位峰边界以积分定量。
+MRMPFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量工具。结合 CNN（ResNet-50）与 Transformer（DETR 架构），在提取离子色谱图（EIC/ROI）中识别真峰/假峰并定位峰边界以积分定量。
 
 ### 输入
 - **原始数据**: `.mzML` 格式的高分辨率 LC-MS 数据（Centroided 或 Profile）
@@ -18,7 +18,7 @@ QuanFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 
 ### 方法介绍
 1. 从 mzML 中按 m/z 提取 EIC → 生成 ROI 图像
-2. 使用 QuanFormer（ResNet-50 + 1 层 Transformer 编解码器）检测峰
+2. 使用 MRMPFormer（ResNet-50 + 1 层 Transformer 编解码器）检测峰
 3. 根据预测框边界对 EIC 积分 → 得到峰面积
 4. 后处理去重 → 输出定量结果表
 支持 Targeted/Untargeted × Centroided/Profile 四种组合模式。
@@ -26,6 +26,10 @@ QuanFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 ---
 
 ## 开发时间线
+
+### 2026-08-10
+
+- 文档生成(README.md): 基于当前模型架构与 conda 环境校正 README —— 修正编解码器层数（3层Decoder→1层Decoder，与 checkpoint0029.pth 一致）、补充 num_queries=3 / hidden_dim=256 / nheads=8 等架构细节、明确 conda 环境名 `mrmpformer`（Python 3.11.15 + PyTorch 2.6.0+cu124）、标注本机 GPU 为 8× RTX 4090 D、训练参数表注明 checkpoint 实际 num_queries 与默认值差异、新增 checkpoint 完整训练参数说明
 
 ### 2026-07-29
 

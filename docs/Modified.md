@@ -5,6 +5,59 @@
 
 ---
 
+## 26-08-10
+
+### 修改 #1 — README 模型架构校正
+- **改动人**: AI Copilot
+- **类型**: 文档生成
+- **说明**: 修正 README 模型架构描述：Decoder 层数 3→1（与 checkpoint0029.pth 一致），补充 hidden_dim=256 / nheads=8 / num_queries=3 等架构细节
+- **内容**: README.md 简介部分 — 模型行改写为"ResNet-50 骨干 + 1层Encoder + 1层Decoder（hidden_dim=256, nheads=8）"，新增"查询数"行
+- **理由**: 原描述"3层Decoder"与 checkpoint0029.pth 实际训练参数（dec_layers=1）不符，误导用户
+
+### 修改 #2 — README 环境要求补充
+- **改动人**: AI Copilot
+- **类型**: 文档生成
+- **说明**: 环境要求表新增 GPU 行（8× RTX 4090 D / CUDA 12.4）、Python 行补充 conda 环境名 `mrmpformer`
+- **内容**: README.md 环境要求表 — 新增 GPU 行；Python 行补充 conda 环境名
+- **理由**: 用户需明确知道本机 GPU 配置及应使用的 conda 环境名
+
+### 修改 #3 — README PyTorch 段补充本机信息
+- **改动人**: AI Copilot
+- **类型**: 文档生成
+- **说明**: PyTorch 版本表下方新增本机环境说明（mrmpformer / Python 3.11.15 / PyTorch 2.6.0+cu124）
+- **内容**: README.md PyTorch 版本表下方 — 新增提示行
+- **理由**: 便于本机用户快速确认当前环境是否匹配
+
+### 修改 #4 — README Conda 安装段补充已有环境提示
+- **改动人**: AI Copilot
+- **类型**: 文档生成
+- **说明**: 方式 A（Conda）安装命令下方新增提示：本机已存在 `mrmpformer` 环境，直接 activate 即可
+- **内容**: README.md 安装第一步 — 新增 warning 提示
+- **理由**: 避免用户重复创建同名环境
+
+### 修改 #5 — README 训练参数表校正
+- **改动人**: AI Copilot
+- **类型**: 文档生成
+- **说明**: num_queries 参数行补充"checkpoint 为 3"注释；enc_layers/dec_layers 描述微调
+- **内容**: README.md 训练关键参数表 — num_queries 行补充；enc_layers/dec_layers 描述细化
+- **理由**: 默认值 10 与 checkpoint 实际值 3 不一致，需标注
+
+### 修改 #6 — README 新增 checkpoint 完整训练参数
+- **改动人**: AI Copilot
+- **类型**: 文档生成
+- **说明**: 恢复训练注意事项下方新增 checkpoint0029.pth 完整训练参数一览
+- **内容**: README.md 微调与评估段下方 — 新增提示行
+- **理由**: 便于用户了解已训练模型的完整超参数
+
+### 修改 #7 — 更新开发日志
+- **改动人**: AI Copilot
+- **类型**: 文档生成
+- **说明**: dev_log.md 新增 2026-08-10 条目
+- **内容**: 记录 README 校正的 6 项修改
+- **理由**: 按 CLAUDE.md 强制规则同步更新
+
+---
+
 ## 26-07-29
 
 ### 修改 #1 — 新建 reprocess.py（合并批处理脚本）

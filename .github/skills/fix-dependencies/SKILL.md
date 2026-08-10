@@ -1,7 +1,7 @@
 ---
 name: fix-dependencies
-description: "Use when: 修复依赖/fix dependencies/安装依赖/自动修复环境/补齐依赖/环境修复. After check-dependencies reports failures, automatically repairs the environment — finds or creates the 'quanformer' conda env, installs missing pip packages with correct versions, and verifies the fix."
-argument-hint: "根据检测报告自动修复 QuanFormer 环境依赖"
+description: "Use when: 修复依赖/fix dependencies/安装依赖/自动修复环境/补齐依赖/环境修复. After check-dependencies reports failures, automatically repairs the environment — finds or creates the 'mrmpformer' conda env, installs missing pip packages with correct versions, and verifies the fix."
+argument-hint: "根据检测报告自动修复 MRMPFormer 环境依赖"
 user-invocable: true
 ---
 
@@ -19,13 +19,13 @@ user-invocable: true
 python .github/skills/fix-dependencies/fix_env.py find-env
 
 # 在指定环境中检测 + 修复
-python .github/skills/fix-dependencies/fix_env.py fix quanformer
+python .github/skills/fix-dependencies/fix_env.py fix mrmpformer
 
 # 预览修复方案（不执行）
-python .github/skills/fix-dependencies/fix_env.py fix quanformer --dry-run
+python .github/skills/fix-dependencies/fix_env.py fix mrmpformer --dry-run
 
 # 修复后验证
-python .github/skills/fix-dependencies/fix_env.py verify quanformer
+python .github/skills/fix-dependencies/fix_env.py verify mrmpformer
 ```
 
 > ⚠️ 修复前会列出待安装的包清单，**必须让用户确认后再执行**。不可自动修复的项（Python 版本、R、模型文件、磁盘空间）应告知用户手动处理。

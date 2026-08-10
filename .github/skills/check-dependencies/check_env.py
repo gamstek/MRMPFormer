@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-QuanFormer 环境依赖检测脚本
+MRMPFormer 环境依赖检测脚本
 =============================
 用法: python check_env.py [--json] [--quiet] [--target-env NAME]
 
@@ -66,7 +66,7 @@ GPU_ARCH_RULES = {
 R_PACKAGES = ["MSnbase", "xcms"]
 
 # 默认 conda 环境名
-DEFAULT_CONDA_ENV = "quanformer"
+DEFAULT_CONDA_ENV = "mrmpformer"
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +196,7 @@ def detect_conda() -> Dict[str, Any]:
         "in_conda_env": False,
         "env_name": None,
         "env_prefix": None,
-        "is_quanformer_env": False,
+        "is_mrmpformer_env": False,
         "all_envs": [],
     }
 
@@ -214,7 +214,7 @@ def detect_conda() -> Dict[str, Any]:
         result["in_conda_env"] = True
         result["env_name"] = env_name
         result["env_prefix"] = env_prefix
-        result["is_quanformer_env"] = (env_name == DEFAULT_CONDA_ENV)
+        result["is_mrmpformer_env"] = (env_name == DEFAULT_CONDA_ENV)
     else:
         # 尝试通过 conda info 获取
         ret2, out2, _ = run_cmd(["conda", "info", "--json"])
@@ -228,7 +228,7 @@ def detect_conda() -> Dict[str, Any]:
                         result["env_name"] = active_prefix
                     else:
                         result["env_name"] = os.path.basename(str(active_prefix))
-                    result["is_quanformer_env"] = (result["env_name"] == DEFAULT_CONDA_ENV)
+                    result["is_mrmpformer_env"] = (result["env_name"] == DEFAULT_CONDA_ENV)
             except json.JSONDecodeError:
                 pass
 
@@ -410,7 +410,7 @@ def run_all_checks() -> List[CheckResult]:
     if conda_info["conda_available"]:
         if conda_info["in_conda_env"]:
             env_label = conda_info["env_name"] or "(未知)"
-            is_quanformer = conda_info["is_quanformer_env"]
+            is_quanformer = conda_info["is_mrmpformer_env"]
             results.append(CheckResult(
                 "Conda", "当前环境",
                 DEFAULT_CONDA_ENV,
@@ -806,7 +806,7 @@ def render_json(results: List[CheckResult]) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="QuanFormer 环境依赖检测",
+        description="MRMPFormer 环境依赖检测",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--json", action="store_true", help="以 JSON 格式输出")

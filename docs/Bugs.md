@@ -1,4 +1,4 @@
-# QuanFormer 已知问题汇总
+# MRMPFormer 已知问题汇总
 
 > 更新于 2026-07-07
 

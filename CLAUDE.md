@@ -1,22 +1,24 @@
-# CLAUDE.md — QuanFormer 项目级全局指令
+# CLAUDE.md — MRMPFormer 项目级全局指令
 
-> 本文件为 QuanFormer 项目的 AI 辅助指令文件，会被自动加载进每次模型调用的上下文。
+> 本文件为 MRMPFormer 项目的 AI 辅助指令文件，会被自动加载进每次模型调用的上下文。
 > 任何模型（主对话、子 Agent、外部模型）在本项目中被调用时，**必须**遵守以下规则。
 
 ---
 
 ## 项目身份
 
-QuanFormer 是一个基于 **DETR（ResNet-50 + 1 层 Transformer 编解码器）** 的 LC-MS 代谢组学峰检测与定量工具。
+MRMPFormer 是一个基于 **DETR（ResNet-50 + 1 层 Transformer 编解码器）** 的 LC-MS 代谢组学峰检测与定量工具。
 
 | 属性 | 说明 |
 |------|------|
-| **核心代码** | `model/` 目录（非项目根目录） |
-| **模型权重** | `model/resources/checkpoint0029.pth`（>300MB） |
+| **核心包** | `model/mrmpformer/` — 纯模型 + 训练 + 推理 + 前处理 + 后处理 + 管线 |
+| **桌面 GUI** | `desktop/` — PySide6 图形界面 |
+| **格式转换** | `converters/` — msdata/wiff → mzML |
+| **模型权重** | `model/mrmpformer/resources/checkpoint0029.pth`（>300MB） |
 | **四种分析模式** | Targeted / Untargeted × Centroided / Profile |
 | **输入** | `.mzML` 原始质谱数据 + 可选 `feature.csv` |
 | **输出** | `area.csv`、`post-area.csv`、EIC 预测图像 |
-| **上游来源** | Facebook DETR（`quanformer/` 包 fork 自 DETR） |
+| **上游来源** | Facebook DETR（`mrmpformer/model/` fork 自 DETR） |
 | **版权所有** | LinShuhaiLAB, Xiamen University |
 
 ---
@@ -34,16 +36,22 @@ QuanFormer 是一个基于 **DETR（ResNet-50 + 1 层 Transformer 编解码器�
 - **依赖文件**：以 `model/requirements.txt` 为准（已整合 GPU/CPU 分段配置）
 
 ### 设备与路径
-- **设备选择**：❌ 严禁硬编码 `device='cuda'`，必须使用 `_get_best_device()`（`utils/predict_utils.py`，CUDA > MPS > CPU 自动检测）
-- **模型加载**：❌ 严禁直接用 `torch.load()`，必须使用 `safe_torch_load()`（`utils/io_utils.py`）以兼容跨 PyTorch 版本
+- **设备选择**：❌ 严禁硬编码 `device='cuda'`，必须使用 `resolve_torch_device()`（`mrmpformer/inference/device.py`，CUDA > MPS > CPU 自动检测）
+- **模型加载**：❌ 严禁直接用 `torch.load()`，必须使用 `safe_torch_load()`（`mrmpformer/util/io.py`）以兼容跨 PyTorch 版本
 - **路径分隔符**：❌ 严禁硬编码 `/` 或 `\\`，必须使用 `os.path.join()` / `pathlib.Path`
 - **路径空格**：注意 Windows 路径含空格时 R 调用（`find_peaks.R`）可能失败，需加引号
 
 ### 架构边界
-- `quanformer/` 包：模型定义 + 训练（纯 DETR，不依赖业务逻辑）
-- `utils/` 包：推理辅助（EIC 提取、定量、后处理、绑图）
-- `GUI/`：PySide6 图形界面（独立于 CLI 管线）
-- 两个包职责不同，不要交叉引用
+- `mrmpformer/model/`：纯 DETR 模型定义（不依赖业务逻辑）
+- `mrmpformer/training/`：训练引擎 + 数据集
+- `mrmpformer/inference/`：模型加载 + 预测 + 可视化
+- `mrmpformer/preprocessing/`：mzML 加载 → EIC → ROI 图像
+- `mrmpformer/postprocessing/`：积分定量 + 峰质量 + box↔RT 映射
+- `mrmpformer/pipelines/`：组装完整流程的编排脚本
+- `mrmpformer/util/`：公共工具（box_ops, misc, io）
+- `desktop/`：PySide6 图形界面（独立于 CLI 管线）
+- `converters/`：格式转换工具（msdata/wiff → mzML）
+- 各层单向依赖：pipelines → 业务层 → model → util
 
 ### 已知陷阱（详见 `docs/Bugs.md`）
 - `batch_size=1` 逐张推理导致 GPU 利用率仅 ~15%

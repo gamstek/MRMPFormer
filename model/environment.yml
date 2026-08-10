@@ -1,4 +1,4 @@
-name: quanformer
+name: mrmpformer
 channels:
   - pytorch
   - conda-forge

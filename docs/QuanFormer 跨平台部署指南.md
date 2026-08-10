@@ -1,4 +1,4 @@
-# QuanFormer 跨平台部署指南
+# MRMPFormer 跨平台部署指南
 
 ## 支持的平台
 
@@ -30,15 +30,15 @@
 
 ```bash
 # 1. 克隆或解压项目到本地
-cd Quanformer/main_model
+cd MRMPFormer/main_model
 
 # 2. 创建环境 (有 GPU)
 conda env create -f environment.yml
-conda activate quanformer
+conda activate mrmpformer
 
 # 如果没有 GPU，改为 CPU 模式:
 # conda env create -f environment.yml
-# conda activate quanformer
+# conda activate mrmpformer
 # pip install --index-url https://download.pytorch.org/whl/cpu torch==2.6.0 torchvision==0.21.0
 
 # 3. 验证安装
@@ -50,7 +50,7 @@ python -c "import pymzml; print('pymzml OK')"
 ### 方式二：pip + venv
 
 ```bash
-cd Quanformer/main_model
+cd MRMPFormer/main_model
 
 # 1. 创建虚拟环境
 python -3.11 -m venv venv
@@ -93,7 +93,7 @@ python main.py \
   --images_path resources/example/centroided_output
 
 # 训练模型
-python quanformer/main.py \
+python mrmpformer/main.py \
   --coco_path data/peak-all \
   --output_dir output
 ```
@@ -148,7 +148,7 @@ main_model/
 │   ├── find_peaks.R          # R 脚本 (untargeted 需要)
 │   ├── predict_utils.py      # 预测核心
 │   └── ...
-├── quanformer/               # DETR 模型包
+├── mrmpformer/               # DETR 模型包
 └── resources/                # 示例数据 & 模型权重
     ├── checkpoint0029.pth    # 预训练权重
     └── example/              # 示例数据

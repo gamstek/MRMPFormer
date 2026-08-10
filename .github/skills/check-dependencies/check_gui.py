@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-QuanFormer 环境依赖检测 — GUI 弹窗报告
+MRMPFormer 环境依赖检测 — GUI 弹窗报告
 ========================================
 用法: python check_gui.py
 
@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 CHECK_SCRIPT = Path(__file__).resolve().parent / "check_env.py"
 FIX_SCRIPT = Path(__file__).resolve().parent.parent / "fix-dependencies" / "fix_env.py"
-DEFAULT_ENV_NAME = "quanformer"
+DEFAULT_ENV_NAME = "mrmpformer"
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +159,7 @@ class CheckGUI:
 
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("QuanFormer — 环境依赖检测报告")
+        self.root.title("MRMPFormer — 环境依赖检测报告")
         self.root.geometry("860x680")
         self.root.minsize(700, 500)
         self.root.configure(bg=COLORS["bg"])

@@ -28,7 +28,7 @@ def main():
         "--model",
         type=str,
         default=str(root / "checkpoint" / "checkpoint0029.pth"),
-        help="QuanFormer .pth 权重路径",
+        help="MRMPFormer .pth 权重路径",
     )
     parser.add_argument("--no-plot", action="store_true", help="不加 --plot")
     args = parser.parse_args()

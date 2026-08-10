@@ -7,7 +7,8 @@ MRMPFormer 是基于 **DETR（ResNet-50 + Transformer）** 的 LC-MS 代谢组�
 
 - **输入**：`.mzML` 原始质谱数据
 - **输出**：峰面积 CSV + 预测标注图
-- **模型**：ResNet骨干 + 1层Encoder + 3层Decoder
+- **模型**：ResNet-50 骨干 + 1层Encoder + 1层Decoder（hidden_dim=256, nheads=8）
+- **查询数**：num_queries=3（最多同时检出 3 个峰）
 - **开发版本**：v2.0.0
 
 ---
@@ -18,8 +19,9 @@ MRMPFormer 是基于 **DETR（ResNet-50 + Transformer）** 的 LC-MS 代谢组�
 
 | 项目 | 要求 |
 |------|------|
-| Python | **3.10 ~ 3.11**（不支持 3.8 及 3.12+） |
+| Python | **3.11**（Conda 环境 `gamstekpeaking`；不支持 3.8 及 3.12+） |
 | 包管理器 | Conda（推荐）或 pip + venv |
+| GPU | 本机 **8× NVIDIA RTX 4090 D**（CUDA 12.4，计算能力 8.9） |
 | R（可选） | 4.0+，仅 Untargeted 模式需要 |
 
 **PyTorch 版本**（按 GPU 选择）：
@@ -31,6 +33,7 @@ MRMPFormer 是基于 **DETR（ResNet-50 + Transformer）** 的 LC-MS 代谢组�
 | CPU / Apple Silicon (MPS) | — | 2.6.0 | 0.21.0 |
 
 > `model/requirements.txt` 已内置上述所有配置段，按需取消/注释对应行即可。当前默认启用 **RTX 40 系 (CUDA 12.4)**。
+> 本机（8× RTX 4090 D）使用 `gamstekpeaking` Conda 环境：Python 3.11.15 + PyTorch 2.6.0+cu124（已含全部依赖，开箱即用）。
 
 ### 安装
 
@@ -43,10 +46,12 @@ MRMPFormer 是基于 **DETR（ResNet-50 + Transformer）** 的 LC-MS 代谢组�
 **方式 A：Conda（推荐）**
 
 ```bash
-# 创建独立环境并指定 Python 版本（3.10 或 3.11）
-conda create -n quanformer python=3.11
-conda activate quanformer
+# 创建独立环境并指定 Python 版本（3.11）
+conda create -n gamstekpeaking python=3.11
+conda activate gamstekpeaking
 ```
+
+> ⚠️ 本机已存在 `gamstekpeaking` 环境（Python 3.11.15 + PyTorch 2.6.0+cu124，含全部依赖），直接 `conda activate gamstekpeaking` 即可。
 
 **方式 B：pip + venv**（本机需已安装 Python 3.10 或 3.11）
 
@@ -69,7 +74,7 @@ pip install -r requirements.txt
 > ```bash
 > cd model
 > conda env create -f environment.yml
-> conda activate quanformer
+> conda activate mrmpformer
 > ```
 
 **验证**：
@@ -130,7 +135,7 @@ python main.py --mode pipeline_batch_mzml \
 python main.py --mode pipeline_mzml \
   --model checkpoint/checkpoint0029.pth \
   --mzml ../data/test_oulu_23.mzML \
-  --output_dir ../output/pipeline_single \
+  --output_dir ../output/pipeline_single_test \
   --threshold 0.99 --plot
 ```
 
@@ -375,7 +380,7 @@ python getFeature.py \
 ```bash
 cd model
 
-python quanformer/main.py \
+python mrmpformer/main.py \
   --coco_path data/peak-all \
   --output_dir output \
   --device auto \
@@ -403,8 +408,8 @@ python quanformer/main.py \
 | `--epochs` | `30` | 训练轮数 |
 | `--batch_size` | `4` | 批大小 |
 | `--lr` / `--lr_backbone` | `1e-4` / `1e-5` | 学习率 |
-| `--enc_layers` / `--dec_layers` | `1` / `1` | Transformer 层数 |
-| `--num_queries` | `10` | 最大检出峰数 |
+| `--enc_layers` / `--dec_layers` | `1` / `1` | Transformer 编/解码器层数 |
+| `--num_queries` | `10`（checkpoint 为 `3`） | 最大检出峰数 |
 | `--resume` | — | 从检查点恢复 |
 | `--eval` | — | 仅评估，不训练 |
 
@@ -412,17 +417,18 @@ python quanformer/main.py \
 
 ```bash
 # 从预训练权重继续训练
-python quanformer/main.py \
+python mrmpformer/main.py \
   --coco_path data/peak-all --output_dir output_finetune \
   --device auto --resume checkpoint/checkpoint0029.pth --epochs 50
 
 # 仅评估
-python quanformer/main.py \
+python mrmpformer/main.py \
   --coco_path data/peak-all \
   --resume checkpoint/checkpoint0029.pth --device auto --eval
 ```
 
 > ⚠️ 恢复训练时会自动跳过 `class_embed` 和 `query_embed` 权重（维度可能不匹配）。
+> 💡 当前 `checkpoint0029.pth` 的训练参数：`enc_layers=1, dec_layers=1, num_queries=3, hidden_dim=256, nheads=8, dim_feedforward=2048, dropout=0.1`。
 
 ---
 
@@ -435,7 +441,7 @@ MRMPFormer/
 │   ├── getFeature.py             # Untargeted 特征提取
 │   ├── requirements.txt          # pip 依赖（GPU 分段）
 │   ├── environment.yml           # Conda 环境
-│   ├── quanformer/               # DETR 训练框架
+│   ├── mrmpformer/               # 核心包（模型/训练/推理/前后处理/管线）
 │   │   ├── main.py               #   训练入口
 │   │   ├── models/               #   模型定义
 │   │   └── datasets/             #   COCO 数据加载
@@ -530,4 +536,4 @@ R 或 Bioconductor 包未正确安装，请按照上方「Untargeted 模式」�
 
 ---
 
-> 更多细节：[项目全景](docs/PROJECT_PANORAMA.md) · [已知问题](docs/Bugs.md) · [跨平台部署](docs/QuanFormer%20跨平台部署指南.md)
+> 更多细节：[项目全景](docs/PROJECT_PANORAMA.md) · [已知问题](docs/Bugs.md) · [跨平台部署](docs/MRMPFormer%20跨平台部署指南.md)
