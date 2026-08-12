@@ -11,7 +11,9 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
-BIN_DIR = BASE_DIR / "bin"
+MSDATA_BIN_DIR = BASE_DIR / "msdata_bin"
+LEGACY_BIN_DIR = BASE_DIR / "bin"
+BIN_DIR = MSDATA_BIN_DIR if MSDATA_BIN_DIR.exists() else LEGACY_BIN_DIR
 MSDATA2MZML_EXE = BIN_DIR / "msdata2mzml.exe"
 OPENMS_SHARE = BIN_DIR / "share" / "OpenMS"
 

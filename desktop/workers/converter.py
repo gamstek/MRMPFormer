@@ -19,8 +19,12 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 
 
-# 定位 bin/ 目录（相对于本文件向上两级: workers/ → desktop/）
-_BIN_DIR = Path(__file__).resolve().parent.parent / "bin"
+# 定位 bin/ 目录：优先使用 desktop/bin，其次回退到 converters/msdata_bin（项目根）
+ROOT = Path(__file__).resolve().parents[2]
+_LOCAL_BIN = Path(__file__).resolve().parent.parent / "bin"
+_CONVERTERS_MS_DATA_BIN = ROOT / "converters" / "msdata_bin"
+# 选择存在的 bin 目录（优先本地 desktop/bin，否则使用 converters/msdata_bin）
+_BIN_DIR = _LOCAL_BIN if _LOCAL_BIN.exists() else _CONVERTERS_MS_DATA_BIN
 _EXE_PATH = _BIN_DIR / "msdata2mzml.exe"
 _SHARE_PATH = _BIN_DIR / "share" / "OpenMS"
 

@@ -13,7 +13,10 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
-MSCONVERT_EXE = BASE_DIR / "bin" / "msconvert.exe"
+WIFF_BIN_DIR = BASE_DIR / "wiff_bin"
+LEGACY_BIN_DIR = BASE_DIR / "bin"
+BIN_DIR = WIFF_BIN_DIR if WIFF_BIN_DIR.exists() else LEGACY_BIN_DIR
+MSCONVERT_EXE = BIN_DIR / "msconvert.exe"
 
 
 def convert_file(input_file: Path, no_peak_picking: bool = False):
