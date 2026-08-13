@@ -23,6 +23,9 @@ import argparse
 import json
 import os
 import sys
+
+# 解决 Windows 下 PyTorch(libomp.dll) 与 numpy/MKL(libiomp5md.dll) 的 OpenMP 运行时冲突
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 import tempfile
 import threading
 import time
