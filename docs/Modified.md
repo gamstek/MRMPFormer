@@ -5,6 +5,80 @@
 
 ---
 
+## 26-08-13
+
+### 修改 #1
+- **改动人**: AI Copilot
+- **类型**: 重构
+- **说明**: converters 目录精简；涉及 `converters/readme.md`（目录树与注意事项节）；联动 `desktop/bin/README_bin.md` L26、`dev_log.md` L30/L63
+- **内容**: 目录树移除 desktop_bin/、readme.txt、conversion_report.txt、exp_log.md 四行；注意事项合并 readme.txt 要点并新增「msdata 转换细节」小节（位置参数限制、输出位置、退码 858、191/191 全量实验结论）；desktop/bin/README_bin.md 来源行由 converters/desktop_bin/ 改为 converters/msdata_bin/
+- **理由**: 执行精简方案 A+C——desktop_bin/ 经 MD5 比对与 desktop/bin 逐字节一致且全仓库零代码引用；readme.txt 内容过期（引用已更名的 ms2mzml.py）但与 readme.md 有重叠，合并后删除
+
+### 修改 #2
+- **改动人**: AI Copilot
+- **类型**: 文档生成
+- **说明**: 归档 exp_log.md 至 dev_log.md；涉及 `dev_log.md` L30-L33、L63-L65
+- **内容**: 新增 2026-08-13 时间线条目记录本次精简；在 2026-07-09 分组追加归档条目，保留 TMP/TEMP 中文用户名教训、退码 858 判定准则、脚本更名说明
+- **理由**: 执行精简方案 D——exp_log.md 与根目录 dev_log.md 体系并行且部分记载过期，删除前将其关键实验结论并入项目开发日志以保留追溯性
+
+### 修改 #3
+- **改动人**: AI Copilot
+- **类型**: 删除
+- **说明**: 删除冗余文件与目录；涉及 `converters/desktop_bin/`（整目录）、`converters/conversion_report.txt`、`converters/readme.txt`、`converters/exp_log.md`
+- **内容**: 终端删除上述 4 个对象，共释放约 116MB（desktop_bin 115.9MB + 报告与文档约 43KB）；Test-Path 逐一确认删除生效
+- **理由**: 执行精简方案 A+B+C+D——desktop_bin/ 无消费者、conversion_report.txt 为无代码写入的历史产物、readme.txt 与 exp_log.md 已完成内容合并
+
+### 修改 #4
+- **改动人**: AI Copilot
+- **类型**: 重构
+- **说明**: 新建根目录 requirements.txt，合并 model 与 desktop 依赖；涉及 `requirements.txt`（新建）、`model/requirements.txt` 与 `desktop/requirements.txt`（删除）
+- **内容**: 根目录 requirements.txt 整合两处依赖并去重——核心包（numpy/pandas/scipy/pymzml/pyopenms/joblib/natsort/packaging/matplotlib/seaborn/pillow/pycocotools）+ desktop 独有 tqdm>=4.65.0 + PySide6 版本交集 >=6.7,<6.8；默认启用 RTX 40 系/4090D 段（--index-url cu124 + torch==2.6.0 + torchvision==0.21.0），RTX 50 与 CPU 段保留为注释；原两个 requirements.txt 已删除
+- **理由**: 用户要求统一依赖文件到根目录；PyTorch 按本机 8× RTX 4090 D 选定 cu124 段
+
+### 修改 #5
+- **改动人**: AI Copilot
+- **类型**: 文档生成
+- **说明**: 写死 Conda 环境名为 gamstekpeaking；涉及 `CLAUDE.md` L31-L37、`README.md` L22/L35-L36/L52-L80/L441-L444/L527、`desktop/README.md` L13、`model/environment.yml` L1
+- **内容**: CLAUDE.md 技术约束新增「Conda 环境名写死 gamstekpeaking」硬约束，依赖文件改为根目录 requirements.txt；README 环境要求表、PyTorch 说明、安装步骤（venv 与 pip 改为根目录）、environment.yml 提示段（activate mrmpformer→gamstekpeaking）、项目结构树、CPU FAQ 同步更新；environment.yml name 由 mrmpformer 改为 gamstekpeaking；desktop/README 安装命令改为 ../requirements.txt
+- **理由**: 用户要求 CLAUDE.md 与 README 中写死当前环境名定义为 conda 环境 gamstekpeaking
+
+### 修改 #6
+- **改动人**: AI Copilot
+- **类型**: 调整
+- **说明**: check-dependencies skill 依赖路径同步；涉及 `.github/skills/check-dependencies/check_env.py` L10/L41-L42/L536/L559、`SKILL.md` L25-L27
+- **内容**: REQUIREMENTS_PATH 由 model/requirements.txt 改为根目录 requirements.txt；docstring 与两处 fix 文案中的路径引用同步更新；SKILL.md 示例 --target-env mrmpformer→gamstekpeaking
+- **理由**: 原 model/requirements.txt 已删除，不改会导致环境检测脚本读不到依赖文件而失效
+
+### 修改 #7
+- **改动人**: AI Copilot
+- **类型**: 文档生成
+- **说明**: 修正 README 推理模式描述；涉及 `README.md` L107-L110、L160-L162
+- **内容**: 模式表中 mzml / batch_mzml 由“仅预测”改为“仅 EIC/ROI 提取（--plot 时附加预测画图，无预测 CSV）”，适用场景改为“检查 XIC/ROI 质量”；轻量模式小节补充说明：需要预测结果请使用 pipeline_* 或 batch_dir
+- **理由**: 经代码核对，这两个 mode 只调用 extract_xic_with_pyopenms / run_batch_mzml，不输出 prediction.csv，原“仅预测”描述与实现相反，误导用户
+
+### 修改 #8
+- **改动人**: AI Copilot
+- **类型**: 文档生成
+- **说明**: README 新增前处理模块；涉及 `README.md` L97-L135（「推理」章节前）
+- **内容**: 新增「前处理（原始数据 → mzML）」章节 —— 脚本工具链表（converters/msdata.py、wiff.py、rename_cn.py）、使用步骤（中文名重命名→--dry-run 预览→批量转换）、注意事项（路径无中文、.wiff.scan 配套、退码 858 判定机制）；末尾指向推理章节
+- **理由**: 用户要求：在推理模块之前介绍仪器原始文件（.msdata/.wiff）到 .mzML 的转换流程，与项目“前处理→推理→后处理”三板块定位一致
+
+### 修改 #9
+- **改动人**: AI Copilot
+- **类型**: 文档生成
+- **说明**: 新建 User_Tutorials.md 四模式教程；涉及 `User_Tutorials.md`（新建）、`README.md` L101-L103（添加链接）
+- **内容**: 新建用户教程 —— 2×2 组合总览与 mermaid 决策图、Targeted（chromatogram 通道自动提取）与 Untargeted（getFeature CentWave → peak_list.csv → testXIC --from_json → batch_dir 预测）两条数据流、feature.csv 格式规范、Centroided/Profile 与 wiff.py 转换选项及 smooth_sigma 建议表、四模式命令示例、模式选择速查与 FAQ；README 推理节添加教程链接
+- **理由**: 用户要求：将 Targeted/Untargeted × Centroided/Profile 四种组合模式的专业详细介绍放在新文件 User_Tutorials.md 中
+
+### 修改 #10
+- **改动人**: AI Copilot
+- **类型**: 文档生成
+- **说明**: 声明开发范围仅限 MRM 模式；涉及 `CLAUDE.md` L17/L29-L33、`README.md` L17/L25/L102-L104/L306-L308
+- **内容**: CLAUDE.md 身份表“四种分析模式”行标注仅开发 Targeted × Centroided，技术约束新增「开发范围（强制）」节（其余三模式禁止新增功能/重构、公共代码以 MRM 模式验证回归）；README 简介新增“当前开发范围”条目、环境要求 R 行标注暂不开发可不装、推理节链接提示追加⚠️、Untargeted 节提示改为暂不开发
+- **理由**: 用户要求：目前只针对 MRM 模式（Targeted × Centroided）开发，其余组合保留现状不变，并写入 README 与 CLAUDE.md
+
+---
+
 ## 26-08-10
 
 ### 修改 #1 — README 模型架构校正

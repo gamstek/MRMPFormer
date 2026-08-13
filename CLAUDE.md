@@ -15,7 +15,7 @@ MRMPFormer 是一个基于 **DETR（ResNet-50 + 1 层 Transformer 编解码器�
 | **桌面 GUI** | `desktop/` — PySide6 图形界面 |
 | **格式转换** | `converters/` — msdata/wiff → mzML |
 | **模型权重** | `model/mrmpformer/resources/checkpoint0029.pth`（>300MB） |
-| **四种分析模式** | Targeted / Untargeted × Centroided / Profile |
+| **四种分析模式** | Targeted / Untargeted × Centroided / Profile（⚠️ **当前仅开发 Targeted × Centroided（MRM）**，其余三组合保留现状、暂不开发） |
 | **输入** | `.mzML` 原始质谱数据 + 可选 `feature.csv` |
 | **输出** | `area.csv`、`post-area.csv`、EIC 预测图像 |
 | **上游来源** | Facebook DETR（`mrmpformer/model/` fork 自 DETR） |
@@ -27,13 +27,19 @@ MRMPFormer 是一个基于 **DETR（ResNet-50 + 1 层 Transformer 编解码器�
 
 在做出任何代码修改前，必须遵守以下硬性约束：
 
+### 开发范围（强制）
+- **当前唯一开发模式**：Targeted × Centroided（MRM 靶向定量）
+- **暂不开发**：Targeted × Profile、Untargeted × Centroided、Untargeted × Profile —— 相关代码（`getFeature.py`/R、`extract_xic_from_arrays` 等）保留现状，❌ 禁止新增功能、重构或大规模改动
+- 任何修改不得破坏其余三模式现有可用状态；涉及四模式公共代码（`testXIC.py`、`newtest.py`、pipeline）时以 MRM 模式为准验证回归
+
 ### Python & PyTorch
-- **Python 版本**：3.10 ~ 3.11（❌ 禁止使用 3.8 或 3.12+）
+- **Python 版本**：3.11
+- **Conda 环境名**：`gamstekpeaking` ，禁止改名或另建环境，激活命令固定为 `conda activate gamstekpeaking`
 - **PyTorch 版本**：按 GPU 架构选择对应版本
   - RTX 50 系（Blackwell, sm_120）：≥ 2.7.0+cu128
   - RTX 40/30/20 系：2.6.0+cu124
   - CPU / Apple Silicon (MPS)：2.6.0
-- **依赖文件**：以 `model/requirements.txt` 为准（已整合 GPU/CPU 分段配置）
+- **依赖文件**：以根目录 `requirements.txt` 为准（model + desktop 合并，含 GPU/CPU 分段配置，默认启用 RTX 40 系/4090 的 cu124 段）
 
 ### 设备与路径
 - **设备选择**：❌ 严禁硬编码 `device='cuda'`，必须使用 `resolve_torch_device()`（`mrmpformer/inference/device.py`，CUDA > MPS > CPU 自动检测）
@@ -86,15 +92,6 @@ MRMPFormer 是一个基于 **DETR（ResNet-50 + 1 层 Transformer 编解码器�
 - 触发时机：每次模型完成一次生成、修改代码、测试任务后，以及用户提出"同步更新日志"后
 - 不得遗漏，不得延迟到下次会话补记
 - 详细规范见 `.github/skills/dev-log-writer/SKILL.md`
-
----
-
-## 强制规则：代码修改记录
-
-每次通过编辑工具（`replace_string_in_file`、`create_file` 等）完成文件修改后，在内存中暂存改动信息。任务结束时**一次性**批量写入 `docs/Modified.md`。
-- 每次编辑工具调用对应一条记录，不合并
-- 改动人仅在任务结束时询问一次（不每次打断）
-- 详细规范见 `.github/skills/code-change-logger/SKILL.md`
 
 ---
 

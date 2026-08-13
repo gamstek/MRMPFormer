@@ -1,15 +1,22 @@
-# MRMPFormer
+# GamstekPeaking
 
 ## 简介
 
-MRMPFormer 是基于 **DETR（ResNet-50 + Transformer）** 的 LC-MS 代谢组学峰检测与定量工具。
+GamstekPeaking是引力波智谱科学智能部研发的，用于LC-MS 代谢组学色谱峰检测与定量工具包。包括格式转换前处理、MRMPFormer和后处理三个板块。
+
+---
+
+### MRMFormer简介
+
+MRMPFormer是基于 **DETR（ResNet-50 + Transformer）系列** 的色谱峰检测模型。 
 核心思路：在提取离子色谱图（EIC）生成的 ROI 图像上训练目标检测网络，识别真实色谱峰并定位峰边界，实现积分面积定量。
 
 - **输入**：`.mzML` 原始质谱数据
 - **输出**：峰面积 CSV + 预测标注图
 - **模型**：ResNet-50 骨干 + 1层Encoder + 1层Decoder（hidden_dim=256, nheads=8）
 - **查询数**：num_queries=3（最多同时检出 3 个峰）
-- **开发版本**：v2.0.0
+- **开发版本**：v2.8.13
+- **当前开发范围**：仅 **Targeted × Centroided（MRM）** 模式；其余三组合（Targeted × Profile / Untargeted × Centroided / Untargeted × Profile）保留现状、暂不开发
 
 ---
 
@@ -19,31 +26,43 @@ MRMPFormer 是基于 **DETR（ResNet-50 + Transformer）** 的 LC-MS 代谢组�
 
 | 项目 | 要求 |
 |------|------|
-| Python | **3.11**（Conda 环境 `gamstekpeaking`；不支持 3.8 及 3.12+） |
-| 包管理器 | Conda（推荐）或 pip + venv |
-| GPU | 本机 **8× NVIDIA RTX 4090 D**（CUDA 12.4，计算能力 8.9） |
-| R（可选） | 4.0+，仅 Untargeted 模式需要 |
+| Python | **3.11**（Conda 环境名固定为 `gamstekpeaking` |
+| 包管理器 | Conda |
+| R（可选） | 4.0+，仅 Untargeted 模式需要（⚠️ Untargeted 模式暂不开发，可不安装） |
 
 **PyTorch 版本**（按 GPU 选择）：
 
-| GPU 系列 | CUDA | torch | torchvision |
+| GPU 系列 | CUDA | torch | torch vision |
 |----------|------|-------|-------------|
 | RTX 50 (5060–5090) | 12.8 (cu128) | ≥2.7.0 | ≥0.22.0 |
 | RTX 40 / 30 / 20 | 12.4 (cu124) | 2.6.0 | 0.21.0 |
 | CPU / Apple Silicon (MPS) | — | 2.6.0 | 0.21.0 |
 
-> `model/requirements.txt` 已内置上述所有配置段，按需取消/注释对应行即可。当前默认启用 **RTX 40 系 (CUDA 12.4)**。
-> 本机（8× RTX 4090 D）使用 `gamstekpeaking` Conda 环境：Python 3.11.15 + PyTorch 2.6.0+cu124（已含全部依赖，开箱即用）。
+> 根目录 `requirements.txt` 已内置上述所有配置段，按需取消/注释对应行即可。当前默认启用 **RTX 40 系 (CUDA 12.4)**。
 
-### 安装
+### 环境检测
+
+使用以下方法之一进行环境的检测
+
+
+```bash
+# GUI 弹窗检测（含一键修复）
+python .github/skills/check-dependencies/check_gui.py
+
+
+
+
+# 纯终端文本报告（推荐）
+python .github/skills/check-dependencies/check_env.py
+```
+
+### 环境安装/修复
 
 安装分为两步：**① 安装 Python 环境 → ② 安装项目依赖**。
 
 #### 第一步：安装 Python 环境
 
-> 项目要求 **Python 3.10 ~ 3.11**（不支持 3.8 及 3.12+），以下两种方式任选其一。
-
-**方式 A：Conda（推荐）**
+> 项目要求 **Python3.11** 推荐使用以下方式安装。
 
 ```bash
 # 创建独立环境并指定 Python 版本（3.11）
@@ -51,21 +70,11 @@ conda create -n gamstekpeaking python=3.11
 conda activate gamstekpeaking
 ```
 
-> ⚠️ 本机已存在 `gamstekpeaking` 环境（Python 3.11.15 + PyTorch 2.6.0+cu124，含全部依赖），直接 `conda activate gamstekpeaking` 即可。
-
-**方式 B：pip + venv**（本机需已安装 Python 3.10 或 3.11）
-
-```bash
-cd model
-python3.11 -m venv venv
-source venv/bin/activate          # Linux/macOS
-# venv\Scripts\activate           # Windows
-```
-
 #### 第二步：安装项目依赖
 
+手动输入下面的代码进行环境依赖安装/修复：
+
 ```bash
-cd model
 pip install -r requirements.txt
 ```
 
@@ -74,31 +83,63 @@ pip install -r requirements.txt
 > ```bash
 > cd model
 > conda env create -f environment.yml
-> conda activate mrmpformer
+> conda activate gamstekpeaking
 > ```
 
-**验证**：
+**验证环境依赖**：
 
 ```bash
 python -c "import torch; print('CUDA:', torch.cuda.is_available())"
 python -c "import pymzml; print('pymzml OK')"
 ```
 
-> ⚠️ 模型权重文件 `checkpoint/checkpoint0029.pth`（>300MB）必须存在于 `model/` 目录下。
+> ⚠️ 推理前需确认模型权重文件必须存于 `model/` 目录下。
 
-### 环境检测（可选）
+---
+
+## 前处理（原始数据 → mzML）
+
+仪器厂商导出的原始文件（`.msdata` / `.wiff` / `.wiff2`）需先转换为标准 `.mzML` 格式，转换工具位于 `converters/`：
+
+| 脚本 | 输入 | 输出 | 工具链 |
+|------|------|------|--------|
+| `converters/msdata.py` | `.msdata` | `.mzML` | `msdata2mzml.exe`（OpenMS，运行时内置于 `msdata_bin/`） |
+| `converters/wiff.py` | `.wiff` / `.wiff2` | `.mzML` | `msconvert.exe`（ProteoWizard，运行时内置于 `wiff_bin/`） |
+| `converters/rename_cn.py` | — | — | 中文文件名 → 英文（`.msdata` 预处理） |
+
+### 使用步骤
 
 ```bash
-# GUI 弹窗检测（含一键修复）
-python .github/skills/check-dependencies/check_gui.py
+cd converters
 
-# 纯终端文本报告
-python .github/skills/check-dependencies/check_env.py
+# 0. （仅中文文件名需要）预览并重命名
+python rename_cn.py                 # 预览映射
+python rename_cn.py --no-dry-run    # 确认后执行
+
+# 1. 将原始文件放入 converters/data/ 目录
+# 2. 预览待转换文件（不执行转换）
+python msdata.py --dry-run          # .msdata
+python wiff.py --dry-run            # .wiff / .wiff2
+
+# 3. 批量转换，输出自动生成于 data/<文件名>/ 子目录
+python msdata.py                    # .msdata → .mzML
+python wiff.py                      # .wiff → .mzML（默认带峰检测）
+python wiff.py --no-peak-picking    # 保留 profile 原始轮廓
 ```
+
+### 注意事项
+
+- 项目路径不得含中文（OpenMS C++ 层限制）
+- WIFF 文件需要同名 `.wiff.scan` 配套文件
+- `msdata2mzml.exe` 仅接受位置参数，且即使成功也可能返回退码 858，脚本以「是否生成 .mzML 文件」判定成败
+- 转换得到的 `.mzML` 可直接作为下方「推理」章节各模式的输入
 
 ---
 
 ## 推理
+
+> 💡 四种分析模式（Targeted / Untargeted × Centroided / Profile）的原理、适用场景与操作流程，详见 [User_Tutorials.md](User_Tutorials.md)。
+> ⚠️ **当前项目仅开发 Targeted × Centroided（MRM）模式**，其余三模式保留现状、暂不开发。
 
 统一入口 `model/main.py`，通过 `--mode` 切换 7 种运行模式：
 
@@ -107,8 +148,8 @@ python .github/skills/check-dependencies/check_env.py
 | `pipeline_batch_mzml` | 完整管线：批量 mzML | ⭐ 生产环境（推荐） |
 | `pipeline_mzml` | 完整管线：单个 mzML | 单样品端到端测试 |
 | `single` | 单张图 JSON 输入/输出 | 调试 / API 集成 |
-| `mzml` | 单个 mzML（仅预测） | 快速测试 |
-| `batch_mzml` | 批量 mzML（仅预测） | 多样品轻量处理 |
+| `mzml` | 单个 mzML：仅 EIC/ROI 提取（`--plot` 时附加预测画图，无预测 CSV） | 检查 XIC/ROI 质量 |
+| `batch_mzml` | 批量 mzML：仅 EIC/ROI 提取（`--plot` 时附加预测画图，无预测 CSV） | 批量检查 XIC/ROI 质量 |
 | `batch_dir` | 已有 XIC 中间结果的目录 | 续跑 / 断点恢复 |
 | `batch_json_dir` | 目录下所有 JSON 逐张处理 | JSON 数据集批处理 |
 
@@ -162,7 +203,8 @@ python main.py --mode pipeline_mzml \
 
 ### 轻量模式
 
-不需要 SNR 筛选和区间精修时使用：
+不需要完整管线（SNR 筛选和区间精修）时使用。
+注意：`mzml` / `batch_mzml` 仅做 EIC/ROI 提取（`--plot` 时附加预测画图，不输出预测 CSV）；需要预测结果请使用 `pipeline_*` 或 `batch_dir`。
 
 ```bash
 # 单张图（JSON，适合调试/API）
@@ -328,7 +370,7 @@ python main.py \
 
 ### Untargeted 模式（R + CentWave）
 
-> 仅做 Targeted 定量可跳过本节。
+> ⚠️ Untargeted 模式暂不开发（保留现状）；仅做 MRM（Targeted × Centroided）定量可跳过本节。
 
 #### 安装 R 环境
 
@@ -436,11 +478,11 @@ python mrmpformer/main.py \
 
 ```
 MRMPFormer/
+├── requirements.txt              # pip 依赖（model + desktop 合并，GPU 分段）
 ├── model/                        # ⭐ 核心代码
 │   ├── main.py                   # 推理入口（--mode 驱动）
 │   ├── getFeature.py             # Untargeted 特征提取
-│   ├── requirements.txt          # pip 依赖（GPU 分段）
-│   ├── environment.yml           # Conda 环境
+│   ├── environment.yml           # Conda 环境（name: gamstekpeaking）
 │   ├── mrmpformer/               # 核心包（模型/训练/推理/前后处理/管线）
 │   │   ├── main.py               #   训练入口
 │   │   ├── models/               #   模型定义
@@ -524,7 +566,7 @@ python -c "import torch; print(torch.cuda.is_available())"
 <details>
 <summary><b>无 GPU 可以运行吗？</b></summary>
 
-可以。编辑 `model/requirements.txt`，启用 `CPU Only` 段（`--index-url .../cpu`），注释其他 GPU 段后重装。代码自动回退 CPU。
+可以。编辑根目录 `requirements.txt`，启用 `CPU Only` 段（`--index-url .../cpu`），注释其他 GPU 段后重装。代码自动回退 CPU。
 </details>
 
 <details>

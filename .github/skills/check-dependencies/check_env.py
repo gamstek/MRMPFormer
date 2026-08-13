@@ -7,7 +7,7 @@ MRMPFormer 环境依赖检测脚本
 输出结构化检测报告，覆盖:
   - Conda 环境（当前环境名称、是否为 quanformer）
   - Python 版本
-  - pip 包依赖 (基于 model/requirements.txt)
+  - pip 包依赖 (基于根目录 requirements.txt)
   - PyTorch / CUDA / MPS 可用性 + GPU 架构匹配
   - R 运行时 + Bioconductor 包 (MSnbase, xcms)
   - 模型权重文件
@@ -38,8 +38,8 @@ from typing import Any, Dict, List, Optional, Tuple
 # 项目根目录（脚本位于 .github/skills/check-dependencies/ → 向上 4 级）
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
-# requirements.txt 路径
-REQUIREMENTS_PATH = PROJECT_ROOT / "model" / "requirements.txt"
+# requirements.txt 路径（根目录统一依赖文件）
+REQUIREMENTS_PATH = PROJECT_ROOT / "requirements.txt"
 
 # 模型权重路径
 CHECKPOINT_PATH = PROJECT_ROOT / "model" / "checkpoint" / "checkpoint0029.pth"
@@ -533,7 +533,7 @@ def run_all_checks() -> List[CheckResult]:
             "已安装",
             "未安装",
             False,
-            fix="请根据 GPU 型号安装对应版本 PyTorch，详见 model/requirements.txt"
+            fix="请根据 GPU 型号安装对应版本 PyTorch，详见根目录 requirements.txt"
         ))
     else:
         tv_clean = torch_pip_ver.split("+")[0]
@@ -556,7 +556,7 @@ def run_all_checks() -> List[CheckResult]:
                         f"≥ {expected_min}+{expected_tag} ({label})",
                         torch_pip_ver,
                         False,
-                        fix=f"GPU 为 {label}，需要 PyTorch ≥ {expected_min}+{expected_tag}。请按 model/requirements.txt 中对应段安装。"
+                        fix=f"GPU 为 {label}，需要 PyTorch ≥ {expected_min}+{expected_tag}。请按根目录 requirements.txt 中对应段安装。"
                     ))
                 elif not cuda_tag_ok:
                     results.append(CheckResult(

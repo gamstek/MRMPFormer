@@ -1,4 +1,33 @@
 {
     "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.defaultPackageManager": "ms-python.python:conda"
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
+    "cSpell.words": [
+        "Bioc",
+        "Bioconductor",
+        "Centroided",
+        "chrom",
+        "CUDA",
+        "DETR",
+        "dplyr",
+        "feedforward",
+        "finetune",
+        "Gamstek",
+        "gamstekpeaking",
+        "MRMP",
+        "mrmpformer",
+        "msconvert",
+        "msdata",
+        "mzml",
+        "nheads",
+        "prefilter",
+        "Proteo",
+        "pycocotools",
+        "pymzml",
+        "repredict",
+        "Snbase",
+        "Streamlit",
+        "Untargeted",
+        "wiff",
+        "xcms"
+    ]
 }

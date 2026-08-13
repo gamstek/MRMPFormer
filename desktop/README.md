@@ -9,8 +9,8 @@ MRMPFormer 项目的下一代统一桌面应用 — 质谱代谢组学全流程�
 conda create -n gamstekpeaking python=3.11
 conda activate gamstekpeaking
 
-# 2. 安装依赖
-pip install -r requirements.txt
+# 2. 安装依赖（根目录统一依赖文件，已含 GUI + 模型全部依赖）
+pip install -r ../requirements.txt
 
 # 3. 启动应用
 python main.py

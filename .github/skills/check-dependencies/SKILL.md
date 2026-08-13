@@ -21,7 +21,7 @@ python .github/skills/check-dependencies/check_env.py
 # 仅失败项 / JSON / 指定 conda 环境
 python .github/skills/check-dependencies/check_env.py --quiet
 python .github/skills/check-dependencies/check_env.py --json
-python .github/skills/check-dependencies/check_env.py --target-env mrmpformer
+python .github/skills/check-dependencies/check_env.py --target-env gamstekpeaking
 ```
 
-检测基于 `model/requirements.txt`，覆盖 `==`、`>=`、`>=X,<Y` 等版本约束。对 PyTorch 会按 GPU 计算能力自动匹配正确版本。
+检测基于根目录 `requirements.txt`，覆盖 `==`、`>=`、`>=X,<Y` 等版本约束。对 PyTorch 会按 GPU 计算能力自动匹配正确版本。

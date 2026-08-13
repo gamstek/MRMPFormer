@@ -27,6 +27,16 @@ MRMPFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 
 ## 开发时间线
 
+### 2026-08-13
+
+- 重构(converters/): 目录精简 —— 删除零代码引用的 desktop_bin/ 工具链副本（115.9MB，MD5 比对与 desktop/bin 逐字节一致）；合并 readme.txt 要点至 readme.md、归档 exp_log.md 至 dev_log.md 后删除；删除历史产物 conversion_report.txt（UTF-16 终端输出副本）
+- 重构(requirements.txt): 合并 model/requirements.txt 与 desktop/requirements.txt 至根目录统一依赖文件并删除旧文件 —— 默认启用 RTX 40 系/4090D 段（cu124, torch 2.6.0 + torchvision 0.21.0），合并 tqdm 等 desktop 独有依赖；同步更新 CLAUDE.md / README / desktop/README / environment.yml（name→gamstekpeaking）/ check-dependencies skill 的路径引用
+- 文档生成(CLAUDE.md/README): 写死 Conda 环境名为 `gamstekpeaking` —— CLAUDE.md 技术约束新增环境名硬约束；README 环境要求表、安装步骤、FAQ 同步改用根目录 requirements.txt 与环境名
+- 文档生成(README.md): 修正推理模式表描述 —— mzml/batch_mzml 由“仅预测”改为“仅 EIC/ROI 提取（--plot 附加预测画图，无预测 CSV）”（经代码核对：两者只调 extract_xic_with_pyopenms / run_batch_mzml，不输出 prediction.csv）；轻量模式小节补充行为提醒
+- 文档生成(README.md): 推理章节前新增「前处理（原始数据 → mzML）」模块 —— 介绍 converters/ 三个脚本（msdata/wiff/rename_cn）与工具链（OpenMS/ProteoWizard）、使用步骤（重命名→dry-run→批量转换）、注意事项（中文路径、.wiff.scan、退码 858 判定）
+- 文档生成(User_Tutorials.md): 新建四模式用户教程 —— 基于代码事实（extract_xic_with_pyopenms 通道提取与 QC、getFeature CentWave 参数、extract_xic_from_arrays 外部数组、smooth_sigma 建议）撰写 Targeted/Untargeted × Centroided/Profile 四组合的原理、命令、参数建议与 FAQ；README 推理节添加链接
+- 需求分析(CLAUDE.md/README): 声明开发范围 —— 当前仅开发 Targeted × Centroided（MRM）模式，其余三组合保留现状暂不开发；CLAUDE.md 新增「开发范围」硬性约束（禁止动 getFeature/R、extract_xic_from_arrays 等非 MRM 代码，公共代码改动以 MRM 模式回归验证）；README 简介、环境要求（R 可选标注）、推理节链接提示、Untargeted 节同步声明
+
 ### 2026-08-10
 
 - 文档生成(README.md): 基于当前模型架构与 conda 环境校正 README —— 修正编解码器层数（3层Decoder→1层Decoder，与 checkpoint0029.pth 一致）、补充 num_queries=3 / hidden_dim=256 / nheads=8 等架构细节、conda 环境名切换为 `gamstekpeaking`（Python 3.11.15 + PyTorch 2.6.0+cu124，含全部依赖）、标注本机 GPU 为 8× RTX 4090 D、训练参数表注明 checkpoint 实际 num_queries 与默认值差异、新增 checkpoint 完整训练参数说明
@@ -58,6 +68,7 @@ MRMPFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 
 - 文档生成(CLAUDE.md): 重写项目级 AI 指令文件，新增项目身份表、技术约束和代码修改记录规则
 - 代码生成(.github/skills/): 创建环境依赖检测与修复系统 —— check_env.py（全量检测/JSON/Markdown）、check_gui.py（tkinter 弹窗/一键修复）、fix_env.py（find-env/check/fix/verify）；配套 check-dependencies + fix-dependencies 两个 skill（精简后各 ~30 行）
+- 其他(converters/): 归档实验日志 exp_log.md（2026-08-13 合并入本日志后删除）—— 完成 191/191 个 .msdata 全量转换（100.0%）；关键教训：msdata2mzml.exe 仅接受位置参数（不支持 -in/-out）、需设置 TMP/TEMP 指向纯英文 tmp/ 目录绕过中文用户名、以 mzML 文件生成判定成败（退码 858 不可信）。注：该工具链脚本现已更名为 msdata.py
 - 调试(check_env.py + check_gui.py): 修复 Windows GBK/UTF-8 编码错配导致中文乱码 — run_cmd() 统一 utf-8、GUI 改用 --outfile 绕过管道编码
 - 文档生成(README.md): 新增「环境检测」小节，一行命令启动 GUI 弹窗
 

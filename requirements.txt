@@ -1,0 +1,65 @@
+# ============================================================
+# MRMPFormer 统一依赖配置 (Python 3.10 ~ 3.11)
+# 由 model/requirements.txt 与 desktop/requirements.txt 合并而来
+# 安装环境: conda activate gamstekpeaking（环境名已写死，勿改）
+# 安装方式: pip install -r requirements.txt
+# ============================================================
+
+# --- 核心数值与数据处理 ---
+numpy==1.26.4
+pandas==2.2.2
+scipy==1.13.1
+
+# --- 质谱数据解析 ---
+pymzml==2.5.10
+pyopenms==3.3.0
+
+# --- 并行与工具 ---
+joblib==1.4.2
+natsort==8.4.0
+packaging>=24.0
+tqdm>=4.65.0
+
+# --- 可视化 ---
+matplotlib==3.9.2
+seaborn>=0.13.0
+
+# --- GUI (desktop/ GAMSTEKPEAKing) ---
+pyside6>=6.7.0,<6.8.0
+
+# --- 图像处理 ---
+pillow>=10.0.0,<11.0.0
+pycocotools>=2.0.0
+
+# ============================================================
+# PyTorch — 根据 GPU 型号选择对应段（默认启用 RTX 40 系）
+# 切换方法: 注释当前段, 取消目标段注释, 重新 pip install
+# ============================================================
+
+# ----------------------------------------------------------
+# NVIDIA RTX 50 系列 (Blackwell: 5060 / 5070 / 5080 / 5090)
+#   CUDA 12.8 | 计算能力 12.x
+# ----------------------------------------------------------
+# --index-url https://download.pytorch.org/whl/cu128
+# torch==2.7.0
+# torchvision==0.22.0
+
+# ----------------------------------------------------------
+# NVIDIA RTX 40 / 30 / 20 系列 (CUDA 12.4)
+#   ⬇ 当前本机配置: 8× RTX 4090 D (Ada Lovelace, 计算能力 8.9)
+# ----------------------------------------------------------
+--index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0
+torchvision==0.21.0
+
+# ----------------------------------------------------------
+# CPU Only — 无 NVIDIA GPU (Intel / AMD / Apple Silicon MPS)
+# ----------------------------------------------------------
+# --index-url https://download.pytorch.org/whl/cpu
+# torch==2.6.0
+# torchvision==0.21.0
+
+# --- 可选: workbook 脚本 ---
+# openpyxl>=3.0.0
+# scikit-learn>=1.3.0
+# statsmodels>=0.14.0

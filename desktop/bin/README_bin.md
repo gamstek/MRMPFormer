@@ -23,4 +23,4 @@ msdata2mzml.exe <input.msdata>
 
 - 路径不能包含中文字符（OpenMS C++ 层限制）
 - 需要设置 `OPENMS_DATA_PATH` 环境变量指向 `share/OpenMS/`
-- 来源：`converters/desktop_bin/`（历史工具链，复制至此以实现自包含）
+- 来源：`converters/msdata_bin/`（同一 OpenMS 工具链，复制至此以实现自包含；已与 `converters/msdata_bin` 逐字节比对一致）
