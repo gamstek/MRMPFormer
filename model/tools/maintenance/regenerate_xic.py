@@ -22,7 +22,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from testXIC import _load_standard_rt_refs, extract_xic_from_chrom_json_dir
+from preprocessing.xic_extraction import _load_standard_rt_refs, extract_xic_from_chrom_json_dir
 
 
 def main():

@@ -12,7 +12,7 @@ from torch import nn
 from torchvision.models._utils import IntermediateLayerGetter
 from typing import Dict, List
 
-from mrmpformer.util.misc import NestedTensor, is_main_process
+from framework.util.misc import NestedTensor, is_main_process
 
 from .position_encoding import build_position_encoding
 warnings.filterwarnings("ignore", category=UserWarning)

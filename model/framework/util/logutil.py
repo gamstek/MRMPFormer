@@ -3,7 +3,7 @@
 MRMPFormer 运行时日志过滤工具。
 
 用法:
-    from mrmpformer.util.logutil import configure_log_level, LOG_LEVELS
+    from framework.util.logutil import configure_log_level, LOG_LEVELS
 
     # 只显示 WARNING 与 ERROR（默认行为）
     configure_log_level("WARNING")

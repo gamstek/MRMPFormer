@@ -1,9 +1,9 @@
 import torch
 
-from mrmpformer.models.backbone import Backbone, Joiner
-from mrmpformer.models.detr import DETR, PostProcess
-from mrmpformer.models.position_encoding import PositionEmbeddingSine
-from mrmpformer.models.transformer import Transformer
+from models.shared.backbone import Backbone, Joiner
+from models.quanformer.detr import DETR, PostProcess
+from models.shared.position_encoding import PositionEmbeddingSine
+from models.quanformer.transformer import Transformer
 
 dependencies = ["torch", "torchvision"]
 

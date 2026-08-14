@@ -34,8 +34,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-ROOT_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT_DIR))
+ROOT_DIR = Path(__file__).resolve().parent.parent  # model/ 目录
 
 
 def _format_elapsed_ms(seconds: float) -> str:
@@ -517,7 +516,7 @@ def _generate_single_roi(output_dir, mz, rt, intensity, q3=None, expected_rt=Non
     plot_rt = rt_min[mask] if np.sum(mask) >= 2 else rt_min
     plot_intensity = intensity_raw[mask] if np.sum(mask) >= 2 else intensity_raw
 
-    from testXIC import roi_safe_name_base
+    from ..preprocessing.xic_extraction import roi_safe_name_base
 
     safe_name = roi_safe_name_base(1, mz_val, q3_val)
     roi_path = os.path.join(output_dir, f"{safe_name}.jpeg")
@@ -905,7 +904,7 @@ def main_cli():
     args = parser.parse_args()
 
     # ---- 配置运行时日志过滤 ----
-    from mrmpformer.util.logutil import configure_log_level, install_filter
+    from framework.util.logutil import configure_log_level, install_filter
 
     if args.quiet:
         configure_log_level("ERROR")
@@ -915,12 +914,12 @@ def main_cli():
     install_filter()
 
     if args.mode in {"pipeline_mzml", "pipeline_batch_mzml"}:
-        from newtest import main as newtest_main
-        from mzml_box_outside_snr_pipeline import run as snr_pipeline_run
-        import run_unified_peak_workflow
+        from .predictor import main as newtest_main
+        from ..postprocessing.snr_filter import run as snr_pipeline_run
+        from ..postprocessing import peak_refinement
         from utils.torch_device import resolve_torch_device
 
-        from testXIC import run_batch_mzml, extract_xic_with_pyopenms
+        from ..preprocessing.xic_extraction import run_batch_mzml, extract_xic_with_pyopenms
 
         print("=" * 60)
         resolve_torch_device(verbose=True)
@@ -1112,7 +1111,7 @@ def main_cli():
                 )
                 continue
 
-            post_parser = run_unified_peak_workflow.build_parser()
+            post_parser = peak_refinement.build_parser()
             xic_dir_for_post = str(roi_root / stem) if (roi_root / stem).is_dir() else ""
             post_cli = [
                 "post_newtest",
@@ -1176,7 +1175,7 @@ def main_cli():
 
             post_args = post_parser.parse_args(post_cli)
             t_post = time.perf_counter()
-            run_unified_peak_workflow.run_post_newtest(post_args)
+            peak_refinement.run_post_newtest(post_args)
             post_sec = time.perf_counter() - t_post
             post_intervals.append((t_post, time.perf_counter()))
             per_sample_seconds.append(
@@ -1214,18 +1213,18 @@ def main_cli():
         return
 
     if args.mode == "mzml":
-        from testXIC import extract_xic_with_pyopenms
+        from ..preprocessing.xic_extraction import extract_xic_with_pyopenms
         if not args.mzml or not os.path.exists(args.mzml):
             print("[ERROR] --mzml 必填且文件需存在", file=sys.stderr)
             sys.exit(1)
         out_dir = args.output_dir or "xic-roi-batch"
         extract_xic_with_pyopenms(args.mzml, out_dir)
         if args.model and args.plot:
-            from testXIC import generate_prediction_plots
+            from ..preprocessing.xic_extraction import generate_prediction_plots
             generate_prediction_plots(out_dir, args.model, args.threshold)
         return
     if args.mode == "batch_mzml":
-        from testXIC import run_batch_mzml
+        from ..preprocessing.xic_extraction import run_batch_mzml
         if not args.batch_dir or not os.path.isdir(args.batch_dir):
             print("[ERROR] --batch_dir 必填且需为目录", file=sys.stderr)
             sys.exit(1)
@@ -1233,7 +1232,7 @@ def main_cli():
                        model_path=args.model, plot_predictions=bool(args.plot), threshold=args.threshold)
         return
     if args.mode == "batch_dir":
-        from newtest import main as newtest_main
+        from .predictor import main as newtest_main
         import argparse as ap
         if not args.batch_dir or not os.path.isdir(args.batch_dir):
             print("[ERROR] --batch_dir 必填且需为目录", file=sys.stderr)

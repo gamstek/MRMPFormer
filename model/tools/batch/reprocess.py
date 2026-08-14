@@ -38,7 +38,7 @@ SNR_DEFAULTS = {
 }
 
 
-# === Postprocess 默认参数（与 run_unified_peak_workflow post_newtest 保持一致） ===
+# === Postprocess 默认参数（与 peak_refinement post_newtest 保持一致） ===
 POST_DEFAULTS = {
     "small_peak_rt_tol": 0.3,
     "min_confidence": 0.99,
@@ -101,7 +101,7 @@ def run_snr(
     stop_on_error: bool,
 ) -> int:
     """运行 SNR 重跑（可选链式 post_newtest）。"""
-    from mzml_box_outside_snr_pipeline import run as snr_run
+    from postprocessing.snr_filter import run as snr_run
 
     batch_root = result_root / "batch_predictions"
     xic_root = result_root / "xic-roi-batch"
@@ -207,7 +207,7 @@ def _run_post_one(
     dry_run: bool,
 ):
     """对单个样品运行 post_newtest。"""
-    import run_unified_peak_workflow
+    from postprocessing import peak_refinement
 
     post_cli = [
         "post_newtest",
@@ -246,8 +246,8 @@ def _run_post_one(
         print("  ", " ".join(post_cli))
         return
 
-    post_args = run_unified_peak_workflow.build_parser().parse_args(post_cli)
-    run_unified_peak_workflow.run_post_newtest(post_args)
+    post_args = peak_refinement.build_parser().parse_args(post_cli)
+    peak_refinement.run_post_newtest(post_args)
 
 
 def run_post_only(
@@ -277,7 +277,7 @@ def run_post_only(
         print("[WARN] %s 下无子目录" % snr_root)
         return 0
 
-    wf = _REPO_ROOT / "run_unified_peak_workflow.py"
+    wf = _REPO_ROOT / "postprocessing" / "peak_refinement.py"
     if not wf.is_file():
         print("[ERROR] 未找到: %s" % wf)
         return 1

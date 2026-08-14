@@ -26,11 +26,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+ROOT = Path(__file__).resolve().parent.parent.parent  # model/ 目录
 
-from build_standard_curves import linear_fit_r2, r2_5pts_after_remove_2_outliers
+from .standard_curves import linear_fit_r2, r2_5pts_after_remove_2_outliers
 
 
 def parse_conc_ppb(folder_name: str) -> Optional[float]:

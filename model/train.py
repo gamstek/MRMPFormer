@@ -9,11 +9,11 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, DistributedSampler
 
-from .import datasets
-from .util import misc as utils
-from .datasets import build_dataset, get_coco_api_from_dataset
-from .engine import evaluate, train_one_epoch
-from .models import build_model
+from framework import datasets
+from framework.util import misc as utils
+from framework.datasets import build_dataset, get_coco_api_from_dataset
+from framework.engine import evaluate, train_one_epoch
+from models import build_model
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Set transformer detector', add_help=False)
@@ -27,6 +27,9 @@ def get_args_parser():
                         help='gradient clipping max norm')
 
     # Model parameters
+    parser.add_argument('--model', default='quanformer', type=str,
+                        choices=('quanformer', 'mrmpformer_v1'),
+                        help="Model variant: quanformer (baseline) | mrmpformer_v1")
     parser.add_argument('--frozen_weights', type=str, default=None,
                         help="Path to the pretrained model. If set, only the mask head will be trained")
     # * Backbone

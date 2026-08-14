@@ -13,7 +13,7 @@
   python testXIC.py --from_json compounds.json --output_dir results/my_output
 
   # Python API
-  from testXIC import extract_xic_from_arrays
+  from preprocessing.xic_extraction import extract_xic_from_arrays
   compounds = [{"mz_name": 142.0, "rt": [...], "intensity": [...]}]  # RT 以峰顶为准
   extract_xic_from_arrays("output_dir", compounds)
 """

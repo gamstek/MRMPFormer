@@ -8,7 +8,7 @@ Unified workflow for:
 This script is designed to reuse existing project logic as much as possible:
 - adjust_first_round_interval（含阈值后验 lookahead 与同伴框防撞峰，run_two_round_detection.py）
 - compute_snr_outside_box / has_secondary_peak_in_roi (utils/xic_peak_utils.py)
-- valley split gate (_split_one_box_by_valley from newtest_valley_split.py)
+- valley split gate (_split_one_box_by_valley from valley_split.py)
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from run_two_round_detection import (
+from ..inference.two_round_detection import (
     adjust_first_round_interval,
     remove_overlap_from_second_interval,
     walk_interval_left_to_noise_with_posterior,
@@ -40,7 +40,7 @@ from utils.xic_peak_utils import (
     one_sided_low_noise_baseline,
     roi_full_low_decile_mean_intensity,
 )
-from newtest_valley_split import (
+from .valley_split import (
     _split_one_box_by_valley,
     _find_best_split_pair_prominence,
     DEFAULT_VALLEY_SPLIT_PARAMS,
@@ -2102,7 +2102,7 @@ def run_post_newtest(args):
                 xic_path = alt
         if not xic_path.exists():
             hint = (
-                f"Need xic_matrix.npy in {root}, or pass --xic_dir to the ROI folder from testXIC "
+                f"Need xic_matrix.npy in {root}, or pass --xic_dir to the ROI folder from preprocessing.xic_extraction "
                 f"(same name as this sample, e.g. ...\\sample_xic_rois\\{root.name})."
             )
             raise FileNotFoundError(hint)
@@ -3651,10 +3651,10 @@ def run_predict_from_standard_rt(args):
     print(f"[INFO] sample rows={n}, ROI 窗口以各通道 XIC 最高峰 RT 为中心（roi_smooth_sigma 平滑后）")
     print(f"[INFO] Generating ROIs to: {out_dir}")
 
-    from testXIC import extract_xic_from_arrays
+    from ..preprocessing.xic_extraction import extract_xic_from_arrays
     extract_xic_from_arrays(str(out_dir), compounds, smooth_sigma=float(args.roi_smooth_sigma))
 
-    from newtest import run_single as run_newtest_single
+    from ..inference.predictor import run_single as run_newtest_single
     qargs = argparse.Namespace(
         feature=None,
         model=str(Path(args.model).resolve()),

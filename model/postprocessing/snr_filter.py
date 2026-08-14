@@ -44,8 +44,7 @@ from pyopenms import MSExperiment, MzMLFile
 from scipy.interpolate import interp1d
 from scipy.ndimage import gaussian_filter1d
 
-ROOT_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT_DIR))
+ROOT_DIR = Path(__file__).resolve().parent.parent  # model/ 目录
 
 from utils.roi_rt_mapping import (
     ROI_IMAGE_HEIGHT_PX,

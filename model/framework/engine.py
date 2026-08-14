@@ -10,7 +10,7 @@ import torch
 
 from .util import misc as utils
 from .datasets.coco_eval import CocoEvaluator
-# from mrmpformer.datasets.panoptic_eval import PanopticEvaluator
+# from framework.datasets.panoptic_eval import PanopticEvaluator
 
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,

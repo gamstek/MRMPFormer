@@ -11,9 +11,8 @@ import numpy as np
 import pandas as pd
 import re
 
-# 添加项目根目录到路径
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, ROOT_DIR)
+# 包化后通过相对导入，ROOT_DIR 指向 model/ 目录
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # from utils.io_utils import export_results  # 暂停：按需求仅保留 prediction.csv 输出
 from utils.io_utils import load_features
@@ -23,7 +22,7 @@ from utils.roi_rt_mapping import box_to_rt_range, rt_to_pixel_x, intensity_to_pi
 from utils.integrate_peak_adaptive import integrate_peak_adaptive
 from utils.roi_quality_params import compute_roi_quality_params
 from utils.adaptive_integration import select_integration_method
-from testXIC import roi_safe_name_base
+from ..preprocessing.xic_extraction import roi_safe_name_base
 
 
 def _to_result_tuple(res):

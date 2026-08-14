@@ -25,8 +25,7 @@ import numpy as np
 import pandas as pd
 from scipy.ndimage import gaussian_filter1d
 
-ROOT_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT_DIR))
+ROOT_DIR = Path(__file__).resolve().parent.parent  # model/ 目录
 
 from utils.xic_peak_utils import (
     compute_snr_outside_box,
