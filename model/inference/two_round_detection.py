@@ -125,7 +125,7 @@ def clamp_refined_interval_width_to_pred_and_roi(
     if hi <= lo:
         return rt_min_adj, rt_max_adj
     return float(lo), float(hi)
-from generate_masked_roi_for_small_peak_test import (
+from preprocessing.masked_roi_generator import (
     load_roi_windows,
     mask_main_peak_and_redraw,
 )
