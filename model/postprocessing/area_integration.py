@@ -559,7 +559,7 @@ def run_snr_single(args, images_path, prediction_output, plot_dir):
     from pathlib import Path
 
     # 延迟导入，避免循环依赖
-    from ..inference.predictor import _adapt_prediction_for_quantify
+    from inference.predictor import _adapt_prediction_for_quantify
     from utils.io_utils import load_features
     from utils.predict_utils import build_predictor
 

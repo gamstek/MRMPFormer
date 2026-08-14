@@ -26,7 +26,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from ..inference.two_round_detection import (
+from inference.two_round_detection import (
     adjust_first_round_interval,
     remove_overlap_from_second_interval,
     walk_interval_left_to_noise_with_posterior,
@@ -3651,10 +3651,10 @@ def run_predict_from_standard_rt(args):
     print(f"[INFO] sample rows={n}, ROI 窗口以各通道 XIC 最高峰 RT 为中心（roi_smooth_sigma 平滑后）")
     print(f"[INFO] Generating ROIs to: {out_dir}")
 
-    from ..preprocessing.xic_extraction import extract_xic_from_arrays
+    from preprocessing.xic_extraction import extract_xic_from_arrays
     extract_xic_from_arrays(str(out_dir), compounds, smooth_sigma=float(args.roi_smooth_sigma))
 
-    from ..inference.predictor import run_single as run_newtest_single
+    from inference.predictor import run_single as run_newtest_single
     qargs = argparse.Namespace(
         feature=None,
         model=str(Path(args.model).resolve()),

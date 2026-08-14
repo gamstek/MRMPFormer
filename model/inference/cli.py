@@ -516,7 +516,7 @@ def _generate_single_roi(output_dir, mz, rt, intensity, q3=None, expected_rt=Non
     plot_rt = rt_min[mask] if np.sum(mask) >= 2 else rt_min
     plot_intensity = intensity_raw[mask] if np.sum(mask) >= 2 else intensity_raw
 
-    from ..preprocessing.xic_extraction import roi_safe_name_base
+    from preprocessing.xic_extraction import roi_safe_name_base
 
     safe_name = roi_safe_name_base(1, mz_val, q3_val)
     roi_path = os.path.join(output_dir, f"{safe_name}.jpeg")
@@ -915,11 +915,11 @@ def main_cli():
 
     if args.mode in {"pipeline_mzml", "pipeline_batch_mzml"}:
         from .predictor import main as newtest_main
-        from ..postprocessing.snr_filter import run as snr_pipeline_run
-        from ..postprocessing import peak_refinement
+        from postprocessing.snr_filter import run as snr_pipeline_run
+        from postprocessing import peak_refinement
         from utils.torch_device import resolve_torch_device
 
-        from ..preprocessing.xic_extraction import run_batch_mzml, extract_xic_with_pyopenms
+        from preprocessing.xic_extraction import run_batch_mzml, extract_xic_with_pyopenms
 
         print("=" * 60)
         resolve_torch_device(verbose=True)
@@ -1213,18 +1213,18 @@ def main_cli():
         return
 
     if args.mode == "mzml":
-        from ..preprocessing.xic_extraction import extract_xic_with_pyopenms
+        from preprocessing.xic_extraction import extract_xic_with_pyopenms
         if not args.mzml or not os.path.exists(args.mzml):
             print("[ERROR] --mzml 必填且文件需存在", file=sys.stderr)
             sys.exit(1)
         out_dir = args.output_dir or "xic-roi-batch"
         extract_xic_with_pyopenms(args.mzml, out_dir)
         if args.model and args.plot:
-            from ..preprocessing.xic_extraction import generate_prediction_plots
+            from preprocessing.xic_extraction import generate_prediction_plots
             generate_prediction_plots(out_dir, args.model, args.threshold)
         return
     if args.mode == "batch_mzml":
-        from ..preprocessing.xic_extraction import run_batch_mzml
+        from preprocessing.xic_extraction import run_batch_mzml
         if not args.batch_dir or not os.path.isdir(args.batch_dir):
             print("[ERROR] --batch_dir 必填且需为目录", file=sys.stderr)
             sys.exit(1)
