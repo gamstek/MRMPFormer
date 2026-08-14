@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-批量对 truedata 下每个子文件夹运行 main.py --mode batch_json_dir。
+批量对 truedata 下每个子文件夹运行 inference/cli.py --mode batch_json_dir。
 
 用法：
-  python -m <包名>.batch.run_json_batches
-  python -m <包名>.batch.run_json_batches --base truedata/20260204-01_result --model checkpoint/checkpoint0029.pth
+  python -m <包名>.batch.json_batches
+  python -m <包名>.batch.json_batches --base truedata/20260204-01_result --model checkpoint/checkpoint0029.pth
 """
 import argparse
 import subprocess
 import sys
 from pathlib import Path
 
-# 项目根目录（main.py 所在）
+# model/ 目录（inference/cli.py 所在）
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
@@ -56,7 +56,7 @@ def main():
         print("=" * 60)
         cmd = [
             sys.executable,
-            str(root / "main.py"),
+            str(root / "inference" / "cli.py"),
             "--mode", "batch_json_dir",
             "--model", str(model),
             "--batch_dir", str(d),

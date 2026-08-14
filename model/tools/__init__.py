@@ -1,2 +1,1 @@
-# MRMPFormer 工具包
-# 本目录是 scripts 副本，将整体移动为 tools。
+# MRMPFormer 工具包：诊断、可视化、实验、基准、批处理、维护等辅助工具
