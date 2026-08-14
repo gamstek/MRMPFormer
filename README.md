@@ -164,7 +164,7 @@ cd model
 
 # 批量 mzML（最常用）
 python main.py --mode pipeline_batch_mzml \
-  --model checkpoint/checkpoint0029.pth \
+  --model checkpoint/quanformer.pth \
   --batch_dir ../data/test1/mzML \
   --output_dir ../output/pipeline_batch \
   --threshold 0.99 --plot \
@@ -174,7 +174,7 @@ python main.py --mode pipeline_batch_mzml \
 
 # 单个 mzML
 python main.py --mode pipeline_mzml \
-  --model checkpoint/checkpoint0029.pth \
+  --model checkpoint/quanformer.pth \
   --mzml ../data/test_oulu_23.mzML \
   --output_dir ../output/pipeline_single_test \
   --threshold 0.99 --plot
@@ -209,21 +209,21 @@ python main.py --mode pipeline_mzml \
 ```bash
 # 单张图（JSON，适合调试/API）
 python main.py --mode single \
-  --model checkpoint/checkpoint0029.pth \
+  --model checkpoint/quanformer.pth \
   --input input.json --threshold 0.99 --plot
 
 # stdin 管道
 echo '{"rt":[1,2,3,4,5],"intensity":[100,500,800,400,50]}' | \
-  python main.py --mode single --model checkpoint/checkpoint0029.pth
+  python main.py --mode single --model checkpoint/quanformer.pth
 
 # 单个 mzML
 python main.py --mode mzml \
-  --model checkpoint/checkpoint0029.pth \
+  --model checkpoint/quanformer.pth \
   --mzml ../data/test1/mzML/B1.mzML --output_dir results/single
 
 # 批量 mzML
 python main.py --mode batch_mzml \
-  --model checkpoint/checkpoint0029.pth \
+  --model checkpoint/quanformer.pth \
   --batch_dir ../data/test1/mzML --output_dir results/batch
 ```
 
@@ -255,7 +255,7 @@ python main.py \
   #   single / mzml / batch_mzml / batch_dir / batch_json_dir / pipeline_mzml / pipeline_batch_mzml
   --mode pipeline_batch_mzml \
   # 【必填】模型权重 .pth 路径（相对 model/ 目录）
-  --model checkpoint/checkpoint0029.pth \
+  --model checkpoint/quanformer.pth \
   # [single] 输入 JSON 文件路径，- 表示 stdin（默认 -）
   --input input.json \
   # [single] 输出 JSON 文件路径，- 表示 stdout（默认 -）
@@ -461,16 +461,16 @@ python mrmpformer/main.py \
 # 从预训练权重继续训练
 python mrmpformer/main.py \
   --coco_path data/peak-all --output_dir output_finetune \
-  --device auto --resume checkpoint/checkpoint0029.pth --epochs 50
+  --device auto --resume checkpoint/quanformer.pth --epochs 50
 
 # 仅评估
 python mrmpformer/main.py \
   --coco_path data/peak-all \
-  --resume checkpoint/checkpoint0029.pth --device auto --eval
+  --resume checkpoint/quanformer.pth --device auto --eval
 ```
 
 > ⚠️ 恢复训练时会自动跳过 `class_embed` 和 `query_embed` 权重（维度可能不匹配）。
-> 💡 当前 `checkpoint0029.pth` 的训练参数：`enc_layers=1, dec_layers=1, num_queries=3, hidden_dim=256, nheads=8, dim_feedforward=2048, dropout=0.1`。
+> 💡 当前 `quanformer.pth` 的训练参数：`enc_layers=1, dec_layers=1, num_queries=3, hidden_dim=256, nheads=8, dim_feedforward=2048, dropout=0.1`。
 
 ---
 

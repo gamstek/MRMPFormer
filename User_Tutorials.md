@@ -4,7 +4,7 @@
 > **Targeted / Untargeted × Centroided / Profile** 四种组合分析模式的
 > 原理、适用场景、操作流程与参数建议。
 >
-> 所有命令均以 `model/` 为工作目录，权重文件 `checkpoint/checkpoint0029.pth` 需置于 `model/checkpoint/` 下。
+> 所有命令均以 `model/` 为工作目录，权重文件 `checkpoint/quanformer.pth` 需置于 `model/checkpoint/` 下。
 
 ---
 
@@ -65,7 +65,7 @@ graph TD
 ```bash
 cd model
 python main.py --mode pipeline_batch_mzml \
-  --model checkpoint/checkpoint0029.pth \
+  --model checkpoint/quanformer.pth \
   --batch_dir ../data/test1/mzML \
   --output_dir ../output/targeted \
   --threshold 0.99 --plot \
@@ -80,6 +80,7 @@ python main.py --mode pipeline_batch_mzml \
 
 **数据流**（代码事实）：
 
+<!-- [DISABLED] R/xcms 全谱峰检测流程已注释（getFeature.py + find_peaks.R 不再可用）
 1. **全谱峰检测**：`getFeature.py` 调用 R 脚本 `find_peaks.R`（xcms `CentWave` 算法）对 mzML 目录做全谱峰检测，输出 `peak_list.csv`（Compound Name / mz / RT），保存于 `--source` 目录的**父目录**：
    ```bash
    cd model
@@ -98,6 +99,7 @@ python main.py --mode pipeline_batch_mzml \
    | `--noise` | 100 | 噪声阈值 |
    | `--mzDiff` | 0.015 | m/z 差异阈值 |
    | `--prefilter` | 3 | 预过滤阈值 |
+-->
 
 2. **EIC 提取 + ROI 生成**：按 `peak_list.csv` 的 m/z 从原始 mzML 提取各峰 EIC 数组，整理为 JSON（每化合物 `{mz_name, rt, intensity, q3?}`），经 `testXIC.py --from_json` 生成 ROI：
    ```bash
@@ -110,7 +112,7 @@ python main.py --mode pipeline_batch_mzml \
 3. **模型预测**：对 ROI 目录运行批量预测：
    ```bash
    python main.py --mode batch_dir \
-     --model checkpoint/checkpoint0029.pth \
+     --model checkpoint/quanformer.pth \
      --batch_dir ../output/untargeted_roi \
      --output_dir ../output/untargeted_pred
    ```
@@ -176,7 +178,7 @@ python wiff.py --no-peak-picking  # 跳过峰检测 → 保留 profile 原始轮
 ```bash
 cd model
 python main.py --mode pipeline_batch_mzml \
-  --model checkpoint/checkpoint0029.pth \
+  --model checkpoint/quanformer.pth \
   --batch_dir ../data/test1/mzML \
   --output_dir ../output/t1_centroided \
   --threshold 0.99 --plot \
@@ -202,7 +204,7 @@ python main.py --mode pipeline_batch_mzml \
 
 ```bash
 python main.py --mode pipeline_batch_mzml \
-  --model checkpoint/checkpoint0029.pth \
+  --model checkpoint/quanformer.pth \
   --batch_dir ../data/test1/mzML_profile \
   --output_dir ../output/t1_profile \
   --threshold 0.99 --plot \
@@ -239,7 +241,7 @@ python testXIC.py \
 
 # 步骤 3：批量预测
 python main.py --mode batch_dir \
-  --model checkpoint/checkpoint0029.pth \
+  --model checkpoint/quanformer.pth \
   --batch_dir ../output/u3_roi \
   --output_dir ../output/u3_pred \
   --threshold 0.99 --plot

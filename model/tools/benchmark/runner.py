@@ -62,7 +62,7 @@ def _default_main_argv():
     return [
         "--mode", "pipeline_mzml",
         "--mzml", "",
-        "--model", str(_REPO_ROOT / "checkpoint" / "checkpoint0029.pth"),
+        "--model", str(_REPO_ROOT / "checkpoint" / "quanformer.pth"),
         "--output_dir", DEFAULT_OUTPUT_DIR,
         "--threshold", "0.90",
         "--smooth_sigma", "0.0",

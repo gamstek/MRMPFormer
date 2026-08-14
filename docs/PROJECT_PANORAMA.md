@@ -74,7 +74,7 @@ MRMPFormer/
     │   ├── predict_utils.py  (~200行) ← 预测管道
     │   ├── quantify.py       (~100行) ← 峰面积定量
     │   ├── postprocess.py    (~50行)  ← 去重 + 转置
-    │   └── find_peaks.R      (~30行)  ← R/CentWave 脚本
+    │   └── find_peaks.R      (~30行)  ← R/CentWave 脚本（已禁用，整体注释）
     │
     ├── workbooks/                     ← 📊 分析工具
     │   ├── boxplot&CV.ipynb
@@ -87,7 +87,7 @@ MRMPFormer/
     │   └── peakdetective-application.py
     │
     └── resources/                     ← 📦 资源文件
-        ├── checkpoint0029.pth         ← 模型权重 (>300MB)
+        ├── quanformer.pth         ← 模型权重 (>300MB)
         ├── GUI.png
         └── example/
             ├── centroided/            ← Centroided 输入 (3×mzML)
@@ -192,6 +192,6 @@ joblib → 并行处理
 
 - **Python**: 3.10 ~ 3.11（不要 3.12+, 不要 3.8）
 - **PyTorch**: ≥ 2.11.0+cu128（支持 Blackwell sm_120 / RTX 5060）
-- **模型权重**: `resources/checkpoint0029.pth` 必须存在且 >300MB
+- **模型权重**: `checkpoint/quanformer.pth` 必须存在且 >300MB
 - **R**: 仅 Untargeted 模式需要
 - **路径**: 避免空格和中文

@@ -84,9 +84,9 @@
 ### 修改 #1 — README 模型架构校正
 - **改动人**: AI Copilot
 - **类型**: 文档生成
-- **说明**: 修正 README 模型架构描述：Decoder 层数 3→1（与 checkpoint0029.pth 一致），补充 hidden_dim=256 / nheads=8 / num_queries=3 等架构细节
+- **说明**: 修正 README 模型架构描述：Decoder 层数 3→1（与 quanformer.pth 一致），补充 hidden_dim=256 / nheads=8 / num_queries=3 等架构细节
 - **内容**: README.md 简介部分 — 模型行改写为"ResNet-50 骨干 + 1层Encoder + 1层Decoder（hidden_dim=256, nheads=8）"，新增"查询数"行
-- **理由**: 原描述"3层Decoder"与 checkpoint0029.pth 实际训练参数（dec_layers=1）不符，误导用户
+- **理由**: 原描述"3层Decoder"与 quanformer.pth 实际训练参数（dec_layers=1）不符，误导用户
 
 ### 修改 #2 — README 环境要求补充
 - **改动人**: AI Copilot
@@ -119,7 +119,7 @@
 ### 修改 #6 — README 新增 checkpoint 完整训练参数
 - **改动人**: AI Copilot
 - **类型**: 文档生成
-- **说明**: 恢复训练注意事项下方新增 checkpoint0029.pth 完整训练参数一览
+- **说明**: 恢复训练注意事项下方新增 quanformer.pth 完整训练参数一览
 - **内容**: README.md 微调与评估段下方 — 新增提示行
 - **理由**: 便于用户了解已训练模型的完整超参数
 

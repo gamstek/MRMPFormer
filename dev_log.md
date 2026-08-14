@@ -8,7 +8,7 @@ MRMPFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 ### 输入
 - **原始数据**: `.mzML` 格式的高分辨率 LC-MS 数据（Centroided 或 Profile）
 - **特征表**（Targeted 模式）: CSV 文件，包含 `Compound Name` / `mz` / `RT` 三列
-- **模型权重**: `checkpoint0029.pth`（>300MB）
+- **模型权重**: `quanformer.pth`（>300MB）
 
 ### 输出
 - **定量结果**: `area.csv`（峰面积表）
@@ -39,7 +39,7 @@ MRMPFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 
 ### 2026-08-10
 
-- 文档生成(README.md): 基于当前模型架构与 conda 环境校正 README —— 修正编解码器层数（3层Decoder→1层Decoder，与 checkpoint0029.pth 一致）、补充 num_queries=3 / hidden_dim=256 / nheads=8 等架构细节、conda 环境名切换为 `gamstekpeaking`（Python 3.11.15 + PyTorch 2.6.0+cu124，含全部依赖）、标注本机 GPU 为 8× RTX 4090 D、训练参数表注明 checkpoint 实际 num_queries 与默认值差异、新增 checkpoint 完整训练参数说明
+- 文档生成(README.md): 基于当前模型架构与 conda 环境校正 README —— 修正编解码器层数（3层Decoder→1层Decoder，与 quanformer.pth 一致）、补充 num_queries=3 / hidden_dim=256 / nheads=8 等架构细节、conda 环境名切换为 `gamstekpeaking`（Python 3.11.15 + PyTorch 2.6.0+cu124，含全部依赖）、标注本机 GPU 为 8× RTX 4090 D、训练参数表注明 checkpoint 实际 num_queries 与默认值差异、新增 checkpoint 完整训练参数说明
 - 代码生成(mrmpformer/util/logutil.py): 新建运行时日志过滤模块 —— 通过替换 sys.stdout 为带缓冲的 `_FilteredStdout` 实现按行前缀级别（[INFO]/[WARN]/[ERROR]）拦截输出；默认级别 WARNING（抑制 [INFO]），支持环境变量 `MRMPFORMER_LOG_LEVEL` 与 `configure_log_level()` API 控制
 - 代码生成(main.py): CLI 新增 `--verbose` / `--quiet` 参数；解析后调用 `install_filter()` 安装全局日志过滤器
 - 调试(mrmpformer/util/__init__.py): 修复预存导入错误 —— `safe_torch_load` 实际位于 `misc.py` 而非 `io.py`，拆分导入语句避免 ImportError

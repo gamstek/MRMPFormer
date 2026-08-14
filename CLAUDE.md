@@ -14,7 +14,7 @@ MRMPFormer 是一个基于 **DETR（ResNet-50 + 1 层 Transformer 编解码器�
 | **核心包** | `model/mrmpformer/` — 纯模型 + 训练 + 推理 + 前处理 + 后处理 + 管线 |
 | **桌面 GUI** | `desktop/` — PySide6 图形界面 |
 | **格式转换** | `converters/` — msdata/wiff → mzML |
-| **模型权重** | `model/mrmpformer/resources/checkpoint0029.pth`（>300MB） |
+| **模型权重** | `model/checkpoint/quanformer.pth`（>300MB） |
 | **四种分析模式** | Targeted / Untargeted × Centroided / Profile（⚠️ **当前仅开发 Targeted × Centroided（MRM）**，其余三组合保留现状、暂不开发） |
 | **输入** | `.mzML` 原始质谱数据 + 可选 `feature.csv` |
 | **输出** | `area.csv`、`post-area.csv`、EIC 预测图像 |
@@ -45,7 +45,9 @@ MRMPFormer 是一个基于 **DETR（ResNet-50 + 1 层 Transformer 编解码器�
 - **设备选择**：❌ 严禁硬编码 `device='cuda'`，必须使用 `resolve_torch_device()`（`mrmpformer/inference/device.py`，CUDA > MPS > CPU 自动检测）
 - **模型加载**：❌ 严禁直接用 `torch.load()`，必须使用 `safe_torch_load()`（`mrmpformer/util/io.py`）以兼容跨 PyTorch 版本
 - **路径分隔符**：❌ 严禁硬编码 `/` 或 `\\`，必须使用 `os.path.join()` / `pathlib.Path`
+<!-- [DISABLED] R 语言相关说明已注释
 - **路径空格**：注意 Windows 路径含空格时 R 调用（`find_peaks.R`）可能失败，需加引号
+-->
 
 ### 架构边界
 - `mrmpformer/model/`：纯 DETR 模型定义（不依赖业务逻辑）
@@ -62,7 +64,9 @@ MRMPFormer 是一个基于 **DETR（ResNet-50 + 1 层 Transformer 编解码器�
 ### 已知陷阱（详见 `docs/Bugs.md`）
 - `batch_size=1` 逐张推理导致 GPU 利用率仅 ~15%
 - `plot_results` 用 `joblib(n_jobs=-1)` 可能导致 I/O 争抢
+<!-- [DISABLED] R 语言相关说明已注释
 - Untargeted 模式需要安装 R + Bioconductor（`find_peaks.R` 调用 CentWave）
+-->
 - 模型预测不应每次重新 `torch.load`（GUI 场景）
 
 ---

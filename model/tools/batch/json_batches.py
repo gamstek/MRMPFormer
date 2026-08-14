@@ -4,7 +4,7 @@
 
 用法：
   python -m <包名>.batch.json_batches
-  python -m <包名>.batch.json_batches --base truedata/20260204-01_result --model checkpoint/checkpoint0029.pth
+  python -m <包名>.batch.json_batches --base truedata/20260204-01_result --model checkpoint/quanformer.pth
 """
 import argparse
 import subprocess
@@ -27,7 +27,7 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default=str(root / "checkpoint" / "checkpoint0029.pth"),
+        default=str(root / "checkpoint" / "quanformer.pth"),
         help="MRMPFormer .pth 权重路径",
     )
     parser.add_argument("--no-plot", action="store_true", help="不加 --plot")

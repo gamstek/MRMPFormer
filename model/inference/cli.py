@@ -9,11 +9,11 @@ MRMPFormer 统一推理入口：合并 testXIC + newtest，支持单张图模式
 
 用法:
   # 单张图模式（JSON 输入输出）
-  python main.py --mode single --model checkpoint/checkpoint0029.pth --input example_single_input.json
+  python main.py --mode single --model checkpoint/quanformer.pth --input example_single_input.json
   echo '{"rt":[1,2,3],"intensity":[100,500,200]}' | python main.py --mode single --model x.pth
 
   # 目录下所有 JSON 逐张处理；每 JSON 一个子目录；--plot 时所有预测图在 batch_dir/predicted_plots_all/，文件名与源 JSON 对应
-  python main.py --mode batch_json_dir --model checkpoint/checkpoint0029.pth --batch_dir truedata/2026318 --plot
+  python main.py --mode batch_json_dir --model checkpoint/quanformer.pth --batch_dir truedata/2026318 --plot
 
   # 单张图 Python API
   from main import process_single_image

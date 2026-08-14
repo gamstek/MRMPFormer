@@ -50,7 +50,7 @@
 |------|------|
 | Python | 3.10 ~ 3.11，不可 3.8 或 3.12+ |
 | PyTorch | >= 2.11.0+cu128（RTX 5060 / sm_120 用户） |
-| 模型权重 | `checkpoint0029.pth` > 300MB，需单独确认 |
+| 模型权重 | `quanformer.pth` > 300MB，需单独确认 |
 | R | Untargeted 模式需要 R 4.0+ + MSnbase + xcms |
 | 路径 | 避免中文和空格 |
 
