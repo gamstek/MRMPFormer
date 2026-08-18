@@ -8,6 +8,7 @@ __pycache__/
 # MRMPFormer 训练产物
 MRMPFormer/logs/
 output/
+data/
 
 # Default ignored files
 /shelf/

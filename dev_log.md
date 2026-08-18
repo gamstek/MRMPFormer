@@ -27,6 +27,51 @@ MRMPFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 
 ## 开发时间线
 
+### 2026-08-16
+
+- 文档生成(imporove.md): 新建 QuanFormer 基线补齐清单 —— 基于模型缺口分析整理 6 项待办（COCO 标注生成脚本（testcase_data.xlsx→COCO）、参数配置外置、一键精度评测协议、置信度阈值统一、build_predictor 按模型变体路由、train.py resume 逻辑修复），每项含问题说明与大致做法，附 P0/P1/P2 优先级表
+- 代码生成(model/preprocessing/coco_annotation.py): 新建 COCO 训练数据集生成脚本 —— mzML（复用 extract_xic_with_pyopenms，图像与推理管线完全一致 400x300/apex±1min）+ 标注 xlsx（标准库 zipfile+ElementTree 解析、列字母定位免疫稀疏单元格错位，无 openpyxl 依赖）→ peak_start/peak_end 分钟值经 roi_windows.csv 窗口线性映射为像素 bbox（y 全高 [0,300]）→ 按 mzML 分组划分 train/val；native_id「化合物名-1/-2」对齐定量/定性离子（实测两文件 60/60 精确匹配），TIC 等无标注 ROI 纳入为负样本
+- 数据集生成(data/coco/): 产出首个可重训 COCO 数据集 —— train 61 图 60 框+1 TIC 负样本（20260715_shiyaoyuan_test_1 ↔ sample_id 方法1）、val 61 图 60 框+1 负样本（_2 ↔ 方法1-2）；标注源 data/test/testcase_data.xlsx 共 120 行=30 化合物×2 通道×2 进样
+- 调试(数据验证): 三层验证全部通过 —— json 结构等价断言（id 唯一/引用完整/bbox 合法/无缺图）+ pycocotools 官方 API 加载 + 全量 120 框映射质量（峰顶落框内 120/120、框边界强度<50%峰高 120/120）；抽查图（PIL 画红框）存 data/coco/_inspect/
+- 文档生成(README.md): 训练节路径约定修齐 —— 删除虚构的 train2017/ + annotations/instances_*.json 结构，改为 coco.py 实际读取的 train/ + train_coco.json / val/ + val_coco.json；训练/微调/评估命令 --coco_path 统一改为 ../data/coco；新增「生成 COCO 数据集」小节（coco_annotation.py 用法与标注 xlsx 布局说明）
+- 其他(环境): gamstekpeaking 环境补装 pycocotools（requirements.txt 已声明但环境缺失，训练必需）；排查确认 TRAE 沙箱会拦截 matplotlib 渲染 DLL 延迟加载（0xc06d007f 崩溃），XIC 提取/数据集生成需在系统终端执行
+- 代码生成(model/tools/evaluation/evaluate_baseline.py): 新建基线一键精度评测脚本（improve.md 第 3 项）—— 双口径协议：检测口径（tIoU>0.95 判 TP → P/R/F1）+ 定量口径（宽松配对 tIoU>0.5 → RT 边界偏差/面积R²/RSD，不影响 P/R/F1 计数）；复用 linear_fit_r2 与 coco_annotation 标注对齐；--run_inference 0 可复用已有 prediction.csv（5s/两样品）；输出 evaluation_report.json + match_details.csv + area_pairs.csv
+- 重构(model/postprocessing/evaluation/standard_curves.py): matplotlib 导入移入 main() 绘图分支 —— 顶层 import 会连累纯数据使用者（evaluate_baseline 仅需 linear_fit_r2）在沙箱/无头环境崩溃
+- 重构(model/preprocessing/coco_annotation.py): _LABEL_COLS 补 area/snr 列映射 —— 此前漏解析 xlsx 面积列导致评测脚本定量指标无人工面积可比
+- 需求分析(评测协议): 确定匹配规则——用户指定 RT 区间重叠（tIoU）>0.95 判命中；实测发现 0.95 过严（模型框比人工积分边界宽 0.06~0.09min，tIoU 中位 0.738），增设定量宽松口径分离检测/定量指标
+- 数据集生成(data/evaluation/quanformer/): 产出 quanformer.pth 首份基线参考分数 —— 检测 P/R/F1=0.0246/0.0250/0.0248（TP=3）；定量：面积R²=0.99998（n=115）、RT 起止偏差中位 0.063/0.073min、RSD 均值 3.34%/中位 1.99%（n=56 通道）；结论：模型定量能力优秀、边界偏宽是检测分低的主因，根因指向 improve.md 第 7 项（ROI 以最高强度点居中而非标注 RT）
+- 文档生成(imporove.md): 第 3 项打勾（含基线分数表与解读）；优先级表更新——第 7 项升 P0（评测数据证实其为主因），第 1/3 项标记完成
+- 代码生成(model/preprocessing/xic_extraction.py): extract_xic_with_pyopenms 新增 rt_center_overrides 参数（improve.md 第 7 项）—— {native_id: RT分钟} 覆盖表命中时以标注 RT 为 ROI 窗口中心，替代默认最高强度点；TIC 等未命中通道不受影响
+- 代码生成(model/preprocessing/coco_annotation.py): build_coco_for_mzml 自动从标注 xlsx rt 列构建覆盖表传入提取函数（修复初始版本覆盖表构建晚于提取调用的顺序 bug）
+- 数据集生成(data/coco/ 重生成): 标注 RT 居中版 —— 60/60 通道窗口中心与标注 RT 严格相等（max 差 0）、120/120 bbox 映射质量复验通过；--force 必带否则复用旧 _xic
+- 需求分析(根因修正): 第 7 项对检测指标无改善（TP 3→4，tIoU 中位 0.741→0.736）——同通道新旧预测中位位移仅 0.004 min，证伪"窗口居中是主因"；有符号偏差分析揭示真相：预测框相对人工边界系统性左移 ~0.05 min（起 −0.051/止 −0.049，框宽一致 0.449 vs 0.440），属 quanformer.pth 训练约定与测试软件人工积分约定的模型级差异；重训（data/coco，bbox=人工边界）是解决路径
+- 文档生成(imporove.md): 第 7 项打勾（含假设证伪与根因修正记录）；第 3 项解读同步修正；优先级表更新为"重训基线"为 P0
+- 文档生成(imporove.md 第 8 项): 用户新增「解析时不读取 TIC 图」待办
+- 代码生成(model/train.py): 修复 --device auto 设备解析 bug —— 原代码先 torch.device('auto') 再判断分支，'auto' 非法直接抛 RuntimeError，训练入口从未实测跑通；改为先按分支解析再创建 device
+- 代码生成(model/models/quanformer/detr.py): 修复 build() 同类 --device auto bug —— build 入口直接 torch.device(args.device) 消费 'auto' 抛错；改为 auto 时复用 utils.torch_device.resolve_torch_device，显式 device 时按原逻辑
+- 调试(model/framework/datasets/coco.py): 修复 Windows 下标注 json 读取 UnicodeDecodeError —— torchvision CocoDetection 内部用系统默认编码(GBK) open() 读 UTF-8 标注（含中文化合物名）报错；改为保留继承关系但绕过 __init__，显式 UTF-8 读入 + COCO().createIndex() 重建索引（get_coco_api_from_dataset 的 isinstance 检查不受影响）；数据集加载冒烟测试通过（61 图 60 框、train transforms、coco api 链路）
+- 调试(model/framework/datasets/coco.py): 修复 build() 标注路径不匹配 —— coco.py 原读 <coco_path>/<split>_coco.json（根目录），而 coco_annotation.py 生成的是 <coco_path>/<split>/<split>_coco.json（split 目录内），导致 FileNotFoundError；改为兼容两种布局（优先 split 目录内，回退根目录），train/val 构建验证通过（各 61 样本）
+- 调试(v2 微调失败): quanformerv2.pth 首次微调检测全崩 —— 推理检出 0/122 峰（v1 61/61），score 全 0。根因：make_coco_transforms 为 DETR 自然照片增强（RandomHorizontalFlip 峰形镜像 + RandomResize 放大 480~800px + RandomSizeCrop(384,600) 裁高 600>图高 300），而推理端预处理仅 ToTensor+Normalize 且不缩放 400×300 原图，训练/推理分布严重错位 → 模型学会翻转+放大分布，正常图全判背景；v1 为旧大数据集成熟模型故多尺度泛化未崩
+- 重构(model/framework/datasets/coco.py): make_coco_transforms 重写为色谱图专用 —— train/val 统一仅 ToTensor+Normalize（与 utils/predict_utils.py 推理预处理完全对齐）；训练/验证对齐验证通过（400×300、batch stack 正常）
+- 代码生成(model/train.py): 新增 --config（JSON）参数配置外置机制（improve.md 第 2 项）—— 配置文件作默认参数，CLI 仍可覆盖；环境无 pyyaml 故用标准库 json
+- 代码生成(model/configs/): 新增两个配置文件 —— quanformer_baseline.json（从 quanformer.pth 的 args 提取全部超参：batch_size=16/num_queries=3/enc_dec_layers=1，修正 lr_drop 35→20、coco_path 指向 ../data/coco、resume 置空）；quanformer_v2_finetune.json（微调专用：lr=1e-5/lr_backbone=1e-6/epochs=10/batch_size=4/reset_optimizer=true）
+- 代码生成(model/train.py): 新增 --reset_optimizer 开关 —— 微调语义：只加载模型权重，跳过 optimizer/lr_scheduler 恢复，start_epoch 归零以当前 lr 从头训练
+- 调试(配置验证): 两配置加载 + CLI 覆盖验证通过（num_queries=3 生效、epochs/batch_size 覆盖正常、resume 空值=从零训练）
+- 文档生成(imporove.md): 第 2 项（参数配置外置）打勾
+
+### 2026-08-14
+
+- 重构(preprocessing/ion_zenith.py): 新建纯算法模块 `extract_ions_from_ms1()` + CLI 入口 —— 从 `desktop/workers/ion_zenith.py` 抽离核心算法（去 Qt 依赖），与 `xic_extraction.py` 同层组织；可用 `python -m preprocessing.ion_zenith --input_mzml ... --output_csv ...` 直接调用
+- 重构(desktop/workers/ion_zenith.py): 改为薄包装 —— 保留 `IonZenithWorker(QThread)` 接口不变，`run()` 方法改为调用 `preprocessing.ion_zenith.extract_ions_from_ms1()`，通过 Signal 转发进度/统计/结果；前端 `IonZenithCard` 零改动
+- 代码生成(inference/cli.py): 新增 `--no_timing` 开关 —— 启用时跳过 `pipeline_timing.log` / `pipeline_timing_runs.jsonl` 写入（终端仍打印计时汇总）；同步修正顶部 docstring 中 `python main.py` → `python -m inference.cli` 与 `from main import` → `from inference.cli import`
+- 代码生成(inference/cli.py): 新增 `--save_snr_jpeg` 开关 —— pipeline 模式默认不生成 `筛选保留/筛选剔除/` 标注图（省磁盘）；启用时生成
+- 代码生成(postprocessing/snr_filter.py): `run()` 新增 `save_jpeg: bool = True` 参数 —— `save_jpeg=False` 时跳过 `save_roi_jpeg_with_box` 调用且不创建 `筛选保留/筛选剔除/` 目录；独立 CLI 同步加 `--no_save_jpeg` 反向开关
+- 文档生成(README.md): 项目结构树重写 —— 删除已不存在的 `model/main.py` / `getFeature.py` / `mrmpformer/` 子包 / `gamstekpeaking/` 目录，改为反映实际扁平结构（inference / models / preprocessing / postprocessing / framework / utils / tools）；推理命令全部改为 `python -m inference.cli --mode ...`；训练命令改为 `python -m train`；Untargeted 节精简为「代码已删除」说明；删除 GamSTekPeaking Web 工作台节
+- 文档生成(User_Tutorials.md): 全部 `python main.py` 改为 `python -m inference.cli`；模式三/四标注「暂不开发 · 代码已删除」并注释历史命令；Q2 改为说明 Untargeted 已不可用
+- 文档生成(CLAUDE.md): 项目身份表与架构边界段同步实际结构 —— `model/mrmpformer/` → `model/` 扁平结构；新增推理入口与训练入口行；开发范围段说明 `getFeature.py`/`testXIC.py` 已删除；设备路径段更新 `resolve_torch_device` / `safe_torch_load` 实际位置
+- 文档生成(desktop/workers/README_workers.md): `ion_zenith.py` 描述改为「Qt 线程包装（纯算法在 `model/preprocessing/ion_zenith.py`）」；IonZenithWorker 接口段加引用块说明算法位置 + CLI 调用方式
+- 文档生成(README.md): 推理参数速查新增「输出控制」段 —— `--no_timing` / `--save_snr_jpeg` 两个开关；Pipeline 参数速查表新增对应两行
+
 ### 2026-08-13
 
 - 重构(converters/): 目录精简 —— 删除零代码引用的 desktop_bin/ 工具链副本（115.9MB，MD5 比对与 desktop/bin 逐字节一致）；合并 readme.txt 要点至 readme.md、归档 exp_log.md 至 dev_log.md 后删除；删除历史产物 conversion_report.txt（UTF-16 终端输出副本）

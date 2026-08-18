@@ -4,30 +4,54 @@ COCO dataset which returns image_id for evaluation.
 
 Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references/detection/coco_utils.py
 """
+import json
+import os
 from pathlib import Path
 
 import torch
 import torch.utils.data
 import torchvision
+from PIL import Image
 from pycocotools import mask as coco_mask
+from pycocotools.coco import COCO
 
 from . import transforms as T
 
 
 class CocoDetection(torchvision.datasets.CocoDetection):
     def __init__(self, img_folder, ann_file, transforms, return_masks):
-        super(CocoDetection, self).__init__(img_folder, ann_file)
+        # 绕过 torchvision.datasets.CocoDetection.__init__：其在 Windows 下用系统默认编码
+        # (GBK) 读标注 json，而本数据集标注为 UTF-8（含中文化合物名）会抛 UnicodeDecodeError。
+        # 此处显式 UTF-8 读入并手动重建 COCO 索引；保留继承关系以满足
+        # get_coco_api_from_dataset 的 isinstance 检查（评估链路的 coco api 依赖它）。
+        self.root = str(img_folder)
+        with open(ann_file, "r", encoding="utf-8") as f:
+            dataset = json.load(f)
+        self.coco = COCO()
+        self.coco.dataset = dataset
+        self.coco.createIndex()
+        self.ids = list(sorted(self.coco.imgs.keys()))
         self._transforms = transforms
         self.prepare = ConvertCocoPolysToMask(return_masks)
 
+    def _load_image_and_annotations(self, idx):
+        img_id = self.ids[idx]
+        ann_ids = self.coco.getAnnIds(imgIds=img_id)
+        target = self.coco.loadAnns(ann_ids)
+        path = self.coco.loadImgs(img_id)[0]["file_name"]
+        img = Image.open(os.path.join(self.root, path)).convert("RGB")
+        return img, target
+
     def __getitem__(self, idx):
-        img, target = super(CocoDetection, self).__getitem__(idx)
+        img, target = self._load_image_and_annotations(idx)
         image_id = self.ids[idx]
         target = {'image_id': image_id, 'annotations': target}
         img, target = self.prepare(img, target)
         if self._transforms is not None:
             img, target = self._transforms(img, target)
         return img, target
+
+
 
 
 def convert_coco_poly_to_mask(segmentations, height, width):
@@ -112,46 +136,41 @@ class ConvertCocoPolysToMask(object):
         return image, target
 
 def make_coco_transforms(image_set):
+    """
+    本项目色谱图专用的数据变换（非 DETR 原版自然照片增强）。
 
+    推理端预处理（utils/predict_utils.py）仅做 ToTensor + Normalize，且输入为固定
+    400x300 的 ROI 图。训练端必须与推理完全对齐，否则分布错位会导致检测全崩：
+      - 关 RandomHorizontalFlip：色谱峰形镜像无物理意义，且推理不翻转
+      - 关 RandomResize 放大（480~800px）：推理不缩放，训练放大造成尺度错位
+      - 关 RandomSizeCrop(384,600)：裁高 600 > 图高 300，越界语义崩溃
+    因此 train/val 使用同一组变换（仅 ToTensor + Normalize）。
+    """
     normalize = T.Compose([
         T.ToTensor(),
         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
-
-    scales = [480, 512, 544, 576, 608, 640, 672, 704, 736, 768, 800]
-
-    if image_set == 'train':
-        return T.Compose([
-            T.RandomHorizontalFlip(),
-            T.RandomSelect(
-                T.RandomResize(scales, max_size=1333),
-                T.Compose([
-                    T.RandomResize([400, 500, 600]),
-                    T.RandomSizeCrop(384, 600),
-                    T.RandomResize(scales, max_size=1333),
-                ])
-            ),
-            normalize,
-        ])
-
-    if image_set == 'val':
-        return T.Compose([
-            T.RandomResize([800], max_size=1333),
-            normalize,
-        ])
-
-    raise ValueError(f'unknown {image_set}')
+    return normalize
 
 
 def build(image_set, args):
     root = Path(args.coco_path)
     assert root.exists(), f'provided COCO path {root} does not exist'
 
-    PATHS = {
-        "train": (root / "train", root / "train_coco.json"),
-        "val": (root / "val", root / "val_coco.json"),
-    }
+    # 兼容两种标注布局（优先 split 目录内，回退根目录）：
+    #   <root>/<split>/<split>_coco.json  （coco_annotation.py 生成，如 train/train_coco.json）
+    #   <root>/<split>_coco.json          （COCO 常规布局）
+    img_folder = root / image_set
+    ann_candidates = [
+        img_folder / f"{image_set}_coco.json",
+        root / f"{image_set}_coco.json",
+    ]
+    ann_file = next((p for p in ann_candidates if p.is_file()), None)
+    if ann_file is None:
+        raise FileNotFoundError(
+            f'COCO annotation not found for split {image_set!r}: '
+            f'checked {ann_candidates}'
+        )
 
-    img_folder, ann_file = PATHS[image_set]
     dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(image_set), return_masks=args.masks)
     return dataset

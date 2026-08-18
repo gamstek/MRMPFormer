@@ -7,7 +7,7 @@
 | 文件 | 导出类 | 作用 | 核心 Signal |
 |------|--------|------|------------|
 | `converter.py` | `MsdataConverter` | msdata→mzML 格式转换（调用内嵌的 `bin/msdata2mzml.exe`） | `progress(current, total)`, `file_done(index, ok, info)`, `error(msg)` |
-| `ion_zenith.py` | `IonZenithWorker` | 离子天顶算法（遍历 mzML MS1 → 按 m/z 聚合 → 输出 CSV） | `progress(scanned, total)`, `stats(ms1, peaks)`, `finished(ions, elapsed, path)`, `error(msg)` |
+| `ion_zenith.py` | `IonZenithWorker` | 离子天顶算法 Qt 线程包装（**纯算法在 `model/preprocessing/ion_zenith.py`**：遍历 mzML MS1 → 按 m/z 聚合 → 输出 CSV） | `progress(scanned, total)`, `stats(ms1, peaks)`, `finished(ions, elapsed, path)`, `error(msg)` |
 
 ## MsdataConverter 接口
 
@@ -26,6 +26,9 @@ class MsdataConverter(QThread):
 ```
 
 ## IonZenithWorker 接口
+
+> 💡 本文件只负责 Qt 线程适配（QThread + Signal 转发进度/统计/结果）。
+> **纯算法实现**位于 [`model/preprocessing/ion_zenith.py`](../../model/preprocessing/ion_zenith.py)，可用 `python -m preprocessing.ion_zenith --input_mzml ... --output_csv ...` 直接调用，无需 Qt 依赖。
 
 ```python
 class IonZenithWorker(QThread):

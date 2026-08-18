@@ -193,6 +193,7 @@ def extract_xic_with_pyopenms(
     standard_rt_mz_to_rt=None,
     min_chrom_points=0,
     min_max_intensity=0.0,
+    rt_center_overrides=None,
 ):
     """
     提取 XIC 并生成 ROI 图像，支持高斯平滑。
@@ -204,6 +205,9 @@ def extract_xic_with_pyopenms(
             均以该通道 XIC 在（可选）平滑后的最高峰 RT 为准。
         min_chrom_points (int): >0 时跳过数据点数少于此值的 Transition（流程图：数据点过少不参与后续）
         min_max_intensity (float): >0 时跳过整条 XIC 最大强度（平滑后）低于此值的通道（流程图：低强度剔除）
+        rt_center_overrides (dict): {native_id: RT分钟}，ROI 窗口中心覆盖表 —— 命中 native_id 时以
+            指定 RT（如人工标注 RT）为窗口中心，替代默认的谱图最高强度点；未命中的通道（TIC 等）
+            仍用最高强度点。用于训练数据生成时与标注对齐（improve.md 第 7 项）。
     """
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     print(f"[INFO] Reading mzML with pyopenms: {mzml_path}")
@@ -292,8 +296,18 @@ def extract_xic_with_pyopenms(
         max_idx = np.argmax(intensity)
         rt_apex_min = rt_sec[max_idx] / 60.0  # 转为分钟
         rt_apex_sec = rt_sec[max_idx]
-        # 样品 ROI：始终以当前通道（平滑后）强度最高点对应 RT 为窗口中心，不用标品 ref_rt
+        # ROI 窗口中心：优先用外部覆盖表（如标注文件的人工 RT），否则以当前通道
+        # （平滑后）强度最高点对应 RT 为中心
         rt_center_min = rt_apex_min
+        if rt_center_overrides and native_id in rt_center_overrides:
+            override_rt = float(rt_center_overrides[native_id])
+            if np.isfinite(override_rt) and rt_sec[0] / 60.0 <= override_rt <= rt_sec[-1] / 60.0:
+                if abs(override_rt - rt_apex_min) > 1e-6:
+                    print(
+                        f"[INFO] ROI center override {native_id}: 标注 RT {override_rt:.3f} min "
+                        f"替代最高强度点 {rt_apex_min:.3f} min"
+                    )
+                rt_center_min = override_rt
 
         features.append({
             'Compound Name': len(features) + 1,

@@ -60,8 +60,9 @@ def predict(images_path, model, transform, threshold=0.9, device='cpu', verbose=
             pred_logits = outputs['pred_logits']  # [1, num_queries, 2]
             pred_boxes = outputs['pred_boxes']    # [1, num_queries, 4]
             
-            # 计算置信度（排除背景类）
-            probas = pred_logits.softmax(-1)[0, :, :-1]  # [num_queries, 1]
+            # 计算置信度（排除背景类；logits 布局为 [背景, 峰1, 峰2, ...]，
+            # 取 [..., 1:] 得到所有真实类别，不要用 :-1 —— 那会取到背景列导致检测恒为空）
+            probas = pred_logits.softmax(-1)[0, :, 1:]  # [num_queries, num_classes]
             keep = probas.max(-1).values > threshold     # [num_queries]
             
             if verbose:

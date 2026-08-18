@@ -17,9 +17,6 @@ import argparse
 import re
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -335,6 +332,9 @@ def main():
     if args.no_plots:
         print("[INFO] Skipping plots (--no_plots)")
     else:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
         for (mz, q3), points in compound_data.items():
             concs = np.array([p[0] for p in points])
             areas = np.array([p[1] for p in points])

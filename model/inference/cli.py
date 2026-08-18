@@ -7,16 +7,16 @@ MRMPFormer 统一推理入口：合并 testXIC + newtest，支持单张图模式
 - 输出：{detections: [{x1,x2,score,area,rt_min,rt_max,...}, ...]}
   一张图可能有两个及以上置信度窗口，detections 为检测框列表（按 score 降序）
 
-用法:
+用法（须在 model/ 目录下运行）:
   # 单张图模式（JSON 输入输出）
-  python main.py --mode single --model checkpoint/quanformer.pth --input example_single_input.json
-  echo '{"rt":[1,2,3],"intensity":[100,500,200]}' | python main.py --mode single --model x.pth
+  python -m inference.cli --mode single --model checkpoint/quanformer.pth --input example_single_input.json
+  echo '{"rt":[1,2,3],"intensity":[100,500,200]}' | python -m inference.cli --mode single --model x.pth
 
   # 目录下所有 JSON 逐张处理；每 JSON 一个子目录；--plot 时所有预测图在 batch_dir/predicted_plots_all/，文件名与源 JSON 对应
-  python main.py --mode batch_json_dir --model checkpoint/quanformer.pth --batch_dir truedata/2026318 --plot
+  python -m inference.cli --mode batch_json_dir --model checkpoint/quanformer.pth --batch_dir truedata/2026318 --plot
 
   # 单张图 Python API
-  from main import process_single_image
+  from inference.cli import process_single_image
   result = process_single_image(rt=[1,2,3], intensity=[100,500,200], model_path="x.pth")
 """
 import argparse
@@ -760,7 +760,8 @@ def main_cli():
                             "pipeline_mzml=完整流水线（ROI->预测->SNR筛选->post_newtest）; "
                             "pipeline_batch_mzml=完整流水线（批量mzML）"
                         ))
-    parser.add_argument("--model", type=str, required=True, help="模型路径 (.pth)")
+    parser.add_argument("--model", type=str, default=None,
+                        help="模型路径 (.pth)；也可由 --config 提供")
     parser.add_argument("--input", type=str, default="-",
                         help="输入 JSON 文件路径，- 表示 stdin")
     parser.add_argument("--output", type=str, default="-",
@@ -883,10 +884,21 @@ def main_cli():
         default=0.45,
         help="[post] 上限：修正框宽≤ROI窗口×比例",
     )
-    parser.add_argument(
-        "--post_enable_small_peak_rt_gate",
+    parser.add_argument("--post_enable_small_peak_rt_gate",
         action="store_true",
         help="[post] 启用小峰相对主峰的 RT 门控；不显式传入则关闭（允许多峰不按 RT 限制）",
+    )
+
+    # ==================== 输出控制 ====================
+    parser.add_argument(
+        "--no_timing",
+        action="store_true",
+        help="[pipeline] 不写 pipeline_timing.log / pipeline_timing_runs.jsonl（终端仍打印计时汇总）",
+    )
+    parser.add_argument(
+        "--save_snr_jpeg",
+        action="store_true",
+        help="[SNR筛选] 生成 筛选保留/筛选剔除/ 下的红框标注 jpeg（默认关闭，省磁盘）",
     )
 
     # ==================== 日志级别 ====================
@@ -901,7 +913,33 @@ def main_cli():
         help="仅显示 ERROR 级别日志",
     )
 
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="JSON 配置文件路径（作为默认参数，CLI 可覆盖；参数外置，仿 train.py --config）",
+    )
+
+    # 参数配置外置：手动提取 --config（避免 parse_known_args 触发 required 校验），
+    # 加载 JSON 作为默认值，CLI 参数仍可覆盖
+    _cfg_path = None
+    for _i, _tok in enumerate(sys.argv[1:]):
+        if _tok == "--config" and _i + 1 < len(sys.argv[1:]):
+            _cfg_path = sys.argv[2 + _i]
+            break
+        if _tok.startswith("--config="):
+            _cfg_path = _tok.split("=", 1)[1]
+            break
+    if _cfg_path:
+        with open(_cfg_path, encoding="utf-8") as _f:
+            _cfg = json.load(_f)
+        _cfg.pop("config", None)
+        _cfg = {_k: _v for _k, _v in _cfg.items() if not _k.startswith("_")}  # 过滤 _comment_* 注释键
+        parser.set_defaults(**_cfg)
+        print(f"[INFO] 已加载推理配置: {_cfg_path}")
     args = parser.parse_args()
+    if not args.model:
+        parser.error("--model 必填（命令行或 --config 提供）")
 
     # ---- 配置运行时日志过滤 ----
     from framework.util.logutil import configure_log_level, install_filter
@@ -968,6 +1006,20 @@ def main_cli():
             if not mzml_files:
                 print(f"[ERROR] No .mzML/.mzml files found under: {batch_path}", file=sys.stderr)
                 sys.exit(1)
+
+        # ---- 简明启动信息 ----
+        print("=" * 64)
+        print(f"MRMPFormer 推理 | {args.mode}")
+        print("-" * 64)
+        print(f"模型   : {args.model} | 置信度阈值 {args.threshold} | 平滑 sigma {args.smooth_sigma}")
+        if args.mode == "pipeline_mzml":
+            print(f"输入   : {mzml_files[0].name}")
+        else:
+            print(f"输入   : {len(mzml_files)} 个 mzML ({args.batch_dir})")
+        print(f"输出   : {base_out}/")
+        print(f"QC     : 强度>={args.pipeline_min_max_intensity:g} | 点数>={args.pipeline_min_chrom_points}"
+              f" | SNR>={args.snr_min:g}")
+        print("=" * 64)
 
         # 2) Generate ROI (testXIC)
         def _pipeline_qc_kwargs():
@@ -1061,6 +1113,15 @@ def main_cli():
         # 4) Per-sample: SNR filter -> post_newtest
         snr_intervals = []
         post_intervals = []
+
+        def _count_csv_rows(p):
+            try:
+                return len(pd.read_csv(p))
+            except Exception:
+                return -1
+
+        _roi_by_stem = {str(s.get("stem")): s for s in (mzml_roi_stats or [])}
+
         for mzml_path in mzml_files:
             stem = mzml_path.stem
             sample_t0 = time.perf_counter()
@@ -1088,6 +1149,7 @@ def main_cli():
                 min_noise_pts=int(args.snr_min_noise_points),
                 min_chrom_points=int(max(0, args.pipeline_min_chrom_points)),
                 min_chrom_max_intensity=float(max(0.0, args.pipeline_min_max_intensity)),
+                save_jpeg=bool(args.save_snr_jpeg),
             )
             snr_sec = time.perf_counter() - t_snr
             snr_intervals.append((t_snr, time.perf_counter()))
@@ -1186,6 +1248,12 @@ def main_cli():
                     "total": time.perf_counter() - sample_t0,
                 }
             )
+            # ---- 每样品结论行 ----
+            _n_roi = int(_roi_by_stem.get(stem, {}).get("n_roi_images", -1))
+            print(f"[样品] {stem}: ROI {_n_roi} 张 | 检出 {_count_csv_rows(pred_csv)}"
+                  f" | SNR 保留 {_count_csv_rows(refined_root_dir / 'prediction.csv')}"
+                  f" | 精修输出 {_count_csv_rows(refined_root_dir / args.post_output_name)}"
+                  f" | {per_sample_seconds[-1]['total']:.1f}s")
 
         stage_seconds["3_SNR筛选(全部样品)"] = sum(p.get("snr", 0.0) for p in per_sample_seconds)
         stage_seconds["4_框修正post_newtest(全部)"] = sum(p.get("post", 0.0) for p in per_sample_seconds)
@@ -1198,6 +1266,9 @@ def main_cli():
         total_sec = time.perf_counter() - pipeline_t0
         if total_sec > accounted:
             stage_seconds["5_其它(跳过/间隙)"] = total_sec - accounted
+        print("=" * 64)
+        print(f"[推理完成] {len(mzml_files)} 个样品 | 总耗时 {_format_elapsed(total_sec)} | 输出 {base_out}/")
+        print("=" * 64)
         _print_pipeline_timing_summary(
             mode_label=str(args.mode),
             n_samples=len(mzml_files),
@@ -1208,7 +1279,7 @@ def main_cli():
             stage_intervals=stage_intervals,
             pipeline_t0=pipeline_t0,
             mzml_roi_stats=mzml_roi_stats,
-            log_dir=base_out,
+            log_dir=None if bool(args.no_timing) else base_out,
         )
         return
 

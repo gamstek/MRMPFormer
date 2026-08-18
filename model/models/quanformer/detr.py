@@ -334,7 +334,12 @@ def build(args):
         # for panoptic, we just add a num_classes that is large enough to hold
         # max_obj_id + 1, but the exact value doesn't really matter
         num_classes = 250
-    device = torch.device(args.device)
+    # device: args.device 可能是 'auto'，需先解析（训练/推理共用入口）
+    if getattr(args, "device", None) == "auto":
+        from utils.torch_device import resolve_torch_device
+        device = resolve_torch_device(verbose=False)
+    else:
+        device = torch.device(args.device)
 
     backbone = build_backbone(args)
 

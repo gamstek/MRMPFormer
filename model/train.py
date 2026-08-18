@@ -98,6 +98,9 @@ def get_args_parser():
                         help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
+    parser.add_argument('--reset_optimizer', action='store_true',
+                        help='微调模式：只加载模型权重，不加载 optimizer/lr_scheduler，start_epoch 归零，'
+                             '以当前 lr 从头训练（配合 --resume 做 fine-tune）')
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--num_workers', default=4, type=int)
 
@@ -110,13 +113,10 @@ def get_args_parser():
 
 def main(args):
     utils.init_distributed_mode(args)
-    print("git:\n  {}\n".format(utils.get_sha()))
 
     if args.frozen_weights is not None:
         assert args.masks, "Frozen training is meant for segmentation only"
-    print(args)
 
-    device = torch.device(args.device)
     if args.device == 'auto':
         if torch.cuda.is_available():
             device = torch.device('cuda')
@@ -124,7 +124,33 @@ def main(args):
             device = torch.device('mps')
         else:
             device = torch.device('cpu')
-    print(f'Using device: {device}')
+    else:
+        device = torch.device(args.device)
+
+    # ---- 简明启动信息（完整参数存档至 output_dir/config_used.txt）----
+    _dev_name = device.type.upper()
+    if device.type == 'cuda':
+        _dev_name = f"CUDA ({torch.cuda.get_device_name(0)})"
+    _mode = "微调" if (args.resume and args.reset_optimizer) else ("续训" if args.resume else "从零训练")
+    print("=" * 64)
+    print(f"QuanFormer 训练 | {_mode} | {utils.get_sha()}")
+    print("-" * 64)
+    print(f"模型   : {args.model} ({args.backbone}, queries={args.num_queries}, "
+          f"enc/dec={args.enc_layers}/{args.dec_layers})")
+    print(f"数据   : {args.coco_path} | epochs={args.epochs} | batch={args.batch_size}")
+    print(f"学习率 : lr={args.lr:g} (backbone {args.lr_backbone:g}) | lr_drop={args.lr_drop}")
+    if args.resume:
+        print(f"权重   : {args.resume}" +
+              (" [重置优化器]" if args.reset_optimizer else f" [从 epoch {args.start_epoch} 续训]"))
+    else:
+        print("权重   : 随机初始化")
+    print(f"设备   : {_dev_name} | 输出: {args.output_dir}/")
+    print("=" * 64)
+    if args.output_dir:
+        _out_dir = Path(args.output_dir)
+        _out_dir.mkdir(parents=True, exist_ok=True)
+        with (_out_dir / 'config_used.txt').open('w', encoding='utf-8') as _f:
+            _f.write(utils.get_sha() + "\n" + str(args) + "\n")
 
     # fix the seed for reproducibility
     seed = args.seed + utils.get_rank()
@@ -141,7 +167,7 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
         model_without_ddp = model.module
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print('number of params:', n_parameters)
+    print(f"[模型] 可训练参数量: {n_parameters / 1e6:.1f}M")
 
     param_dicts = [
         {"params": [p for n, p in model_without_ddp.named_parameters() if "backbone" not in n and p.requires_grad]},
@@ -190,14 +216,27 @@ def main(args):
                 args.resume, map_location='cpu', check_hash=True)
         else:
             checkpoint = utils.safe_torch_load(args.resume, map_location='cpu')
-        del checkpoint['model']['class_embed.weight']
-        del checkpoint['model']['class_embed.bias']
-        del checkpoint['model']['query_embed.weight']
+        # 仅当 checkpoint 与当前模型同名字段维度不一致时才跳过（COCO 预训练迁移场景）；
+        # 自训 checkpoint 续训/微调时维度一致，分类头与 query_embed 应完整加载，避免静默随机初始化
+        _model_state = model_without_ddp.state_dict()
+        _skip_keys = []
+        for _k, _v in checkpoint['model'].items():
+            if _k in _model_state and _v.shape != _model_state[_k].shape:
+                _skip_keys.append(_k)
+        if _skip_keys:
+            print(f"[WARN] resume: 维度不匹配，跳过 {len(_skip_keys)} 个权重: {_skip_keys}")
+            for _k in _skip_keys:
+                checkpoint['model'].pop(_k, None)
         model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-            args.start_epoch = checkpoint['epoch'] + 1
+            if args.reset_optimizer:
+                # 微调：不延续旧 lr/动量，start_epoch 归零，用当前 config/CLI 的 lr 从头训练
+                print(f"[INFO] 微调模式(--reset_optimizer)：跳过 optimizer/lr_scheduler 加载，start_epoch=0")
+                args.start_epoch = 0
+            else:
+                optimizer.load_state_dict(checkpoint['optimizer'])
+                lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+                args.start_epoch = checkpoint['epoch'] + 1
 
     if args.eval:
         test_stats, coco_evaluator = evaluate(model, criterion, postprocessors,
@@ -206,11 +245,12 @@ def main(args):
             utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
         return
 
-    print("Start training")
+    print("[开始] 训练")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             sampler_train.set_epoch(epoch)
+        _t_epoch = time.time()
         train_stats = train_one_epoch(
             model, criterion, data_loader_train, optimizer, device, epoch,
             args.clip_max_norm)
@@ -253,13 +293,34 @@ def main(args):
                         torch.save(coco_evaluator.coco_eval["bbox"].eval,
                                    output_dir / "eval" / name)
 
+        # ---- 每 epoch 简明摘要（详细 loss 见上方 Averaged stats 与 log.txt）----
+        _bbox_stats = test_stats.get('coco_eval_bbox')
+        _ap = (f" | AP50 {_bbox_stats[1]:.3f} | AP75 {_bbox_stats[2]:.3f}"
+               if _bbox_stats else "")
+        print("-" * 64)
+        print(f"[Epoch {epoch + 1}/{args.epochs}] "
+              f"train_loss {train_stats['loss']:.4f} | val_loss {test_stats['loss']:.4f}"
+              f"{_ap} | lr {train_stats['lr']:.2e} | {time.time() - _t_epoch:.0f}s")
+        print("-" * 64)
+
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    print('Training time {}'.format(total_time_str))
+    print(f"[完成] 训练总耗时 {total_time_str} | 最终权重 {output_dir / 'checkpoint.pth'}")
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('MRMPFormer training and evaluation script', parents=[get_args_parser()])
+    # 参数配置外置：--config 指定 JSON 配置文件作为默认值，CLI 参数仍可覆盖（improve.md 第 2 项）
+    parser.add_argument('--config', type=str, default=None, help='JSON 配置文件路径（作为默认参数，CLI 可覆盖）')
+    _known, _ = parser.parse_known_args()
+    if _known.config:
+        import json as _json
+        with open(_known.config, encoding='utf-8') as _f:
+            _cfg = _json.load(_f)
+        _cfg.pop('config', None)
+        _cfg = {_k: _v for _k, _v in _cfg.items() if not _k.startswith('_')}  # 过滤 _comment_* 注释键
+        parser.set_defaults(**_cfg)
+        print(f"[INFO] 已加载配置: {_known.config}")
     args = parser.parse_args()
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)

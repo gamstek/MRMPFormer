@@ -474,6 +474,7 @@ def run(
     min_noise_pts: int,
     min_chrom_points: int = 0,
     min_chrom_max_intensity: float = 0.0,
+    save_jpeg: bool = True,
 ) -> int:
     parent = Path(output_dir).resolve()
     parent.mkdir(parents=True, exist_ok=True)
@@ -505,8 +506,9 @@ def run(
 
     dir_keep = run_dir / "筛选保留"
     dir_drop = run_dir / "筛选剔除"
-    dir_keep.mkdir(parents=True, exist_ok=True)
-    dir_drop.mkdir(parents=True, exist_ok=True)
+    if save_jpeg:
+        dir_keep.mkdir(parents=True, exist_ok=True)
+        dir_drop.mkdir(parents=True, exist_ok=True)
 
     report_rows: List[Dict[str, Any]] = []
     passed_records: List[Tuple[dict, pd.Series, float, str]] = []
@@ -563,7 +565,7 @@ def run(
             and point_ok
             and inten_ok
         )
-        if ch is not None:
+        if ch is not None and save_jpeg:
             out_img = (dir_keep if ok else dir_drop) / fname
             save_roi_jpeg_with_box(
                 str(out_img),
@@ -685,7 +687,10 @@ def run(
     xic_full = np.vstack([common_rt, arr])
     _npy_save_safe(xic_full, run_dir / "xic_matrix.npy")
     print("[INFO] 已写入 prediction.csv / feature.csv / roi_windows.csv / xic_matrix.npy")
-    print("[DONE] 筛选保留: %s ，筛选剔除: %s" % (dir_keep, dir_drop))
+    if save_jpeg:
+        print("[DONE] 筛选保留: %s ，筛选剔除: %s" % (dir_keep, dir_drop))
+    else:
+        print("[DONE] SNR 筛选完成（save_jpeg=False，未生成 筛选保留/筛选剔除/ 标注图）")
     return 0
 
 
@@ -718,6 +723,11 @@ def main():
         default=0.0,
         help="整条 XIC（平滑后）最大强度下限；0 表示不启用",
     )
+    ap.add_argument(
+        "--no_save_jpeg",
+        action="store_true",
+        help="不生成 筛选保留/筛选剔除/ 下的红框标注 jpeg（默认生成）",
+    )
     args = ap.parse_args()
     cli = float(args.min_snr)
     eff = float("-inf") if cli < 0 else cli
@@ -733,6 +743,7 @@ def main():
             int(args.min_noise_points),
             int(args.min_chrom_points),
             float(args.min_chrom_max_intensity),
+            save_jpeg=not bool(args.no_save_jpeg),
         )
     )
 

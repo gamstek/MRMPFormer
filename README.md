@@ -141,7 +141,7 @@ python wiff.py --no-peak-picking    # 保留 profile 原始轮廓
 > 💡 四种分析模式（Targeted / Untargeted × Centroided / Profile）的原理、适用场景与操作流程，详见 [User_Tutorials.md](User_Tutorials.md)。
 > ⚠️ **当前项目仅开发 Targeted × Centroided（MRM）模式**，其余三模式保留现状、暂不开发。
 
-统一入口 `model/main.py`，通过 `--mode` 切换 7 种运行模式：
+统一入口 `model/inference/cli.py`（在 `model/` 目录下用 `python -m inference.cli` 调用），通过 `--mode` 切换 7 种运行模式：
 
 | 模式 | 说明 | 适用场景 |
 |------|------|----------|
@@ -163,7 +163,7 @@ python wiff.py --no-peak-picking    # 保留 profile 原始轮廓
 cd model
 
 # 批量 mzML（最常用）
-python main.py --mode pipeline_batch_mzml \
+python -m inference.cli --mode pipeline_batch_mzml \
   --model checkpoint/quanformer.pth \
   --batch_dir ../data/test1/mzML \
   --output_dir ../output/pipeline_batch \
@@ -173,7 +173,7 @@ python main.py --mode pipeline_batch_mzml \
   --pipeline_min_chrom_points 10
 
 # 单个 mzML
-python main.py --mode pipeline_mzml \
+python -m inference.cli --mode pipeline_mzml \
   --model checkpoint/quanformer.pth \
   --mzml ../data/test_oulu_23.mzML \
   --output_dir ../output/pipeline_single_test \
@@ -208,21 +208,21 @@ python main.py --mode pipeline_mzml \
 
 ```bash
 # 单张图（JSON，适合调试/API）
-python main.py --mode single \
+python -m inference.cli --mode single \
   --model checkpoint/quanformer.pth \
   --input input.json --threshold 0.99 --plot
 
 # stdin 管道
 echo '{"rt":[1,2,3,4,5],"intensity":[100,500,800,400,50]}' | \
-  python main.py --mode single --model checkpoint/quanformer.pth
+  python -m inference.cli --mode single --model checkpoint/quanformer.pth
 
 # 单个 mzML
-python main.py --mode mzml \
+python -m inference.cli --mode mzml \
   --model checkpoint/quanformer.pth \
   --mzml ../data/test1/mzML/B1.mzML --output_dir results/single
 
 # 批量 mzML
-python main.py --mode batch_mzml \
+python -m inference.cli --mode batch_mzml \
   --model checkpoint/quanformer.pth \
   --batch_dir ../data/test1/mzML --output_dir results/batch
 ```
@@ -243,13 +243,13 @@ python main.py --mode batch_mzml \
 
 ### 推理参数速查
 
-> 以下为 `model/main.py` **全部**命令行参数（与 argparse 定义一一对应）。
+> 以下为 `model/inference/cli.py` **全部**命令行参数（与 argparse 定义一一对应）。
 > 「完整参数模板」可直接复制到终端，按注释填写/删减；除 `--model` 外所有参数均可省略（使用默认值）。
 
 **完整参数模板**（注释即填写说明）：
 
 ```bash
-python main.py \
+python -m inference.cli \
   # ==================== 基础参数 ====================
   # 运行模式（默认 single），可选：
   #   single / mzml / batch_mzml / batch_dir / batch_json_dir / pipeline_mzml / pipeline_batch_mzml
@@ -340,7 +340,12 @@ python main.py \
   # 修正框宽上限：≤ ROI 窗口 × 比例（默认 0.45）
   --post_refine_width_max_frac_of_roi 0.45 \
   # 启用小峰相对主峰的 RT 门控（默认关闭；传入此 flag 才启用）
-  --post_enable_small_peak_rt_gate
+  --post_enable_small_peak_rt_gate \
+  # ==================== 输出控制 ====================
+  # 不写 pipeline_timing.log / pipeline_timing_runs.jsonl（终端仍打印计时汇总）
+  --no_timing \
+  # SNR 筛选时生成 筛选保留/筛选剔除/ 红框标注 jpeg（默认关闭，省磁盘）
+  --save_snr_jpeg
 ```
 
 **常用参数速查**：
@@ -365,80 +370,60 @@ python main.py \
 | `--pipeline_min_max_intensity` | `1000` | XIC 最大强度低于此值跳过 |
 | `--pipeline_min_chrom_points` | `10` | 色谱点数少于此跳过 |
 | `--post_min_confidence` | `0.99` | 精修后最低置信度 |
+| `--no_timing` | — | 不写计时日志文件（终端仍打印） |
+| `--save_snr_jpeg` | — | SNR 筛选生成红框标注图（默认关闭） |
 
 ---
 
-### Untargeted 模式（R + CentWave）
+### Untargeted 模式
 
-> ⚠️ Untargeted 模式暂不开发（保留现状）；仅做 MRM（Targeted × Centroided）定量可跳过本节。
-
-#### 安装 R 环境
-
-```bash
-# 检查
-R --version
-
-# Ubuntu/Debian
-sudo apt install --no-install-recommends r-base libxml2-dev
-```
-
-在 R 控制台安装 Bioconductor 包：
-
-```r
-if (!require("BiocManager", quietly = TRUE)) install.packages("BiocManager")
-BiocManager::install("xcms")
-BiocManager::install("MSnbase")
-install.packages("dplyr")
-```
-
-#### 运行特征提取
-
-```bash
-cd model
-
-python getFeature.py \
-  --source resources/example/centroided \
-  --polarity positive --ppm 10 \
-  --minWidth 5 --maxWidth 50 \
-  --s2n 5 --noise 100 \
-  --mzDiff 0.015 --prefilter 3
-```
-
-| 参数 | 默认 | 说明 |
-|------|------|------|
-| `--source` | `resources/example` | mzML 数据目录 |
-| `--polarity` | `positive` | 极性 |
-| `--ppm` | `10` | MS1 ppm 容差 |
-| `--minWidth` / `--maxWidth` | `5` / `50` | 峰宽范围 |
-| `--s2n` | `5` | 信噪比阈值 |
-| `--mzDiff` | `0.015` | m/z 差异阈值 |
+> ⚠️ Untargeted 模式暂不开发。原 `getFeature.py`（R + CentWave 特征提取）已从仓库中删除，如需恢复请从 git history 找回。仅做 MRM（Targeted × Centroided）定量可跳过本节。
 
 ---
 
 ## 训练
+
+### 生成 COCO 数据集
+
+训练要求数据集为 COCO 格式，由 `preprocessing/coco_annotation.py` 从 mzML + 人工标注 xlsx 生成（EIC 图像与推理管线完全一致：400x300、apex±1min 窗口）：
+
+```bash
+cd model
+
+python -m preprocessing.coco_annotation \
+  --mzmls ../data/test/20260715_shiyaoyuan_test/20260715_shiyaoyuan_test_1.mzML \
+          ../data/test/20260715_shiyaoyuan_test/20260715_shiyaoyuan_test_2.mzML \
+  --labels ../data/test/testcase_data.xlsx \
+  --output_dir ../data/coco \
+  --val_stems 20260715_shiyaoyuan_test_2
+```
+
+标注 xlsx 沿用 `testcase_data.xlsx` 布局（`comonent`/`channel`/`peak_start`/`peak_end`/`sample_id` 列），按 `native_id`「化合物名-1/-2」与色谱对齐，`peak_start/peak_end`（分钟）经每张 ROI 的窗口线性映射为像素 bbox；无标注 ROI（TIC 等）作为负样本纳入。
+
+### COCO 数据格式
+
+`framework/datasets/coco.py` 按以下固定路径读取（`--coco_path` 指向数据集根目录）：
+
+```
+<coco_path>/
+├── train/               # 训练 EIC 图像 (400x300 JPEG)
+│   └── train_coco.json  # 训练标注（bbox + category_id=1 峰类）
+├── val/                 # 验证图像
+│   └── val_coco.json    # 验证标注
+└── _xic/                # XIC 中间产物（可再生成，训练不读取）
+```
 
 ### 训练命令
 
 ```bash
 cd model
 
-python mrmpformer/main.py \
-  --coco_path data/peak-all \
+python -m train \
+  --coco_path ../data/coco \
   --output_dir output \
   --device auto \
   --epochs 30 --batch_size 4 \
   --lr 1e-4 --lr_backbone 1e-5
-```
-
-### COCO 数据格式
-
-```
-<coco_path>/
-├── train2017/                    # EIC 图像 (JPEG)
-├── val2017/                      # 验证图像
-└── annotations/
-    ├── instances_train2017.json  # 标注（bbox + category_id）
-    └── instances_val2017.json
 ```
 
 ### 关键参数
@@ -459,13 +444,13 @@ python mrmpformer/main.py \
 
 ```bash
 # 从预训练权重继续训练
-python mrmpformer/main.py \
-  --coco_path data/peak-all --output_dir output_finetune \
+python -m train \
+  --coco_path ../data/coco --output_dir output_finetune \
   --device auto --resume checkpoint/quanformer.pth --epochs 50
 
 # 仅评估
-python mrmpformer/main.py \
-  --coco_path data/peak-all \
+python -m train \
+  --coco_path ../data/coco \
   --resume checkpoint/quanformer.pth --device auto --eval
 ```
 
@@ -479,38 +464,28 @@ python mrmpformer/main.py \
 ```
 MRMPFormer/
 ├── requirements.txt              # pip 依赖（model + desktop 合并，GPU 分段）
-├── model/                        # ⭐ 核心代码
-│   ├── main.py                   # 推理入口（--mode 驱动）
-│   ├── getFeature.py             # Untargeted 特征提取
+├── model/                        # ⭐ 核心代码（须在此目录下用 python -m <pkg> 调用）
+│   ├── train.py                  # 训练入口（python -m train ...）
 │   ├── environment.yml           # Conda 环境（name: gamstekpeaking）
-│   ├── mrmpformer/               # 核心包（模型/训练/推理/前后处理/管线）
-│   │   ├── main.py               #   训练入口
-│   │   ├── models/               #   模型定义
-│   │   └── datasets/             #   COCO 数据加载
-│   ├── utils/                    # 推理辅助（EIC/定量/绑图）
-│   ├── tools/                    # 批处理/诊断/可视化
+│   ├── inference/                # 推理：CLI 入口 + 预测器 + 两轮检测
+│   │   └── cli.py                #   统一推理入口（python -m inference.cli --mode ...）
+│   ├── models/                   # 模型定义（quanformer / mrmpformer / shared）
+│   ├── preprocessing/            # 前处理：xic_extraction / ion_zenith / masked_roi_generator
+│   ├── postprocessing/           # 后处理：peak_refinement / snr_filter / valley_split / evaluation
+│   ├── framework/                # DETR 训练框架（datasets / util / engine）
+│   ├── utils/                    # 推理辅助（io / quantify / mzml_load / roi_rt_mapping 等）
+│   ├── tools/                    # 批处理 / 诊断 / 可视化 / 基准测试
 │   ├── checkpoint/               # 模型权重
 │   └── resources/                # 示例数据
+├── desktop/                      # PySide6 桌面 GUI（前处理 / 寻峰 / 定量 / 设置）
 ├── converters/                   # 格式转换（msdata/wiff → mzML）
-├── gamstekpeaking/               # Streamlit Web 工作台（已废弃，见 desktop/）
 ├── data/                         # 测试数据
-├── docs/                         # 项目文档
-└── paper/                        # 论文
+└── docs/                         # 项目文档
 ```
 
 ---
 
 ## 辅助工具
-
-### GamSTekPeaking — Web 工作台
-
-基于 Streamlit 的代谢组学全流程界面：
-
-```bash
-cd gamstekpeaking
-pip install -r requirements.txt
-python main.py
-```
 
 ### converters — 格式转换
 

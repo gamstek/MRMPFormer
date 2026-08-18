@@ -64,7 +64,7 @@ graph TD
 
 ```bash
 cd model
-python main.py --mode pipeline_batch_mzml \
+python -m inference.cli --mode pipeline_batch_mzml \
   --model checkpoint/quanformer.pth \
   --batch_dir ../data/test1/mzML \
   --output_dir ../output/targeted \
@@ -111,7 +111,7 @@ python main.py --mode pipeline_batch_mzml \
 
 3. **模型预测**：对 ROI 目录运行批量预测：
    ```bash
-   python main.py --mode batch_dir \
+   python -m inference.cli --mode batch_dir \
      --model checkpoint/quanformer.pth \
      --batch_dir ../output/untargeted_roi \
      --output_dir ../output/untargeted_pred
@@ -177,7 +177,7 @@ python wiff.py --no-peak-picking  # 跳过峰检测 → 保留 profile 原始轮
 
 ```bash
 cd model
-python main.py --mode pipeline_batch_mzml \
+python -m inference.cli --mode pipeline_batch_mzml \
   --model checkpoint/quanformer.pth \
   --batch_dir ../data/test1/mzML \
   --output_dir ../output/t1_centroided \
@@ -203,7 +203,7 @@ python main.py --mode pipeline_batch_mzml \
 **操作**：命令同模式一，仅调整平滑参数：
 
 ```bash
-python main.py --mode pipeline_batch_mzml \
+python -m inference.cli --mode pipeline_batch_mzml \
   --model checkpoint/quanformer.pth \
   --batch_dir ../data/test1/mzML_profile \
   --output_dir ../output/t1_profile \
@@ -220,27 +220,29 @@ python main.py --mode pipeline_batch_mzml \
 
 ## 6. 模式三：Untargeted × Centroided
 
+> ⚠️ **暂不开发**。原 `getFeature.py`（R + CentWave 特征提取）与 `testXIC.py` 已从仓库中删除，如需恢复请从 git history 找回。本节保留以备未来恢复时参考。
+
 **场景**：质心化全扫描数据的代谢组学发现（找未知峰、差异代谢物初筛）。
 
-**操作**：
+**历史操作**（仅供参考，代码已删除）：
 
 ```bash
 cd model
 # 步骤 1：CentWave 全谱峰检测（输出 peak_list.csv 到 source 的父目录）
-python getFeature.py \
-  --source ../data/fullscan_centroided \
-  --polarity positive --ppm 10 \
-  --minWidth 5 --maxWidth 50 \
-  --s2n 5 --noise 100 --mzDiff 0.015 --prefilter 3
+# python getFeature.py \
+#   --source ../data/fullscan_centroided \
+#   --polarity positive --ppm 10 \
+#   --minWidth 5 --maxWidth 50 \
+#   --s2n 5 --noise 100 --mzDiff 0.015 --prefilter 3
 
 # 步骤 2：按 peak_list 各 m/z 从原始 mzML 提取 EIC，生成 JSON 后做 ROI
-python testXIC.py \
-  --from_json ../output/eic_arrays.json \
-  --output_dir ../output/u3_roi \
-  --smooth_sigma 0.0
+# python -m preprocessing.xic_extraction \
+#   --from_json ../output/eic_arrays.json \
+#   --output_dir ../output/u3_roi \
+#   --smooth_sigma 0.0
 
 # 步骤 3：批量预测
-python main.py --mode batch_dir \
+python -m inference.cli --mode batch_dir \
   --model checkpoint/quanformer.pth \
   --batch_dir ../output/u3_roi \
   --output_dir ../output/u3_pred \
@@ -255,9 +257,11 @@ python main.py --mode batch_dir \
 
 ## 7. 模式四：Untargeted × Profile
 
+> ⚠️ **暂不开发**。代码同模式三，已删除。
+
 **场景**：标准非靶向代谢组学流程——CentWave 的经典使用对象就是轮廓数据（峰形完整，峰检测更准）。
 
-**操作**：与模式三相同，差异在：
+**历史操作**：与模式三相同，差异在：
 - 转换时用 `python wiff.py --no-peak-picking` 保留轮廓
 - 步骤 2 的 `--smooth_sigma` 用 `0.8~1.5`
 - CentWave 参数可适当放宽 `--minWidth`（轮廓数据峰形更宽）
@@ -280,8 +284,8 @@ python main.py --mode batch_dir \
 **Q1：质心数据用了大平滑会怎样？**
 质心点本身稀疏，强平滑会压低峰高、展宽峰形，可能导致峰边界外扩或相邻峰合并。质心数据建议 `smooth_sigma ≤ 0.5`。
 
-**Q2：Untargeted 的 `peak_list.csv` 在哪里？**
-`getFeature.py` 将其输出到 `--source` 目录的**父目录**下（`Path(source).parent/peak_list.csv`），不是 source 目录内。
+**Q2：Untargeted 模式还能用吗？**
+不能。原 `getFeature.py`（R + CentWave）与 `testXIC.py` 已从仓库删除，仅保留 Targeted × Centroided（MRM）模式可用。如需 Untargeted，请从 git history 找回相关代码。
 
 **Q3：ROI 窗口为什么是 ±1 min？**
 `testXIC.py` 硬编码 `window_half_min = 1.0`，以平滑后最高峰 RT 居中，总宽 2 min；超出实际 RT 范围会自动截断，积分时通过 `roi_windows.csv` 做像素→RT 映射。

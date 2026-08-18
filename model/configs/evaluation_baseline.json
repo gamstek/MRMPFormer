@@ -1,0 +1,30 @@
+{
+  "_comment_labels": "人工标注 xlsx（60 化合物 ×2 离子 + 起止/面积）",
+  "labels": "../data/test/testcase_data.xlsx",
+  "_comment_model": "模型权重（run_inference=1 时用于推理；=0 时仅作记录）",
+  "model": "checkpoint/quanformer.pth",
+  "_comment_output_dir": "评测输出目录（evaluation_report.json / match_details.csv / area_pairs.csv）",
+  "output_dir": "../data/evaluation/baseline_default",
+  "_comment_run_inference": "1=先跑推理管线；0=复用已有 prediction.csv（更快、可重复）",
+  "run_inference": 0,
+  "_comment_mzmls": "mzML 列表（run_inference=1 时使用）",
+  "mzmls": [],
+  "_comment_prediction_csvs": "run_inference=0 时：stem=path/to/prediction.csv（stem 与 mzML 文件名对应）",
+  "prediction_csvs": [
+    "20260715_shiyaoyuan_test_1=../data/test/pred_v1_fixed/20260715_shiyaoyuan_test_1/prediction.csv",
+    "20260715_shiyaoyuan_test_2=../data/test/pred_v1_fixed/20260715_shiyaoyuan_test_2/prediction.csv"
+  ],
+  "_comment_feature_csvs": "run_inference=0 时：stem=path/to/feature.csv（image↔native_id 对齐必需）",
+  "feature_csvs": [
+    "20260715_shiyaoyuan_test_1=../data/coco/_xic/20260715_shiyaoyuan_test_1/feature.csv",
+    "20260715_shiyaoyuan_test_2=../data/coco/_xic/20260715_shiyaoyuan_test_2/feature.csv"
+  ],
+  "_comment_threshold": "预测置信度阈值（低于此值的检测框不参与评测）",
+  "threshold": 0.9,
+  "_comment_tolerance": "检测口径命中容差（min）：预测起止与人工起止偏差均 <= 此值判 TP",
+  "tolerance": 0.1,
+  "_comment_quant_tolerance": "定量口径宽松配对容差（min）：起止偏差均 <= 此值的对子参与面积R2/RSD/RT偏差，不影响 P/R/F1",
+  "quant_tolerance": 0.2,
+  "_comment_smooth_sigma": "推理平滑参数（run_inference=1 时与管线一致）",
+  "smooth_sigma": 0.8
+}
