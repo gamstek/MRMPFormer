@@ -160,3 +160,50 @@ D:\Anaconda3\envs\gamstekpeaking\python.exe -m tools.evaluation.dump_queries --m
 ```
 
 末尾统计块若显示「背概率最高 query 的框更贴 GT」显著占优，即为最终铁证；v2 应呈相反格局。
+
+---
+
+## 附录 D：推理管线模式与输出清单（2026-08-18）
+
+> 统一入口 `model/inference/cli.py`（`python -m inference.cli --mode <mode> ...`），3 种模式各阶段输出如下。
+> `roi` / `pipeline` 支持 `--mzml` 单文件或 `--batch_dir` 目录（递归含子目录）。
+
+### 模式总览
+
+| 模式 | 用途 | 输入 | 输出 |
+|---|---|---|---|
+| `roi` | mzML → ROI（仅阶段①） | `--mzml` 文件/目录 或 `--batch_dir` 目录（递归） | `<out>/<key>/` ROI 目录 |
+| `batch_dir` | 已有 ROI 目录批量预测 | `--batch_dir`（每子目录一套 ROI） | `<out>/<子目录>/prediction.csv` |
+| `pipeline`（默认） | 完整管线①~④（单文件或批量） | 同 `roi` | `base_out/` 四阶段产物 |
+
+> `<key>` = mzML 文件名 stem；目录递归下不同子目录同名 stem 自动改为路径展平（如 `子目录A__样品1`）避免覆盖。
+
+### 各模式详细输出
+
+**① `roi`**：`extract_xic_with_pyopenms` 逐 mzML 读色谱 → `<out>/<key>/`：
+- 每通道 ROI jpeg（命名 `N_mz{母离子}_q3{子离子}.jpeg`）
+- `feature.csv`、`roi_windows.csv`、`xic_matrix.npy`
+- 被 QC 剔除的通道记录 `pipeline_qc_excluded.csv`
+- `--model + --plot`：`generate_prediction_plots` 预测框标注图
+
+**② `batch_dir`**：复用 `predictor.main()` 批量模式，逐子目录：
+- `<out>/<子目录>/prediction.csv`（积分方式非 linear 时为 `prediction_{method}.csv`）
+- `<out>/<子目录>/predicted_plots/`（`--plot`）
+
+**③ `pipeline`**（`base_out = --output_dir`，默认 `results/full_pipeline`；单文件与批量统一走批量路径，产物布局一致）：
+
+| 阶段 | 输出目录 | 产物 |
+|---|---|---|
+| ① ROI 生成 | `base_out/xic-roi-batch/<key>/` | ROI jpeg、`feature.csv`、`roi_windows.csv`、`xic_matrix.npy` |
+| ② 模型预测 | `base_out/batch_predictions/<key>/` | `prediction.csv`（或 `prediction_{method}.csv`）、`predicted_plots/`（`--plot`） |
+| ③ SNR 筛选 | `base_out/snr_filtered/<key>/SNR_box_<thr>/` | `prediction.csv`（保留行）、`feature.csv`、`roi_windows.csv`、`xic_matrix.npy`、`box_outside_snr_report.csv`；`--save_snr_jpeg` 时 `筛选保留/`、`筛选剔除/` 红框标注图 |
+| ④ 框修正 | 同上 `SNR_box_<thr>/` | `prediction_refined.csv`（`--post_output_name` 可改）、`refined_plots/`（`--plot`） |
+| 计时 | `base_out/` | `pipeline_timing.log`、`pipeline_timing_runs.jsonl`（阶段耗时 + 资源统计） |
+
+### 输出差异说明
+
+- **prediction.csv 列**：image, image_path, compound_name, mz, q3, old_rt, box_x1/y1/x2/y2, score, rt_min, rt_max, retention_time, intensity_max, area, point_counts, snr, noise_std, baseline_slope, peak_width_ratio, dynamic_range, integration_method_used（每 (mz,q3) 只保留面积最大行）。
+- **SNR 阶段产物**：`prediction.csv` 为通过 SNR 门槛的检测框（供 post 读取），`box_outside_snr_report.csv` 为逐框 SNR 明细；两者均含 `image_path` 指向 ROI 图。
+- **精修 `prediction_refined.csv`**：为主峰+次峰识别/谷值拆分后的最终峰列表，含框修正后 RT 边界与置信度。
+- **积分方法**：cli `--integration_method`（linear/raw/external_baseline）非 linear 时预测文件名为 `prediction_{method}.csv`，不覆盖默认；predictor 底层另支持 peak_adaptive/adaptive/minval_noise_right 等仅供内部调用。
+- **QC 门槛**（pipeline 模式）：`--pipeline_min_max_intensity`（默认 1000）、`--pipeline_min_chrom_points`（默认 10），未达标的通道不生成 ROI、不参与预测。

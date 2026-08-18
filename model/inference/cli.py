@@ -1,23 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-MRMPFormer 统一推理入口：合并 testXIC + newtest，支持单张图模式。
-
-单张图模式：前端一张一张输入输出
-- 输入：一张图对应 (rt[], intensity[])，可选基线 (x[], y[])，无需 mz/q3
-- 输出：{detections: [{x1,x2,score,area,rt_min,rt_max,...}, ...]}
-  一张图可能有两个及以上置信度窗口，detections 为检测框列表（按 score 降序）
+MRMPFormer 统一推理入口（3 种模式；roi / pipeline 均支持单文件与目录递归扫描）。
 
 用法（须在 model/ 目录下运行）:
-  # 单张图模式（JSON 输入输出）
-  python -m inference.cli --mode single --model checkpoint/quanformer.pth --input example_single_input.json
-  echo '{"rt":[1,2,3],"intensity":[100,500,200]}' | python -m inference.cli --mode single --model x.pth
+  # 仅 ROI 生成（单文件或目录递归；每个 mzML 输出到 <output_dir>/<文件名stem>/）
+  python -m inference.cli --mode roi --model checkpoint/quanformer.pth --mzml ../data/sample.mzML
+  python -m inference.cli --mode roi --model checkpoint/quanformer.pth --batch_dir ../data/mzML_dir
 
-  # 目录下所有 JSON 逐张处理；每 JSON 一个子目录；--plot 时所有预测图在 batch_dir/predicted_plots_all/，文件名与源 JSON 对应
-  python -m inference.cli --mode batch_json_dir --model checkpoint/quanformer.pth --batch_dir truedata/2026318 --plot
+  # 对已有 ROI 目录批量预测+积分
+  python -m inference.cli --mode batch_dir --model checkpoint/quanformer.pth --batch_dir xic-roi-batch
 
-  # 单张图 Python API
-  from inference.cli import process_single_image
-  result = process_single_image(rt=[1,2,3], intensity=[100,500,200], model_path="x.pth")
+  # 完整管线（ROI → 预测 → SNR 筛选 → 精修，单文件或目录递归）
+  python -m inference.cli --mode pipeline --model checkpoint/quanformer.pth --batch_dir ../data/mzML_dir
+
+  # 目录递归时不同子目录出现同名 mzML：输出目录自动加路径前缀（如 子目录A__样品1）避免覆盖
 """
 import argparse
 import json
@@ -26,15 +22,13 @@ import sys
 
 # 解决 Windows 下 PyTorch(libomp.dll) 与 numpy/MKL(libiomp5md.dll) 的 OpenMP 运行时冲突
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
-import tempfile
 import threading
 import time
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-
-ROOT_DIR = Path(__file__).resolve().parent.parent  # model/ 目录
 
 
 def _format_elapsed_ms(seconds: float) -> str:
@@ -476,312 +470,73 @@ def _print_pipeline_timing_summary(
         _write_pipeline_timing_logs(log_dir, lines, record)
     return record
 
-from scipy.ndimage import gaussian_filter1d
-from scipy.interpolate import interp1d
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
+def _collect_mzml_inputs(mzml_arg, batch_dir_arg):
+    """收集输入 mzML：--mzml 单文件/目录，或 --batch_dir 目录（递归含子目录）。
 
-def _generate_single_roi(output_dir, mz, rt, intensity, q3=None, expected_rt=None, smooth_sigma=0.0):
+    返回 [(Path, key), ...]；key 默认为文件名 stem，目录递归下不同子目录出现同名 stem 时，
+    key 改为相对扫描根目录的路径展平（如 ``子目录A__样品1``），避免输出目录互相覆盖。
     """
-    单张图：由 (mz, rt[], intensity[]) 生成 ROI 图像、feature.csv、roi_windows.csv、xic_matrix.npy。
-    """
-    rt_raw = np.asarray(rt, dtype=np.float64)
-    intensity_raw = np.asarray(intensity, dtype=np.float64)
-    if rt_raw.size < 2 or intensity_raw.size < 2 or rt_raw.size != intensity_raw.size:
-        raise ValueError("rt 与 intensity 长度需≥2且相等")
-
-    if np.nanmax(rt_raw) > 200:
-        rt_min = rt_raw / 60.0
+    if mzml_arg and batch_dir_arg:
+        print("[ERROR] --mzml 与 --batch_dir 不可同时提供", file=sys.stderr)
+        sys.exit(1)
+    if mzml_arg:
+        p = Path(mzml_arg)
+        if p.is_file():
+            if p.suffix.lower() != ".mzml":
+                print("[ERROR] --mzml 需为 .mzML 文件或包含 mzML 的目录: %s" % mzml_arg, file=sys.stderr)
+                sys.exit(1)
+            return [(p.resolve(), p.stem)]
+        if not p.is_dir():
+            print("[ERROR] --mzml 路径不存在: %s" % mzml_arg, file=sys.stderr)
+            sys.exit(1)
+        scan_root = p
+    elif batch_dir_arg:
+        scan_root = Path(batch_dir_arg)
+        if not scan_root.is_dir():
+            print("[ERROR] --batch_dir 需为目录: %s" % batch_dir_arg, file=sys.stderr)
+            sys.exit(1)
     else:
-        rt_min = rt_raw.copy()
+        print("[ERROR] 需提供 --mzml（单文件或目录）或 --batch_dir（目录）", file=sys.stderr)
+        sys.exit(1)
 
-    if smooth_sigma > 0:
-        intensity_raw = gaussian_filter1d(intensity_raw.astype(np.float64), sigma=smooth_sigma)
-
-    apex_idx = np.argmax(intensity_raw)
-    rt_apex_min = float(rt_min[apex_idx])
-    rt_for_feature = expected_rt if expected_rt is not None else rt_apex_min
-
-    mz_val = float(mz) if mz is not None else np.nan
-    q3_val = float(q3) if q3 is not None and not (isinstance(q3, float) and np.isnan(q3)) else np.nan
-
-    window_half_min = 1.0
-    rt_start_min = max(rt_for_feature - window_half_min, float(np.nanmin(rt_min)))
-    rt_end_min = min(rt_for_feature + window_half_min, float(np.nanmax(rt_min)))
-    if rt_end_min <= rt_start_min:
-        rt_start_min, rt_end_min = float(np.nanmin(rt_min)), float(np.nanmax(rt_min))
-
-    mask = (rt_min >= rt_start_min) & (rt_min <= rt_end_min)
-    plot_rt = rt_min[mask] if np.sum(mask) >= 2 else rt_min
-    plot_intensity = intensity_raw[mask] if np.sum(mask) >= 2 else intensity_raw
-
-    from preprocessing.xic_extraction import roi_safe_name_base
-
-    safe_name = roi_safe_name_base(1, mz_val, q3_val)
-    roi_path = os.path.join(output_dir, f"{safe_name}.jpeg")
-
-    fig = Figure(figsize=(4, 3), dpi=100)
-    canvas = FigureCanvas(fig)
-    ax = fig.add_subplot(111)
-    ax.plot(plot_rt, plot_intensity, color="blue", linewidth=1.5)
-    if rt_end_min > rt_start_min:
-        ax.set_xlim(rt_start_min, rt_end_min)
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.spines["bottom"].set_visible(False)
-    ax.spines["left"].set_visible(False)
-    fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
-    canvas.print_jpeg(roi_path)
-
-    n_pts = max(200, int((rt_min.max() - rt_min.min()) / 0.01) + 1)
-    common_rt = np.linspace(rt_min.min(), rt_min.max(), n_pts)
-    f_interp = interp1d(rt_min, intensity_raw, kind="linear", bounds_error=False, fill_value=0.0)
-    aligned_intensity = f_interp(common_rt)
-    xic_full = np.vstack([common_rt, aligned_intensity])
-    np.save(os.path.join(output_dir, "xic_matrix.npy"), xic_full)
-
-    pd.DataFrame([{
-        "Compound Name": 1, "mz": mz_val, "q3": q3_val,
-        "RT": round(float(rt_for_feature), 3)
-    }]).to_csv(os.path.join(output_dir, "feature.csv"), index=False)
-
-    pd.DataFrame([{"image": f"{safe_name}.jpeg", "rt_lo": rt_start_min, "rt_hi": rt_end_min}]).to_csv(
-        os.path.join(output_dir, "roi_windows.csv"), index=False)
-
-    return roi_path, rt_start_min, rt_end_min, common_rt, aligned_intensity
-
-
-def process_single_image(
-    rt,
-    intensity,
-    mz=None,
-    q3=None,
-    expected_rt=None,
-    baseline_x=None,
-    baseline_y=None,
-    model_path=None,
-    threshold=0.99,
-    integration_method="linear",
-    smooth_sigma=0.0,
-    output_dir=None,
-    keep_temp=False,
-    plot=False,
-    plot_dir=None,
-    plot_save_filename=None,
-):
-    """
-    单张图处理：输入 (rt[], intensity[])，可选基线 (baseline_x[], baseline_y[])，
-    返回该图的预测与积分结果。一张输入一张输出，无需 mz/q3 索引。
-
-    Parameters:
-        rt: 保留时间数组（分钟；>200 视为秒）
-        intensity: 强度数组
-        mz: 可选，母离子 m/z（不传则内部用 nan）
-        q3: 可选，子离子 m/z
-        expected_rt: 可选，预期 RT
-        baseline_x, baseline_y: 可选，外部基线曲线（用于 external_baseline 积分）
-        model_path: 模型路径
-        threshold: 置信度阈值
-        integration_method: linear | raw | external_baseline
-        smooth_sigma: 高斯平滑
-        output_dir: 输出目录，None 则用临时目录
-        keep_temp: 是否保留临时文件
-        plot_dir: 预测框图保存目录；默认 output_dir/predicted_plots。用于 batch_json_dir 时统一到同一文件夹。
-        plot_save_filename: 仅一张 ROI 时有效，指定输出 PNG 文件名（如 chrom_0001_pred.png），保存到 plot_dir。
-
-    Returns:
-        dict: {detections: [{x1, x2, score, area, rt_min, rt_max, ...}, ...]}
-              一张图可能对应多个置信度窗口，detections 为检测框列表（按 score 降序）
-    """
-    from utils.io_utils import load_features
-    from utils.predict_utils import build_predictor
-    from utils.quantify import max_consecutive, AREA_TIME_UNIT_SCALE, integrate_with_external_baseline, integrate_with_baseline_correction_avg
-    from utils.roi_rt_mapping import box_to_rt_range
-    from utils.roi_quality_params import compute_roi_quality_params
-
-    use_external_baseline = integration_method == "external_baseline" and baseline_x is not None and baseline_y is not None
-    if use_external_baseline and (len(baseline_x) < 2 or len(baseline_y) < 2):
-        use_external_baseline = False
-
-    if output_dir is None:
-        tmp = tempfile.mkdtemp(prefix="mrmpformer_single_")
-        output_dir = tmp
-        if not keep_temp:
-            import atexit
-            import shutil
-            atexit.register(lambda: shutil.rmtree(tmp, ignore_errors=True))
-    else:
-        Path(output_dir).mkdir(parents=True, exist_ok=True)
-
-    roi_path, _, _, _, _ = _generate_single_roi(output_dir, mz, rt, intensity, q3, expected_rt, smooth_sigma)
-
-    if not model_path or not os.path.exists(model_path):
-        return {"error": "model_path required and must exist"}
-
-    plot_dir_effective = None
-    plot_out_filenames = None
-    if plot and output_dir:
-        plot_dir_effective = plot_dir if plot_dir is not None else os.path.join(output_dir, "predicted_plots")
-        if plot_save_filename:
-            fn = plot_save_filename
-            if not fn.lower().endswith(".png"):
-                fn = fn + ".png"
-            plot_out_filenames = [fn]
-    results = build_predictor(
-        model_path=model_path,
-        images_path=output_dir,
-        threshold=threshold,
-        plot=plot,
-        plot_dir=plot_dir_effective or "predicted_plots",
-        verbose=False,
-        plot_out_filenames=plot_out_filenames,
-    )
-
-    xic_info = load_features(os.path.join(output_dir, "feature.csv"), preserve_order=True)
-    xic_full = np.load(os.path.join(output_dir, "xic_matrix.npy"))
-    rt_array = xic_full[0, :].astype(np.float64)
-    if np.nanmax(rt_array) > 200:
-        rt_array = rt_array / 60.0
-    intensity_row = xic_full[1, :].astype(np.float64)
-    xic_list = [np.vstack([rt_array, intensity_row])]
-
-    roi_windows = {}
-    rw_path = os.path.join(output_dir, "roi_windows.csv")
-    if os.path.exists(rw_path):
-        df_rw = pd.read_csv(rw_path)
-        for _, row in df_rw.iterrows():
-            roi_windows[str(row["image"]).strip()] = (float(row["rt_lo"]), float(row["rt_hi"]))
-
-    img_path, scores, boxes = "", np.empty((0, 1)), np.empty((0, 4))
-    if results:
-        r = results[0]
-        img_path = r.get("image_path", "")
-        scores = np.array(r.get("scores", []), dtype=np.float32)
-        boxes = np.array(r.get("boxes", []), dtype=np.float32)
-        if scores.ndim == 1:
-            scores = scores.reshape(-1, 1)
-        if boxes.ndim == 1 and len(boxes) > 0:
-            boxes = boxes.reshape(1, -1)
-
-    true_rt = float(xic_info.loc[0, "RT"])
-    mz_val = float(xic_info.loc[0, "mz"])
-    q3_val = xic_info.loc[0, "q3"] if "q3" in xic_info.columns else np.nan
-    image_name = os.path.basename(roi_path)
-    rt_window = roi_windows.get(image_name)
-
-    scale = float(AREA_TIME_UNIT_SCALE)
-    base_out = {"detections": []}
-
-    if len(scores) == 0 or len(boxes) == 0:
-        return base_out
-
-    # 按 score 降序排列，逐框积分
-    order = np.argsort(-scores[:, 0])
-    for idx in order:
-        score = float(scores[idx, 0])
-        x1, y1, x2, y2 = boxes[idx]
-        left, right, _, _ = box_to_rt_range(x1, y1, x2, y2, true_rt, rt_array, rt_window=rt_window)
-
-        mask = (rt_array >= left) & (rt_array <= right)
-        filter_x = rt_array[mask]
-        filter_y = intensity_row[mask]
-
-        det = {
-            "x1": float(x1), "y1": float(y1), "x2": float(x2), "y2": float(y2),
-            "score": score,
-            "rt_min": left, "rt_max": right,
-            "area": 0.0,
-            "retention_time": 0.0,
-            "intensity_max": 0.0,
-            "point_counts": 0,
-            "integration_method_used": "raw",
-            "snr": None, "noise_std": None, "baseline_slope": None,
-            "peak_width_ratio": None, "dynamic_range": None,
-        }
-
-        if filter_x.size < 2 or filter_y.size < 2:
-            base_out["detections"].append(det)
-            continue
-
-        max_intensity = float(np.max(filter_y))
-        max_idx = int(np.argmax(filter_y))
-        max_x = float(filter_x[max_idx])
-        qparams = compute_roi_quality_params(filter_x, filter_y)
-
-        if use_external_baseline:
-            bx = np.asarray(baseline_x, dtype=np.float64)
-            by = np.asarray(baseline_y, dtype=np.float64)
-            area_val = integrate_with_external_baseline(rt_array, intensity_row, left, right, bx, by, scale)
-            method_used = "external_baseline"
-        elif integration_method == "linear":
-            area_val = integrate_with_baseline_correction_avg(rt_array, intensity_row, left, right, scale)
-            method_used = "linear"
+    files = sorted(set(scan_root.rglob("*.mzml")) | set(scan_root.rglob("*.mzML")))
+    if not files:
+        print("[ERROR] 未找到 .mzML/.mzml 文件（含子目录递归）: %s" % scan_root, file=sys.stderr)
+        sys.exit(1)
+    stem_counts = Counter(f.stem for f in files)
+    inputs = []
+    for f in files:
+        if stem_counts[f.stem] > 1:
+            key = "__".join(f.relative_to(scan_root).with_suffix("").parts)
+            print("[INFO] 同名 mzML 自动加路径前缀避免输出覆盖: %s -> %s/" % (f, key))
         else:
-            area_val = float(np.trapz(filter_y, filter_x) * scale)
-            method_used = "raw"
-
-        point_count = int(max_consecutive(filter_y))
-
-        det.update({
-            "area": area_val,
-            "retention_time": max_x,
-            "intensity_max": max_intensity,
-            "point_counts": point_count,
-            "integration_method_used": method_used,
-            "snr": qparams.get("snr", np.nan),
-            "noise_std": qparams.get("noise_std", np.nan),
-            "baseline_slope": qparams.get("baseline_slope", np.nan),
-            "peak_width_ratio": qparams.get("peak_width_ratio", np.nan),
-            "dynamic_range": qparams.get("dynamic_range", np.nan),
-        })
-        base_out["detections"].append(det)
-
-    return base_out
+            key = f.stem
+        inputs.append((f.resolve(), key))
+    return inputs
 
 
 def main_cli():
-    parser = argparse.ArgumentParser(description="MRMPFormer 统一推理入口（合并 testXIC + newtest）")
-    parser.add_argument("--mode", type=str, default="single",
-                        choices=[
-                            "single",
-                            "mzml",
-                            "batch_mzml",
-                            "batch_dir",
-                            "batch_json_dir",
-                            "pipeline_mzml",
-                            "pipeline_batch_mzml",
-                        ],
+    parser = argparse.ArgumentParser(description="MRMPFormer 统一推理入口（roi / batch_dir / pipeline）")
+    parser.add_argument("--mode", type=str, default="pipeline",
+                        choices=["roi", "batch_dir", "pipeline"],
                         help=(
-                            "single=单张图; mzml=单mzML; batch_mzml=批量mzML; batch_dir=批量目录; "
-                            "batch_json_dir=目录下所有JSON逐张处理; "
-                            "pipeline_mzml=完整流水线（ROI->预测->SNR筛选->post_newtest）; "
-                            "pipeline_batch_mzml=完整流水线（批量mzML）"
+                            "roi=仅ROI生成(单文件或目录递归); batch_dir=对已有ROI目录批量预测+积分; "
+                            "pipeline=完整流水线（ROI->预测->SNR筛选->post_newtest，单文件或目录递归）"
                         ))
     parser.add_argument("--model", type=str, default=None,
                         help="模型路径 (.pth)；也可由 --config 提供")
-    parser.add_argument("--input", type=str, default="-",
-                        help="输入 JSON 文件路径，- 表示 stdin")
-    parser.add_argument("--output", type=str, default="-",
-                        help="输出 JSON 文件路径，- 表示 stdout")
     parser.add_argument("--threshold", type=float, default=0.99)
     parser.add_argument("--integration_method", type=str, default="linear",
                         choices=["linear", "raw", "external_baseline"])
     parser.add_argument("--smooth_sigma", type=float, default=0.0)
     parser.add_argument("--output_dir", type=str, default=None,
-                        help="输出目录；single 模式默认临时目录")
-    parser.add_argument("--keep_temp", action="store_true", help="[single] 保留临时文件")
-    parser.add_argument("--mzml", type=str, help="[mzml] mzML 文件路径")
-    parser.add_argument("--batch_dir", type=str, help="[batch_mzml] mzML 目录; [batch_dir] testXIC 输出目录; [batch_json_dir] JSON 目录")
-    parser.add_argument("--plot", action="store_true", help="生成预测框标注图（single/batch_json_dir 时保存到输出目录）")
-    parser.add_argument(
-        "--batch_plot_dir",
-        type=str,
-        default=None,
-        help="[batch_json_dir] 所有预测图统一目录，默认 <batch_dir>/predicted_plots_all",
-    )
+                        help="输出根目录；roi 默认 xic-roi-batch/，pipeline 默认 results/full_pipeline/")
+    parser.add_argument("--mzml", type=str,
+                        help="[roi/pipeline] 单个 mzML 文件路径，或包含 mzML 的目录（递归扫描）")
+    parser.add_argument("--batch_dir", type=str,
+                        help="[roi/pipeline] mzML 目录（递归扫描）；[batch_dir] testXIC 输出目录")
+    parser.add_argument("--plot", action="store_true", help="生成预测框标注图")
 
     # ===== Pipeline (QC + post_newtest + SNR) 对齐流程图：低强度/少点数剔除 → 预测 → 框修正/二次峰 → SNR =====
     parser.add_argument("--standard_refs_csv", type=str, default=None, help="[testXIC] 已弃用：ROI 以各通道 XIC 最高峰 RT 居中，不再读取；传入时仅打印提示")
@@ -951,13 +706,13 @@ def main_cli():
     # 否则保持默认 WARNING（抑制 [INFO] 行）
     install_filter()
 
-    if args.mode in {"pipeline_mzml", "pipeline_batch_mzml"}:
+    if args.mode == "pipeline":
         from .predictor import main as newtest_main
         from postprocessing.snr_filter import run as snr_pipeline_run
         from postprocessing import peak_refinement
         from utils.torch_device import resolve_torch_device
 
-        from preprocessing.xic_extraction import run_batch_mzml, extract_xic_with_pyopenms
+        from preprocessing.xic_extraction import extract_xic_with_pyopenms
 
         print("=" * 60)
         resolve_torch_device(verbose=True)
@@ -989,33 +744,19 @@ def main_cli():
                 "[INFO] --standard_refs_csv 已弃用：mzML ROI 以各通道色谱最高峰（smooth_sigma 平滑后）RT 为中心。"
             )
 
-        # 1) Collect input mzML files
-        if args.mode == "pipeline_mzml":
-            if not args.mzml or not os.path.exists(args.mzml):
-                print("[ERROR] --mzml must be provided for pipeline_mzml mode", file=sys.stderr)
-                sys.exit(1)
-            mzml_files = [Path(args.mzml).resolve()]
-        else:
-            if not args.batch_dir or not os.path.isdir(args.batch_dir):
-                print("[ERROR] --batch_dir must be provided for pipeline_batch_mzml mode", file=sys.stderr)
-                sys.exit(1)
-            batch_path = Path(args.batch_dir)
-            mzml_files = sorted(
-                list(batch_path.glob("*.mzML")) + list(batch_path.glob("*.mzml"))
-            )
-            if not mzml_files:
-                print(f"[ERROR] No .mzML/.mzml files found under: {batch_path}", file=sys.stderr)
-                sys.exit(1)
+        # 1) Collect input mzML files (single file, or directory scanned recursively)
+        mzml_inputs = _collect_mzml_inputs(args.mzml, args.batch_dir)
+        mzml_files = [p for p, _ in mzml_inputs]
 
         # ---- 简明启动信息 ----
         print("=" * 64)
         print(f"MRMPFormer 推理 | {args.mode}")
         print("-" * 64)
         print(f"模型   : {args.model} | 置信度阈值 {args.threshold} | 平滑 sigma {args.smooth_sigma}")
-        if args.mode == "pipeline_mzml":
+        if len(mzml_files) == 1:
             print(f"输入   : {mzml_files[0].name}")
         else:
-            print(f"输入   : {len(mzml_files)} 个 mzML ({args.batch_dir})")
+            print(f"输入   : {len(mzml_files)} 个 mzML ({args.mzml or args.batch_dir}，含子目录递归)")
         print(f"输出   : {base_out}/")
         print(f"QC     : 强度>={args.pipeline_min_max_intensity:g} | 点数>={args.pipeline_min_chrom_points}"
               f" | SNR>={args.snr_min:g}")
@@ -1030,80 +771,45 @@ def main_cli():
 
         t_roi = time.perf_counter()
         mzml_roi_stats = []
-        if args.mode == "pipeline_batch_mzml":
-            mzml_roi_stats = run_batch_mzml(
-                batch_dir=str(Path(args.batch_dir).resolve()),
-                output_base=str(roi_root),
+        qc_kw = _pipeline_qc_kwargs()
+        for mzml_path, key in mzml_inputs:
+            out_dir = roi_root / key
+            out_dir.mkdir(parents=True, exist_ok=True)
+            st = extract_xic_with_pyopenms(
+                str(mzml_path),
+                str(out_dir),
                 smooth_sigma=args.smooth_sigma,
-                model_path=None,
-                plot_predictions=False,
-                threshold=args.threshold,
-                **_pipeline_qc_kwargs(),
-            ) or []
-        else:
-            qc_kw = _pipeline_qc_kwargs()
-            for mzml_path in mzml_files:
-                stem = mzml_path.stem
-                out_dir = roi_root / stem
-                out_dir.mkdir(parents=True, exist_ok=True)
-                st = extract_xic_with_pyopenms(
-                    str(mzml_path),
-                    str(out_dir),
-                    smooth_sigma=args.smooth_sigma,
-                    **qc_kw,
-                )
-                if st:
-                    mzml_roi_stats.append({"stem": stem, **st})
+                **qc_kw,
+            )
+            if st:
+                mzml_roi_stats.append({"stem": key, **st})
         _print_mzml_roi_stats_summary(mzml_roi_stats)
         t_roi_end = time.perf_counter()
         stage_seconds["1_ROI生成(testXIC)"] = t_roi_end - t_roi
         stage_intervals["1_ROI生成(testXIC)"] = (t_roi, t_roi_end)
 
-        # 3) Run MRMPFormer (newtest) in batch mode
+        # 3) Run MRMPFormer (newtest) in batch mode（batch_dir 下逐子目录预测，单样品同样适用）
         integration_method = getattr(args, "integration_method", "linear")
         pred_basename = (
             "prediction.csv"
             if integration_method == "linear"
             else f"prediction_{integration_method}.csv"
         )
-
-        if args.mode == "pipeline_mzml":
-            sample_stem = mzml_files[0].stem
-            sample_roi_dir = roi_root / sample_stem
-            sample_pred_dir = pred_root / sample_stem
-            sample_pred_dir.mkdir(parents=True, exist_ok=True)
-            a = argparse.Namespace(
-                images_path=str(sample_roi_dir),
-                batch_dir=None,
-                batch_output=str(pred_root),
-                model=args.model,
-                feature=None,
-                prediction_output=str(sample_pred_dir / pred_basename),
-                threshold=args.threshold,
-                plot=bool(args.plot),
-                plot_dir=str(sample_pred_dir / "predicted_plots"),
-                baseline_correction=False,
-                integration_method=integration_method,
-                baseline_json=None,
-                verbose=False,
-            )
-            print("[INFO] pipeline_mzml 单样品预测: %s" % sample_stem)
-        else:
-            a = argparse.Namespace(
-                images_path=None,
-                batch_dir=str(roi_root),
-                batch_output=str(pred_root),
-                model=args.model,
-                feature=None,
-                prediction_output=str(pred_root / "prediction.csv"),
-                threshold=args.threshold,
-                plot=bool(args.plot),
-                plot_dir="predicted_plots",
-                baseline_correction=False,
-                integration_method=integration_method,
-                baseline_json=None,
-                verbose=False,
-            )
+        a = argparse.Namespace(
+            images_path=None,
+            batch_dir=str(roi_root),
+            batch_output=str(pred_root),
+            model=args.model,
+            feature=None,
+            prediction_output=str(pred_root / pred_basename),
+            threshold=args.threshold,
+            plot=bool(args.plot),
+            plot_dir="predicted_plots",
+            baseline_correction=False,
+            integration_method=integration_method,
+            baseline_json=None,
+            verbose=False,
+        )
         t_pred = time.perf_counter()
         newtest_main(a)
         t_pred_end = time.perf_counter()
@@ -1122,8 +828,8 @@ def main_cli():
 
         _roi_by_stem = {str(s.get("stem")): s for s in (mzml_roi_stats or [])}
 
-        for mzml_path in mzml_files:
-            stem = mzml_path.stem
+        for mzml_path, key in mzml_inputs:
+            stem = key
             sample_t0 = time.perf_counter()
             pred_csv = pred_root / stem / pred_basename
             roi_windows_csv = roi_root / stem / "roi_windows.csv"
@@ -1283,25 +989,19 @@ def main_cli():
         )
         return
 
-    if args.mode == "mzml":
-        from preprocessing.xic_extraction import extract_xic_with_pyopenms
-        if not args.mzml or not os.path.exists(args.mzml):
-            print("[ERROR] --mzml 必填且文件需存在", file=sys.stderr)
-            sys.exit(1)
-        out_dir = args.output_dir or "xic-roi-batch"
-        extract_xic_with_pyopenms(args.mzml, out_dir)
+    if args.mode == "roi":
+        from preprocessing.xic_extraction import extract_xic_with_pyopenms, generate_prediction_plots
+        mzml_inputs = _collect_mzml_inputs(args.mzml, args.batch_dir)
+        out_base = Path(args.output_dir) if args.output_dir else Path("xic-roi-batch")
+        for mzml_path, key in mzml_inputs:
+            out_dir = out_base / key
+            out_dir.mkdir(parents=True, exist_ok=True)
+            extract_xic_with_pyopenms(str(mzml_path), str(out_dir), smooth_sigma=args.smooth_sigma)
         if args.model and args.plot:
-            from preprocessing.xic_extraction import generate_prediction_plots
-            generate_prediction_plots(out_dir, args.model, args.threshold)
+            for _, key in mzml_inputs:
+                generate_prediction_plots(str(out_base / key), args.model, args.threshold)
         return
-    if args.mode == "batch_mzml":
-        from preprocessing.xic_extraction import run_batch_mzml
-        if not args.batch_dir or not os.path.isdir(args.batch_dir):
-            print("[ERROR] --batch_dir 必填且需为目录", file=sys.stderr)
-            sys.exit(1)
-        run_batch_mzml(args.batch_dir, args.output_dir or "xic-roi-batch", smooth_sigma=args.smooth_sigma,
-                       model_path=args.model, plot_predictions=bool(args.plot), threshold=args.threshold)
-        return
+
     if args.mode == "batch_dir":
         from .predictor import main as newtest_main
         import argparse as ap
@@ -1314,134 +1014,6 @@ def main_cli():
                          baseline_correction=False, integration_method="linear", baseline_json=None, verbose=False)
         newtest_main(a)
         return
-
-    if args.mode == "batch_json_dir":
-        json_dir = Path(args.batch_dir or str(ROOT_DIR / "truedata" / "2026318")).resolve()
-        if not json_dir.is_dir():
-            print(f"[ERROR] 目录不存在: {json_dir}", file=sys.stderr)
-            sys.exit(1)
-        # 含子目录：与 extract_json 输出「根目录/源mzML名/chrom_*.json」对齐；仅 glob 顶层会漏文件
-        json_files = sorted(
-            p
-            for p in json_dir.rglob("*.json")
-            if not p.stem.endswith("_result")
-        )
-        if not json_files:
-            print(
-                f"[WARN] 未找到 JSON 文件: {json_dir}\n"
-                f"      提示：若 JSON 在子文件夹（如 ...\\\\20260204-01_3\\\\chrom_0000.json），\n"
-                f"      请把 --batch_dir 设为包含这些 .json 的上级目录，或使用默认递归扫描。",
-                file=sys.stderr,
-            )
-            return
-        plot_root = Path(args.batch_plot_dir) if args.batch_plot_dir else (json_dir / "predicted_plots_all")
-        if args.plot:
-            plot_root.mkdir(parents=True, exist_ok=True)
-            print(f"[INFO] 处理 {len(json_files)} 个 JSON；预测框图统一保存到: {plot_root}")
-
-        def _safe_plot_stem(stem: str) -> str:
-            bad = '<>:"/\\|?*'
-            return "".join((c if c not in bad else "_") for c in stem)
-
-        for jf in json_files:
-            try:
-                with open(jf, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except Exception as e:
-                print(f"[WARN] 跳过 {jf.name}: {e}")
-                continue
-            rt = data.get("rt", data.get("time", []))
-            intensity = data.get("intensity", [])
-            if not rt or not intensity:
-                print(f"[WARN] 跳过 {jf.name}: 缺少 rt 或 intensity")
-                continue
-            out_subdir = json_dir / jf.stem
-            out_subdir.mkdir(parents=True, exist_ok=True)
-            result = process_single_image(
-                rt=rt,
-                intensity=intensity,
-                mz=data.get("mz"),
-                q3=data.get("q3"),
-                expected_rt=data.get("expected_rt"),
-                baseline_x=data.get("baseline_x", data.get("x")),
-                baseline_y=data.get("baseline_y", data.get("y")),
-                model_path=args.model,
-                threshold=args.threshold,
-                integration_method=args.integration_method,
-                smooth_sigma=args.smooth_sigma,
-                output_dir=str(out_subdir),
-                keep_temp=True,
-                plot=args.plot,
-                plot_dir=str(plot_root) if args.plot else None,
-                plot_save_filename=(
-                    f"{_safe_plot_stem(str(rel.with_suffix('')).replace(os.sep, '_'))}_pred.png"
-                    if args.plot
-                    else None
-                ),
-            )
-
-            def _json_default(x):
-                if isinstance(x, (np.floating, np.integer)):
-                    v = float(x)
-                    return None if (isinstance(x, np.floating) and np.isnan(v)) else v
-                return str(x)
-
-            out_path = out_subdir / "result.json"
-            with open(out_path, "w", encoding="utf-8") as f:
-                f.write(json.dumps(result, ensure_ascii=False, default=_json_default))
-            plot_info = f"、预测框图见 {plot_root}/" if args.plot else ""
-            print(f"[OK] {jf.name} -> {out_subdir.name}/ (含 ROI、result.json{plot_info})")
-        return
-
-    if args.mode != "single":
-        print("未知 mode", file=sys.stderr)
-        sys.exit(1)
-
-    if args.input == "-":
-        data = json.load(sys.stdin)
-    else:
-        with open(args.input, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-    mz = data.get("mz")
-    rt = data.get("rt", data.get("time", []))
-    intensity = data.get("intensity", [])
-    q3 = data.get("q3")
-    expected_rt = data.get("expected_rt")
-    baseline_x = data.get("baseline_x", data.get("x"))
-    baseline_y = data.get("baseline_y", data.get("y"))
-
-    if not rt or not intensity:
-        result = {"error": "rt, intensity 必填"}
-    else:
-        result = process_single_image(
-            rt=rt,
-            intensity=intensity,
-            mz=mz,
-            q3=q3,
-            expected_rt=expected_rt,
-            baseline_x=baseline_x,
-            baseline_y=baseline_y,
-            model_path=args.model,
-            threshold=args.threshold,
-            integration_method=args.integration_method,
-            smooth_sigma=args.smooth_sigma,
-            output_dir=args.output_dir,
-            keep_temp=args.keep_temp,
-            plot=args.plot,
-        )
-
-    def _json_default(x):
-        if isinstance(x, (np.floating, np.integer)):
-            v = float(x)
-            return None if (isinstance(x, np.floating) and np.isnan(v)) else v
-        return str(x)
-    out_str = json.dumps(result, ensure_ascii=False, default=_json_default)
-    if args.output == "-":
-        print(out_str)
-    else:
-        with open(args.output, "w", encoding="utf-8") as f:
-            f.write(out_str)
 
 
 if __name__ == "__main__":

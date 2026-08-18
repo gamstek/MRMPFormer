@@ -141,17 +141,13 @@ python wiff.py --no-peak-picking    # 保留 profile 原始轮廓
 > 💡 四种分析模式（Targeted / Untargeted × Centroided / Profile）的原理、适用场景与操作流程，详见 [User_Tutorials.md](User_Tutorials.md)。
 > ⚠️ **当前项目仅开发 Targeted × Centroided（MRM）模式**，其余三模式保留现状、暂不开发。
 
-统一入口 `model/inference/cli.py`（在 `model/` 目录下用 `python -m inference.cli` 调用），通过 `--mode` 切换 7 种运行模式：
+统一入口 `model/inference/cli.py`（在 `model/` 目录下用 `python -m inference.cli` 调用），通过 `--mode` 切换 3 种运行模式（`roi` / `pipeline` 均支持 `--mzml` 单文件或 `--batch_dir` 目录递归扫描，含子目录）：
 
 | 模式 | 说明 | 适用场景 |
 |------|------|----------|
-| `pipeline_batch_mzml` | 完整管线：批量 mzML | ⭐ 生产环境（推荐） |
-| `pipeline_mzml` | 完整管线：单个 mzML | 单样品端到端测试 |
-| `single` | 单张图 JSON 输入/输出 | 调试 / API 集成 |
-| `mzml` | 单个 mzML：仅 EIC/ROI 提取（`--plot` 时附加预测画图，无预测 CSV） | 检查 XIC/ROI 质量 |
-| `batch_mzml` | 批量 mzML：仅 EIC/ROI 提取（`--plot` 时附加预测画图，无预测 CSV） | 批量检查 XIC/ROI 质量 |
-| `batch_dir` | 已有 XIC 中间结果的目录 | 续跑 / 断点恢复 |
-| `batch_json_dir` | 目录下所有 JSON 逐张处理 | JSON 数据集批处理 |
+| `pipeline` | 完整管线：ROI 提取 → 预测 → SNR 筛选 → 精修（单文件或目录递归） | ⭐ 生产环境（推荐） |
+| `roi` | 仅 EIC/ROI 提取（`--plot` 时附加预测画图，无预测 CSV） | 检查 XIC/ROI 质量 |
+| `batch_dir` | 对已有 XIC/ROI 中间结果目录批量预测+积分 | 续跑 / 断点恢复 / ROI 复用 |
 
 ---
 
@@ -162,8 +158,8 @@ python wiff.py --no-peak-picking    # 保留 profile 原始轮廓
 ```bash
 cd model
 
-# 批量 mzML（最常用）
-python -m inference.cli --mode pipeline_batch_mzml \
+# 批量 mzML（最常用；目录递归含子目录）
+python -m inference.cli --mode pipeline \
   --model checkpoint/quanformer.pth \
   --batch_dir ../data/test1/mzML \
   --output_dir ../output/pipeline_batch \
@@ -173,7 +169,7 @@ python -m inference.cli --mode pipeline_batch_mzml \
   --pipeline_min_chrom_points 10
 
 # 单个 mzML
-python -m inference.cli --mode pipeline_mzml \
+python -m inference.cli --mode pipeline \
   --model checkpoint/quanformer.pth \
   --mzml ../data/test_oulu_23.mzML \
   --output_dir ../output/pipeline_single_test \
@@ -204,39 +200,23 @@ python -m inference.cli --mode pipeline_mzml \
 ### 轻量模式
 
 不需要完整管线（SNR 筛选和区间精修）时使用。
-注意：`mzml` / `batch_mzml` 仅做 EIC/ROI 提取（`--plot` 时附加预测画图，不输出预测 CSV）；需要预测结果请使用 `pipeline_*` 或 `batch_dir`。
+注意：`mzml` 仅做 EIC/ROI 提取（`--plot` 时附加预测画图，不输出预测 CSV）；需要预测结果请使用 `pipeline` 或 `batch_dir`。
 
 ```bash
-# 单张图（JSON，适合调试/API）
-python -m inference.cli --mode single \
+# 单个 mzML（输出到 <output_dir>/<文件名>/）
+python -m inference.cli --mode roi \
   --model checkpoint/quanformer.pth \
-  --input input.json --threshold 0.99 --plot
+  --mzml ../data/test1/mzML/B1.mzML --output_dir results/roi
 
-# stdin 管道
-echo '{"rt":[1,2,3,4,5],"intensity":[100,500,800,400,50]}' | \
-  python -m inference.cli --mode single --model checkpoint/quanformer.pth
-
-# 单个 mzML
-python -m inference.cli --mode mzml \
+# 批量 mzML（目录递归含子目录）
+python -m inference.cli --mode roi \
   --model checkpoint/quanformer.pth \
-  --mzml ../data/test1/mzML/B1.mzML --output_dir results/single
+  --batch_dir ../data/test1/mzML --output_dir results/roi
 
-# 批量 mzML
-python -m inference.cli --mode batch_mzml \
+# 对已有 ROI 目录批量预测+积分
+python -m inference.cli --mode batch_dir \
   --model checkpoint/quanformer.pth \
-  --batch_dir ../data/test1/mzML --output_dir results/batch
-```
-
-**单张图 JSON 格式**：
-
-输入：
-```json
-{"rt": [1.0, 2.0, 3.0], "intensity": [100, 500, 200], "baseline_x": [], "baseline_y": []}
-```
-
-输出：
-```json
-{"detections": [{"x1":120, "x2":180, "score":0.998, "area":12345.6, "rt_min":2.1, "rt_max":3.4}]}
+  --batch_dir results/roi --output_dir results/pred
 ```
 
 ---
@@ -251,15 +231,10 @@ python -m inference.cli --mode batch_mzml \
 ```bash
 python -m inference.cli \
   # ==================== 基础参数 ====================
-  # 运行模式（默认 single），可选：
-  #   single / mzml / batch_mzml / batch_dir / batch_json_dir / pipeline_mzml / pipeline_batch_mzml
-  --mode pipeline_batch_mzml \
+  # 运行模式（默认 pipeline），可选：roi / batch_dir / pipeline
+  --mode pipeline \
   # 【必填】模型权重 .pth 路径（相对 model/ 目录）
   --model checkpoint/quanformer.pth \
-  # [single] 输入 JSON 文件路径，- 表示 stdin（默认 -）
-  --input input.json \
-  # [single] 输出 JSON 文件路径，- 表示 stdout（默认 -）
-  --output output.json \
   # 置信度阈值（默认 0.99，建议 0.99 起步，过低会引入假峰）
   --threshold 0.99 \
   # 积分方式（默认 linear）：linear / raw / external_baseline
@@ -268,17 +243,13 @@ python -m inference.cli \
   --smooth_sigma 0.0 \
   # 输出目录（默认自动生成）
   --output_dir ../output/pipeline_batch \
-  # [single] 保留临时文件（flag，不加则不保留）
-  --keep_temp \
-  # [mzml / pipeline_mzml] 输入 mzML 文件路径
+  # [roi / pipeline] 输入 mzML 文件路径，或包含 mzML 的目录（递归扫描）
   --mzml ../data/test1/mzML/B1.mzML \
-  # [batch_mzml / pipeline_batch_mzml] mzML 目录；
-  # [batch_dir] testXIC 输出目录；[batch_json_dir] JSON 目录
+  # [roi / pipeline] mzML 目录（递归扫描含子目录）；
+  # [batch_dir] testXIC 输出目录
   --batch_dir ../data/test1/mzML \
   # 生成预测框标注图（flag，不加则不生成图）
   --plot \
-  # [batch_json_dir] 所有预测图统一目录（默认 <batch_dir>/predicted_plots_all）
-  --batch_plot_dir ../output/plots_all \
   # ==================== Pipeline QC 参数 ====================
   # [已弃用] 标准品 CSV，传入仅打印提示，不再参与 ROI 定位
   # --standard_refs_csv xxx.csv \
@@ -355,7 +326,7 @@ python -m inference.cli \
 | 参数 | 默认 | 说明 |
 |------|------|------|
 | `--model` | **必填** | 模型 `.pth` 路径 |
-| `--mode` | `single` | 运行模式 |
+| `--mode` | `pipeline` | 运行模式：`roi` / `batch_dir` / `pipeline` |
 | `--threshold` | `0.99` | 置信度阈值 |
 | `--integration_method` | `linear` | `linear` / `raw` / `external_baseline` |
 | `--smooth_sigma` | `0.0` | 高斯平滑 sigma |

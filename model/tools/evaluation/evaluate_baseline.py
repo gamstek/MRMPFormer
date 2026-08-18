@@ -131,10 +131,10 @@ def prf(tp, fp, fn):
 # ---------- 推理 ----------
 
 def run_inference_for_mzml(mzml, model, out_dir, threshold, smooth_sigma):
-    """subprocess 调 pipeline_mzml（与手工执行完全一致），返回 (pred_csv, feature_csv)。"""
+    """subprocess 调 inference.cli --mode pipeline（与手工执行完全一致），返回 (pred_csv, feature_csv)。"""
     cmd = [
         sys.executable, "-m", "inference.cli",
-        "--mode", "pipeline_mzml",
+        "--mode", "pipeline",
         "--mzml", str(mzml),
         "--model", str(model),
         "--output_dir", str(out_dir),

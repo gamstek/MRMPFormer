@@ -64,7 +64,7 @@ graph TD
 
 ```bash
 cd model
-python -m inference.cli --mode pipeline_batch_mzml \
+python -m inference.cli --mode pipeline \
   --model checkpoint/quanformer.pth \
   --batch_dir ../data/test1/mzML \
   --output_dir ../output/targeted \
@@ -177,7 +177,7 @@ python wiff.py --no-peak-picking  # 跳过峰检测 → 保留 profile 原始轮
 
 ```bash
 cd model
-python -m inference.cli --mode pipeline_batch_mzml \
+python -m inference.cli --mode pipeline \
   --model checkpoint/quanformer.pth \
   --batch_dir ../data/test1/mzML \
   --output_dir ../output/t1_centroided \
@@ -203,7 +203,7 @@ python -m inference.cli --mode pipeline_batch_mzml \
 **操作**：命令同模式一，仅调整平滑参数：
 
 ```bash
-python -m inference.cli --mode pipeline_batch_mzml \
+python -m inference.cli --mode pipeline \
   --model checkpoint/quanformer.pth \
   --batch_dir ../data/test1/mzML_profile \
   --output_dir ../output/t1_profile \

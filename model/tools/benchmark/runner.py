@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-重复运行 pipeline_mzml / pipeline_batch_mzml，汇总耗时与资源占用。
+重复运行 inference.cli --mode pipeline，汇总耗时与资源占用。
 
 用法:
   python -m <包名>.benchmark.runner --runs 20
@@ -60,7 +60,7 @@ KEY_METRIC_SPECS = [
 def _default_main_argv():
     """默认 pipeline 参数（示例，需用户通过 -- 覆盖）。"""
     return [
-        "--mode", "pipeline_mzml",
+        "--mode", "pipeline",
         "--mzml", "",
         "--model", str(_REPO_ROOT / "checkpoint" / "quanformer.pth"),
         "--output_dir", DEFAULT_OUTPUT_DIR,
@@ -213,7 +213,7 @@ def main():
     ap.add_argument("--summary-output-dir", type=str, default=None)
     ap.add_argument("--python", type=str, default=sys.executable)
     ap.add_argument("--aggregate-only", action="store_true", help="仅从已有记录重新汇总")
-    ap.add_argument("main_argv", nargs=argparse.REMAINDER, help="传给 main.py 的参数")
+    ap.add_argument("main_argv", nargs=argparse.REMAINDER, help="传给 inference.cli 的参数")
     args = ap.parse_args()
 
     main_argv = args.main_argv
@@ -249,12 +249,13 @@ def main():
         print("[INFO] GPU 显存监测可用")
 
     all_records = []
-    main_py = _REPO_ROOT / "main.py"
+    # 推理统一入口：python -m inference.cli（在 model/ 目录下运行）
+    cli_module = "inference.cli"
 
     for i in range(1, int(args.runs) + 1):
         run_out = benchmark_dir / ("run_%03d" % i)
         run_argv = _set_main_output_dir(main_argv, str(run_out))
-        cmd = [args.python, str(main_py)] + run_argv
+        cmd = [args.python, "-m", cli_module] + run_argv
         print("\n[BENCHMARK] 第 %d/%d 次" % (i, args.runs))
 
         gpu = gpu_cls(0)

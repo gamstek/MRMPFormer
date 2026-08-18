@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-检查 pipeline_batch_mzml 中与 SNR / chrom 对齐相关的风险（不跑模型，只读盘）：
+检查 inference.cli --mode pipeline 中与 SNR / chrom 对齐相关的风险（不跑模型，只读盘）：
 
 1) 同 (Q1,Q3 四位+二位) 多通道：与 mzml_box_outside_snr_pipeline._chrom_lookup_by_mzq3 相同键会覆盖，仅保留最后一条。
 2) Q1 或 Q3 缺失：无法走 dict 匹配，prediction 只能靠 compound_name 对齐 chroms 顺序。
