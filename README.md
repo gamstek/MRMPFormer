@@ -29,11 +29,11 @@ MRMPFormer是基于 **DETR（ResNet-50 + Transformer）系列** 的色谱峰检�
 | ① 构建数据集 | 标注 xlsx + mzML → COCO 格式 bbox 标注（bbox 直接映射人工 `peak_start/peak_end`） | `model/preprocessing/coco_annotation.py` | `data/coco/`（train/val + `train_coco.json`/`val_coco.json`） |
 | ② 训练 | 用 COCO 数据集训练/微调 DETR 模型 | `python -m train --config configs/quanformer_baseline.json`（从零）/ `quanformer_v2_finetune.json`（微调） | `checkpoint/quanformer.pth`（基线）、`quanformerv2.pth`（微调） |
 | ③ 推理 | 用测试 mzML + 已训练模型产出预测值 | `python -m inference.cli --mode pipeline --model checkpoint/quanformer.pth` | `batch_predictions/<样品>/prediction.csv` → `prediction_snr.csv` → `prediction_refined.csv` |
-| ④ 评估 | 用预测值 + 人工标注计算模型效果 | `python -m tools.evaluation.evaluate_baseline --labels ../data/test/label/testcase_data.xlsx` | `evaluation_report.json`（P/R/F1、面积 R²、RT 偏差、RSD）、`match_details.csv`、`area_pairs.csv` |
+| ④ 评估 | 用预测值 + 人工标注计算模型效果 | `python -m tools.evaluation.evaluate_baseline --labels ../data/label/20260715_shiyaoyuan_test.xlsx` | `evaluation_report.json`（P/R/F1、面积 R²、RT 偏差、RSD）、`match_details.csv`、`area_pairs.csv` |
 
 **要点**：
 
-- **标注数据集双重身份**：`data/test/label/testcase_data.xlsx` 既是训练标注来源（→ COCO bbox），也是评估 GT——两环节共用一份标注是预期设计；
+- **标注数据集双重身份**：`data/label/20260715_shiyaoyuan_test.xlsx` 既是训练标注来源（→ COCO bbox），也是评估 GT——两环节共用一份标注是预期设计；
 - **评估口径**：评估读阶段②**原始 `prediction.csv`**（衡量模型原始检测能力），**不含** SNR 筛选/精修后处理；若需评估整条管线最终产物，目标应改为 `prediction_refined.csv`（另一套口径）；
 - **数据泄漏防护**：训练/评估分样品（train=`test_1`、val=`test_2`），不在同一样品上既训又评；
 - **快速路径**：训练、推理、评估的具体命令与参数见下文「训练」「推理」两节。
@@ -47,7 +47,7 @@ MRMPFormer是基于 **DETR（ResNet-50 + Transformer）系列** 的色谱峰检�
 ```
 data/
 ├── coco/     # 对应实验构造好的 COCO 训练数据集（train/ + train_coco.json、val/ + val_coco.json；_xic/ 为构建时的 XIC 中间产物）
-├── label/    # 该实验的人工标注数据（testcase_data.xlsx 布局：化合物/通道/起止/面积）
+├── label/    # 各实验的人工标注数据（统一存 data/label/<trial>.xlsx；布局：化合物/通道/rt/peak_label/多峰起止/面积）
 ├── mzml/     # 原始数据转换得到的 mzML 文件
 ├── msdata/   # 原始 msdata 文件
 └── wiff/     # 原始 wiff 文件
@@ -109,7 +109,7 @@ output/QC/<run_name>/
 └── qc_summary.md              # 各环节检查数/剔除数/人工复核清单
 ```
 
-> **当前状态**：防线 1 训练侧（coco_annotation）与防线 2/4 已实施运行；防线 1 推理侧与防线 3/5 及统一输出目录按 `docs/plan_qc.md` P2/P3 分期推进。2026-08-20 防线 1 首跑即在 20260715 实验标注中发现 8 组双离子 RT 异常（极差 12.8~25.9 min，16 行待人工复核）。
+> **当前状态**：五道防线与统一 QC 输出目录已全部实施运行（`docs/plan_qc.md` P1/P2/P3 完成）。2026-08-20 防线 1 在 20260715 实验标注中查出 20 项需人工复核（跨样品/双离子 RT 极差 12.7~25.9 min）。
 
 ---
 
@@ -315,6 +315,8 @@ python -m inference.cli --mode pipeline `
   --threshold 0.99 --plot
 ```
 
+> **ROI 生成方式（B 范式）**：默认以各通道谱图**最高强度点**居中；传 `--labels` 时改为**标注驱动**——仅标注命中通道生成 ROI，窗口中心 = 标注 `rt` 字段，并由防线 1（标注 RT 一致性）把关（剔除涉事通道）。不传 `--labels` 时推理无需标注（契约不变）。
+
 **输出结构**（以 `--output_dir ../output/pipeline_batch` 为例，`<样品>` 为 mzML 文件名去后缀）：
 
 ```
@@ -506,7 +508,7 @@ python -m inference.cli `
 
 ### 生成 COCO 数据集
 
-训练要求数据集为 COCO 格式，由 `preprocessing/coco_annotation.py` 从 mzML + 人工标注 xlsx 生成（EIC 图像与推理管线完全一致：400x300、apex±1min 窗口）：
+训练要求数据集为 COCO 格式，由 `preprocessing/coco_annotation.py` 从 **mzML + 标注 xlsx 联合生成**（EIC 图像与推理管线完全一致：400x300、标注 RT ±1min 窗口）：
 
 ```powershell
 cd model
@@ -514,12 +516,17 @@ cd model
 python -m preprocessing.coco_annotation `
   --mzmls ../data/test/mzml/20260715_shiyaoyuan_test_1.mzML `
           ../data/test/mzml/20260715_shiyaoyuan_test_2.mzML `
-  --labels ../data/test/label/testcase_data.xlsx `
+  --labels ../data/label/20260715_shiyaoyuan_test.xlsx `
   --output_dir ../data/test/coco `
-  --val_stems 20260715_shiyaoyuan_test_2
+  --force                    # B 范式切换后必须 --force 重建（旧缓存为旧格式生成）
 ```
 
-标注 xlsx 沿用 `testcase_data.xlsx` 布局（`comonent`/`channel`/`peak_start`/`peak_end`/`sample_id` 列），按 `native_id`「化合物名-1/-2」与色谱对齐，`peak_start/peak_end`（分钟）经每张 ROI 的窗口线性映射为像素 bbox；无标注 ROI（TIC 等）作为负样本纳入。
+**ROI 由标注驱动（B 范式）**：每行标注 `(compound, channel)` 经 `label_key` → `native_id`「化合物名-1/-2」匹配 mzML 色谱，**窗口中心 = 标注 `rt` 字段**（非谱图最高强度点）；未标注的 mzML 通道不生成 ROI。标注格式（`data/label/<trial>.xlsx`，多峰）：
+
+- `peak_label`：**0=负样本 / 1=正样本**（其余值不入数据集）
+- `peak_start1-3` / `peak_end1-3`：正样本的多峰区间，每个有效区间生成一个 bbox（**最多 3 个**）
+- `peak_label=0` 的行同样生成 ROI 图但**无 bbox**，作为训练负样本（训练模型识别"图上无峰"）
+- 窗口中心取自 `rt` 列；RT 一致性 QC（防线 1）构建时默认启用，跨样品/双离子极差 >1 min 的可疑行剔除、不入数据集
 
 ### COCO 数据格式
 

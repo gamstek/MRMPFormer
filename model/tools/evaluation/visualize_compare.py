@@ -15,7 +15,7 @@
 
 用法（model/ 目录下，系统终端执行，涉及 matplotlib 渲染）：
   python -m tools.evaluation.visualize_compare \
-      --labels ../data/test/label/testcase_data.xlsx \
+      --labels ../data/label/20260715_shiyaoyuan_test.xlsx \
       --xic_root ../data/test/coco/_xic \
       --pred1 ../output/test/pred_v1_fixed --name1 v1 \
       --pred2 ../output/test/pred_v2_fixed --name2 v2 \

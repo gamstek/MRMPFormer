@@ -142,6 +142,24 @@ def _native_id_to_str(native_id):
     return str(native_id)
 
 
+def _label_key_from_channel(compound, channel):
+    """标注行 → mzML native_id 键：定量离子→-1，定性离子→-2（与 coco_annotation.label_key 一致，内联避免循环依赖）。"""
+    ch = (channel or "").strip()
+    suffix = "1" if "定量" in ch else ("2" if "定性" in ch else None)
+    if suffix is None:
+        return None
+    return f"{(compound or '').strip()}-{suffix}"
+
+
+def _parse_label_rt(s):
+    """解析标注 rt 字段 '16.428(0.000)' / '16.428' → 分钟；空/非法 → None（与 label_qc 一致）。"""
+    s = (s or "").strip()
+    if not s:
+        return None
+    m = re.match(r"^\s*([0-9]+(?:\.[0-9]+)?)", s)
+    return float(m.group(1)) if m else None
+
+
 def _parse_q1_q3_from_text(native_id_text):
     text = str(native_id_text)
     q1 = q3 = None
@@ -195,6 +213,8 @@ def extract_xic_with_pyopenms(
     min_max_intensity=0.0,
     rt_center_overrides=None,
     exclude_tic=False,
+    exclude_native_ids=None,
+    labels=None,
 ):
     """
     提取 XIC 并生成 ROI 图像，支持高斯平滑。
@@ -211,6 +231,14 @@ def extract_xic_with_pyopenms(
             仍用最高强度点。用于训练数据生成时与标注对齐（improve.md 第 7 项）。
         exclude_tic (bool): True 时跳过无 (Q1,Q3) 数值的通道（TIC 等），不生成 ROI、不进 feature/xic_matrix；
             剔除记录写入 pipeline_qc_excluded.csv（reason=tic_excluded）。
+        exclude_native_ids (dict/set): 标注 RT 一致性 QC 命中剔除的 native_id 集合；dict 时 value 为剔除原因
+            （label_rt_cross_sample / label_rt_ion_pair），set 时原因记为 label_rt。命中通道不生成 ROI、
+            不进 feature/xic_matrix，剔除记录写入 pipeline_qc_excluded.csv（reason 区分检查类型）。
+        labels (list[dict]): 标注行列表（键含 compound/channel/rt）。提供时 ROI 由标注驱动（B 范式）：
+            仅标注命中（native_id == label_key(compound, channel)）的通道生成 ROI，窗口中心 = 标注 rt
+            （替代最高强度点）；标注了但 mzML 无对应通道的行记 pipeline_qc_excluded.csv（reason=label_no_channel）；
+            标注 rt 无法解析的行 reason=label_rt_missing；未标注的 mzML 通道不生成 ROI。
+            不提供时维持通道驱动（默认最高强度点居中，rt_center_overrides 可覆盖）。
     """
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     print(f"[INFO] Reading mzML with pyopenms: {mzml_path}")
@@ -230,6 +258,19 @@ def extract_xic_with_pyopenms(
         mzml_path, chromatograms, _native_id_to_str
     )
 
+    # === label 驱动模式（B 范式）：ROI 由标注行决定，窗口中心 = 标注 rt ===
+    label_rt_map = None  # {native_id: rt_min|None}
+    matched_nids = set()
+    if labels:
+        label_rt_map = {}
+        for rec in labels:
+            if rec.get("_qc_excluded"):
+                continue
+            kid = _label_key_from_channel(rec.get("compound"), rec.get("channel"))
+            if not kid:
+                continue
+            label_rt_map.setdefault(kid, _parse_label_rt(rec.get("rt")))
+
     features = []
     intensity_matrix = []  # 存储对齐后的强度 (N, S)
     common_rt = None  # 公共 RT 轴（分钟）
@@ -247,6 +288,40 @@ def extract_xic_with_pyopenms(
 
         native_id = native_ids[i] if i < len(native_ids) else _native_id_to_str(chrom.getNativeID())
         q1, q3 = _extract_q1_q3(chrom, native_id)
+
+        # === label 驱动（B 范式）：仅标注命中的通道生成 ROI；标注 rt 缺失的通道剔除 ===
+        label_rt_center = None
+        if label_rt_map is not None:
+            matched_key = native_id if native_id in label_rt_map else None
+            if matched_key is None:
+                # 回退：mzML 通道 id 不带 -1/-2 后缀（如 traindata1）时，按化合物裸名唯一匹配标注键；
+                # 裸名同时命中 -1/-2（歧义）则不匹配，保持严格
+                _cands = [k for k in label_rt_map
+                          if k.endswith(("-1", "-2")) and k[: -2] == native_id]
+                if len(_cands) == 1:
+                    matched_key = _cands[0]
+                    print(f"[INFO] label 匹配回退（裸名）: mzML「{native_id}」→ 标注键「{matched_key}」")
+            if matched_key is None:
+                # mzML 有通道但标注未覆盖 → 不生成 ROI（ROI 由标注驱动）
+                continue
+            matched_nids.add(matched_key)
+            label_rt_center = label_rt_map[matched_key]
+            if label_rt_center is None:
+                print(
+                    f"[WARN] Skip chrom {i}: 标注 rt 字段缺失/非法（label_rt_missing）; "
+                    f"native_id={native_id[:72]}..."
+                )
+                qc_excluded.append({
+                    "chrom_index": i,
+                    "native_id": native_id,
+                    "q1": q1,
+                    "q3": q3,
+                    "reason": "label_rt_missing",
+                    "n_points": int(len(rt_sec)),
+                    "max_intensity_smoothed": float(np.max(intensity)) if len(intensity) else 0.0,
+                })
+                continue
+
         # 数值型 (Q1,Q3) 去重；若仍缺（如 TIC），用 native_id 避免全部为 (None,None) 误判重复
         if q1 is not None and q3 is not None:
             key = (round(q1, 4), round(q3, 2))
@@ -280,6 +355,29 @@ def extract_xic_with_pyopenms(
 
         n_pts = int(len(rt_sec))
         imax = float(np.max(intensity)) if n_pts else 0.0
+
+        # === 【标注QC】命中 exclude_native_ids 的通道不生成 ROI（reason 区分检查类型）===
+        if exclude_native_ids and native_id in exclude_native_ids:
+            _label_reason = (
+                exclude_native_ids.get(native_id, "label_rt")
+                if isinstance(exclude_native_ids, dict)
+                else "label_rt"
+            )
+            print(
+                f"[WARN] Skip chrom {i}: 标注 RT 一致性 QC 剔除（{_label_reason}）; "
+                f"native_id={native_id[:72]}..."
+            )
+            qc_excluded.append({
+                "chrom_index": i,
+                "native_id": native_id,
+                "q1": q1,
+                "q3": q3,
+                "reason": _label_reason,
+                "n_points": n_pts,
+                "max_intensity_smoothed": imax,
+            })
+            continue
+
         if min_chrom_points > 0 and n_pts < int(min_chrom_points):
             print(
                 f"[WARN] Skip chrom {i}: too few RT points ({n_pts} < {min_chrom_points}); "
@@ -315,10 +413,12 @@ def extract_xic_with_pyopenms(
         max_idx = np.argmax(intensity)
         rt_apex_min = rt_sec[max_idx] / 60.0  # 转为分钟
         rt_apex_sec = rt_sec[max_idx]
-        # ROI 窗口中心：优先用外部覆盖表（如标注文件的人工 RT），否则以当前通道
-        # （平滑后）强度最高点对应 RT 为中心
+        # ROI 窗口中心：label 驱动（B 范式）时以标注 rt 为源头（标注即正确答案，无需与 apex 对比报差异）；
+        # 否则外部覆盖表（rt_center_overrides）；再否则以（平滑后）强度最高点对应 RT 为中心
         rt_center_min = rt_apex_min
-        if rt_center_overrides and native_id in rt_center_overrides:
+        if label_rt_center is not None:
+            rt_center_min = float(label_rt_center)
+        elif rt_center_overrides and native_id in rt_center_overrides:
             override_rt = float(rt_center_overrides[native_id])
             if np.isfinite(override_rt) and rt_sec[0] / 60.0 <= override_rt <= rt_sec[-1] / 60.0:
                 if abs(override_rt - rt_apex_min) > 1e-6:
@@ -454,11 +554,14 @@ def extract_xic_with_pyopenms(
         )
 
     # === 保存 roi_windows.csv：每张 ROI 的 x 轴窗口 [rt_lo, rt_hi]（分钟），积分时优先使用此窗口做像素→RT 映射 ===
+    # 全部通道被 QC 剔除时也写 headers-only 空表（与 feature.csv 行为一致），下游 read_csv 不炸
+    roi_windows_csv = os.path.join(output_dir, "roi_windows.csv")
     if roi_windows_rows:
-        df_roi_windows = pd.DataFrame(roi_windows_rows)
-        roi_windows_csv = os.path.join(output_dir, "roi_windows.csv")
-        df_roi_windows.to_csv(roi_windows_csv, index=False)
+        pd.DataFrame(roi_windows_rows).to_csv(roi_windows_csv, index=False)
         print(f"[INFO] Saved roi_windows.csv (integration mapping): {roi_windows_csv}")
+    else:
+        pd.DataFrame(columns=["image", "rt_lo", "rt_hi"]).to_csv(roi_windows_csv, index=False)
+        print(f"[WARN] Saved empty roi_windows.csv (headers only): {roi_windows_csv}")
 
     # === 保存 XIC 矩阵: (N+1, S) ===
     if intensity_matrix and common_rt is not None:
@@ -469,6 +572,22 @@ def extract_xic_with_pyopenms(
         print(f"[INFO] Saved XIC matrix with RT row (minutes): {npy_path}, shape={xic_full.shape}")
     else:
         print("[WARN] No valid chromatograms to save XIC matrix.")
+
+    # === label 驱动（B 范式）：标注了但 mzML 无对应通道的行 → 记剔除（label_no_channel）===
+    if label_rt_map is not None:
+        for kid, rt_val in label_rt_map.items():
+            if kid in matched_nids or (exclude_native_ids and kid in exclude_native_ids):
+                continue
+            print(f"[WARN] 标注行在 mzML 无对应通道（label_no_channel）: native_id={kid[:72]}...")
+            qc_excluded.append({
+                "chrom_index": -1,
+                "native_id": kid,
+                "q1": None,
+                "q3": None,
+                "reason": "label_no_channel",
+                "n_points": 0,
+                "max_intensity_smoothed": 0.0,
+            })
 
     if qc_excluded:
         excl_path = os.path.join(output_dir, "pipeline_qc_excluded.csv")

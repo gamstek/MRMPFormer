@@ -557,16 +557,29 @@ def run_single(args, images_path, prediction_output, plot_dir):
         model_images_path = smoothed_tmp_dir
         print(f"[INFO] 预测输入高斯平滑已启用: sigma={sigma}")
 
+    qc_pred_stats = []
     results = build_predictor(
         model_path=args.model,
         images_path=model_images_path,
         threshold=args.threshold,
         plot=False,
         plot_dir=plot_dir,
-        verbose=args.verbose
+        verbose=args.verbose,
+        qc_stats=qc_pred_stats,
     )
 
     print(f"[INFO] ✅ Model prediction completed. Detected peaks in {len(results)} images.")
+
+    # QC：每 ROI 图低于 threshold 被丢弃的框数统计（写 prediction_output 同目录，cli 汇总到 output/QC）
+    if qc_pred_stats:
+        try:
+            qc_pred_path = os.path.join(os.path.dirname(prediction_output), "qc_prediction_threshold.csv")
+            Path(qc_pred_path).parent.mkdir(parents=True, exist_ok=True)
+            pd.DataFrame(qc_pred_stats).to_csv(qc_pred_path, index=False, encoding="utf-8-sig")
+            n_drop = int(sum(r["n_dropped"] for r in qc_pred_stats))
+            print(f"[INFO] QC 预测阈值: {qc_pred_path}（{len(qc_pred_stats)} 图，阈值 {args.threshold} 丢弃 {n_drop} 框）")
+        except OSError as e:
+            print(f"[WARN] 无法写入 qc_prediction_threshold.csv: {e}")
 
     # 定量积分
     print("[INFO] Performing quantification...")

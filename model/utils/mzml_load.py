@@ -54,34 +54,41 @@ def load_ms_experiment(mzml_path, verbose=True):
             return exp
         return None
 
-    exp = _try_load(resolved, "loaded via long path")
-    if exp is not None:
-        return exp
+    # 内容预检：raw 非法 UTF-8 时原路径/临时副本（字节相同）必然被 OpenMS 拒绝，
+    # 且 C++ 层会往 stderr 刷告警 —— 直接跳到 UTF-8 修复路径，省 2-3 次注定失败的尝试
+    valid = is_valid_utf8(raw)
 
-    if sys.platform == "win32":
-        try:
-            import ctypes
+    if valid:
+        exp = _try_load(resolved, "loaded via long path")
+        if exp is not None:
+            return exp
 
-            buf = ctypes.create_unicode_buffer(4096)
-            if ctypes.windll.kernel32.GetShortPathNameW(resolved, buf, 4096):
-                short = buf.value
-                if short and short != resolved and Path(short).is_file():
-                    exp = _try_load(short, "loaded via short path")
-                    if exp is not None:
-                        return exp
-                elif short and verbose:
-                    print("[WARN] short path not usable, skipped: %s" % short)
-        except Exception as ex:
-            if verbose:
-                print("[WARN] GetShortPathNameW failed: %s" % ex)
+        if sys.platform == "win32":
+            try:
+                import ctypes
+
+                buf = ctypes.create_unicode_buffer(4096)
+                if ctypes.windll.kernel32.GetShortPathNameW(resolved, buf, 4096):
+                    short = buf.value
+                    if short and short != resolved and Path(short).is_file():
+                        exp = _try_load(short, "loaded via short path")
+                        if exp is not None:
+                            return exp
+                    elif short and verbose:
+                        print("[WARN] short path not usable, skipped: %s" % short)
+            except Exception as ex:
+                if verbose:
+                    print("[WARN] GetShortPathNameW failed: %s" % ex)
 
     fd, tmp_path = tempfile.mkstemp(suffix=".mzML", prefix="mzml_")
     os.close(fd)
     try:
-        Path(tmp_path).write_bytes(raw)
-        exp = _try_load(tmp_path, "loaded via temp copy")
-        if exp is not None:
-            return exp
+        if valid:
+            # 路径问题兜底：ASCII 临时副本装原始字节再试一次
+            Path(tmp_path).write_bytes(raw)
+            exp = _try_load(tmp_path, "loaded via temp copy")
+            if exp is not None:
+                return exp
 
         repaired = repair_mzml_bytes_for_openms(raw)
         if repaired != raw:

@@ -1,6 +1,6 @@
 # 标注数据质量 QC 行动方案（plan_qc）
 
-> 日期：2026-08-20 ｜ 状态：**方案已定稿，未实施**（本文档即实施蓝图）
+> 日期：2026-08-20 ｜ 状态：**P1/P2/P3 全部完成**（本文档即实施蓝图）
 > 需求来源：用户提出「同一标注文件中同化合物 RT 差别过大则不生成 ROI，作为 QC 一部分」；扩展为「训练/评估数据加质量防线 + 推理时跨样品/双离子 RT 极差检查 + 各环节 QC 表统一输出 `../output/QC/`」。
 
 ---
@@ -100,8 +100,8 @@ def check_label_rt_consistency(labels_df, tol=1.0):
 | 期 | 内容 | 改动文件 | 风险 |
 |---|---|---|---|
 | **P1** ✅ 已完成(2026-08-20) | `label_qc.py` + coco_annotation 挂点（训练/评估防线） | 新 1 + 改 1 | 低——只影响数据构建，且默认阈值温和（1.0 min） |
-| **P2** | cli `--labels` + `exclude_native_ids` 贯通 + `output/QC` 目录落地（label_rt / roi_channels 两表 + summary） | 改 3 | 低——不传 labels 行为零变化 |
-| **P3** | SNR/预测阈值/精修三张 QC 表接入汇总（精修剔除记录为最大增量） | 改 3 | 中——peak_refinement 需在不改变输出行维度的前提下记录被剔框 |
+| **P2** ✅ 已完成(2026-08-20) | cli `--labels` + `exclude_native_ids` 贯通 + `output/QC` 目录落地（label_rt / roi_channels 两表 + summary） | 改 3 | 低——不传 labels 行为零变化 |
+| **P3** ✅ 已完成(2026-08-20) | SNR/预测阈值/精修三张 QC 表接入汇总（精修剔除记录为最大增量） | 改 3 | 中——peak_refinement 需在不改变输出行维度的前提下记录被剔框 |
 
 ### P1 实施记录（2026-08-20）
 
@@ -109,13 +109,63 @@ def check_label_rt_consistency(labels_df, tol=1.0):
 - `coco_annotation.py`：新增 `--qc_label_rt_tol`（默认 1.0，0=关闭）；QC 在 parse_labels_xlsx 后执行；被标行不进 by_key / rt_overrides / 行序回退匹配（ROI 降级负样本，行序对齐保持）；QC 表写 `output/QC/coco_<实验名>_<时间戳>/qc_label_rt.csv`
 - 单测通过（n=2 双剔 / n=3 仅剔离群 / 双离子双剔 / WARN 计数 / CSV 列）；**真实标注回归（20260715）首跑即发现 8 组双离子 RT 极差 12.8~25.9 min（16 行判疑似实验有误，待人工复核）**——此前 v1/v2 评估 GT 与 COCO bbox 均包含这些可疑通道
 
+### P2 实施记录（2026-08-20）
+
+- `xic_extraction.extract_xic_with_pyopenms` 新增 `exclude_native_ids`（dict/set，dict 时 value 为剔除原因）：命中通道不生成 ROI、不进 feature/xic_matrix，剔除记录写 `pipeline_qc_excluded.csv`（reason=`label_rt_cross_sample` / `label_rt_ion_pair`）
+- `inference.cli` 新增 `--labels` / `--qc_label_rt_tol`（默认 1.0，0=关闭；不传 `--labels` 整体跳过，**推理无需标注契约不变**）
+- pipeline 分支：ROI 循环前 `check_label_rt_consistency` → `exclude_keys` 经 `label_key()` 转 `{native_id: reason}` → 传入 `extract_xic_with_pyopenms`；终端打印检查项/剔除通道/需人工复核数；`qc_label_rt.csv` 直接写 `output/QC/<run_name>/`
+- 新增 `_collect_qc_tables`：pipeline 结束、timing 输出前统一汇总 `qc_roi_channels.csv`（各样品 `pipeline_qc_excluded.csv` 合并 + `stem` 列）+ `qc_summary.md`（含人工复核清单表）
+- 轻量逻辑测试通过（双离子双剔 reason 映射、exclude 键格式 `A-1`/`A-2`、汇总两表 + summary 内容）
+
+P2 验证命令（用户 PowerShell）：
+```powershell
+cd D:\work\MRMPFormer\model
+D:\Anaconda3\envs\gamstekpeaking\python.exe -m inference.cli --mode pipeline --config configs/inference_pipeline.json --mzml ..\data\test\mzml\20260715_shiyaoyuan_test_1.mzML --labels ..\data\label\20260715_shiyaoyuan_test.xlsx --output_dir ..\output\test\qc_check
+# 验收：..\output\test\qc_check\ 下 XIC 剔除出现在 pipeline_qc_excluded.csv（reason=label_rt_ion_pair）；
+#       ..\output\QC\qc_check\ 下出现 qc_label_rt.csv / qc_roi_channels.csv / qc_summary.md
+```
+
+### P3 实施记录（2026-08-20）
+
+- `utils/predict_utils.py`：`predict()` / `build_predictor()` 新增 `qc_stats`（可选 list）——逐 ROI 图收集 `n_queries`（模型 query 数）/ `n_kept`（> threshold 保留）/ `n_dropped` / `max_confidence`
+- `inference/predictor.py`：`run_single` 收集 qc_stats，写 `qc_prediction_threshold.csv` 到 prediction_output 同目录（每个样品子目录一份）
+- `inference/cli.py`：`_collect_qc_tables` 接入三张表：
+  - `qc_prediction_threshold.csv`：合并各样品阈值丢弃统计
+  - `qc_snr_boxes.csv`：合并各样品 `box_outside_snr_report.csv`（逐框 SNR + passed_* 列，零新代码）
+  - `qc_post_refinement.csv`：从各样品精修输出提取门控列子集（`need_manual_review` / `main_conf_final` / `small_*_gate_pass` / `gate_ok_for_adjustment` 等）——peak_refinement 不剔行、只标记，故无需改精修内部，符合"不改变输出行维度"
+  - `qc_summary.md` 增补三表统计
+- 逻辑测试通过（三表列/统计/合并 + summary 内容）
+
+P3 验证命令（用户 PowerShell）：
+```powershell
+cd D:\work\MRMPFormer\model
+D:\Anaconda3\envs\gamstekpeaking\python.exe -m inference.cli --mode pipeline --config configs/inference_pipeline.json --mzml ..\data\test\mzml\20260715_shiyaoyuan_test_1.mzML --output_dir ..\output\test\qc_p3_check
+# 验收：..\output\QC\qc_p3_check\ 下出现 qc_prediction_threshold.csv / qc_snr_boxes.csv / qc_post_refinement.csv，
+#       qc_summary.md 含 ## 3/4/5 三节统计
+```
+
+### 训练侧正负样本方案（peak_label，2026-08-20 补充）
+
+需求：训练本质是「识别 ROI 图上的峰 + 计算峰面积」——负样本不再用「未标注通道」，改为标注文件显式区分。
+
+- 标注文件真实结构（data/label/<trial>.xlsx，120 行）：`peak_label`（0/1）、`peak_count`、多峰区间 `peak_start1/2/3` + `peak_end1/2/3`、`area1/2/3` 等
+- `parse_labels_xlsx` 适配真实文件（此前假设单数 `peak_start/peak_end`，**解析会报错**）：
+  - `_LABEL_COLS` 扩展（peak_label/peak_count/peak_start1-3/peak_end1-3/area1-3 等）；单数 peak_start/peak_end 保留兼容旧文件
+  - 必需列检查收紧为 compound/channel
+- coco 训练侧正负样本规则：
+  - `peak_label=0` → 负样本：**生成 ROI 图（窗口中心=rt）但无 bbox**
+  - `peak_label=1` → 正样本：遍历 peak_start1-3/peak_end1-3，每个有效区间一个 bbox（**最多 3 个**）；区间完全在窗口外/宽<1px 的峰跳过
+  - `peak_label` 缺失/空 → 按正样本（兼容无该列的文件）；其余值（如 2）→ 不入数据集
+  - RT 一致性 QC（P1 防线）仍生效：跨样品/双离子极差可疑行剔除，不入数据集
+- 验证：真实文件 120 行解析通过；peak_label 分布 118 正 + 2 负；无多峰行；RT QC 20 项需人工复核
+
 每期验证命令（用户 PowerShell）：
 ```powershell
 cd D:\work\MRMPFormer\model
 # P1: 重建数据集，观察 WARN 与 output/QC 表
-D:\Anaconda3\envs\gamstekpeaking\python.exe -m preprocessing.coco_annotation --mzmls ..\data\test\mzml\20260715_shiyaoyuan_test_1.mzML ..\data\test\mzml\20260715_shiyaoyuan_test_2.mzML --labels ..\data\test\label\testcase_data.xlsx --output_dir ..\data\test\coco --qc_label_rt_tol 1.0
+D:\Anaconda3\envs\gamstekpeaking\python.exe -m preprocessing.coco_annotation --mzmls ..\data\test\mzml\20260715_shiyaoyuan_test_1.mzML ..\data\test\mzml\20260715_shiyaoyuan_test_2.mzML --labels ..\data\label\20260715_shiyaoyuan_test.xlsx --output_dir ..\data\test\coco --qc_label_rt_tol 1.0
 # P2: 推理带 labels
-D:\Anaconda3\envs\gamstekpeaking\python.exe -m inference.cli --mode pipeline --config configs/inference_pipeline.json --mzml ..\data\test\mzml\20260715_shiyaoyuan_test_1.mzML --labels ..\data\test\label\testcase_data.xlsx --output_dir ..\output\test\qc_check
+D:\Anaconda3\envs\gamstekpeaking\python.exe -m inference.cli --mode pipeline --config configs/inference_pipeline.json --mzml ..\data\test\mzml\20260715_shiyaoyuan_test_1.mzML --labels ..\data\label\20260715_shiyaoyuan_test.xlsx --output_dir ..\output\test\qc_check
 # 验收：..\output\test\qc_check\QC\ 或 ..\output\QC\ 下出现 qc_label_rt.csv 等
 ```
 

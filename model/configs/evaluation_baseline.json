@@ -1,6 +1,6 @@
 {
-  "_comment_labels": "人工标注 xlsx（60 化合物 ×2 离子 + 起止/面积）",
-  "labels": "../data/test/label/testcase_data.xlsx",
+  "_comment_labels": "人工标注 xlsx（data/label/<trial>.xlsx；60 化合物 ×2 离子 + peak_label/多峰起止/面积）",
+  "labels": "../data/label/20260715_shiyaoyuan_test.xlsx",
   "_comment_model": "模型权重（run_inference=1 时用于推理；=0 时仅作记录）",
   "model": "checkpoint/quanformer.pth",
   "_comment_output_dir": "评测输出目录（evaluation_report.json / match_details.csv / area_pairs.csv）",

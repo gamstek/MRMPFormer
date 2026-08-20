@@ -153,10 +153,10 @@ top_box = boxes[top_idx:top_idx + 1]
 cd D:\work\MRMPFormer\model
 
 # v1：每样品前 8 张，打印每个 query 的 P(峰)/P(背) 与框偏差
-D:\Anaconda3\envs\gamstekpeaking\python.exe -m tools.evaluation.dump_queries --model checkpoint/quanformer.pth --xic_root ../data/test/coco/_xic --labels ../data/test/label/testcase_data.xlsx --limit 8
+D:\Anaconda3\envs\gamstekpeaking\python.exe -m tools.evaluation.dump_queries --model checkpoint/quanformer.pth --xic_root ../data/test/coco/_xic --labels ../data/label/20260715_shiyaoyuan_test.xlsx --limit 8
 
 # v2 对照（预期：峰 query 又自信又贴 GT）
-D:\Anaconda3\envs\gamstekpeaking\python.exe -m tools.evaluation.dump_queries --model checkpoint/quanformerv2.pth --xic_root ../data/test/coco/_xic --labels ../data/test/label/testcase_data.xlsx --limit 8
+D:\Anaconda3\envs\gamstekpeaking\python.exe -m tools.evaluation.dump_queries --model checkpoint/quanformerv2.pth --xic_root ../data/test/coco/_xic --labels ../data/label/20260715_shiyaoyuan_test.xlsx --limit 8
 ```
 
 末尾统计块若显示「背概率最高 query 的框更贴 GT」显著占优，即为最终铁证；v2 应呈相反格局。
@@ -221,7 +221,7 @@ D:\Anaconda3\envs\gamstekpeaking\python.exe -m tools.evaluation.dump_queries --m
 | ① 构建数据集 | 标注 xlsx + mzML → COCO 格式 bbox（bbox 直接映射人工 `peak_start/peak_end`） | `model/preprocessing/coco_annotation.py` | `data/test/coco/`（train/val + `train_coco.json`/`val_coco.json`） |
 | ② 训练 | COCO 数据集训练/微调 DETR | `python -m train --config configs/quanformer_baseline.json`（从零）/ `quanformer_v2_finetune.json`（微调） | `checkpoint/quanformer.pth`、`quanformerv2.pth` |
 | ③ 推理 | 测试 mzML + 已训练模型 → 预测值 | `python -m inference.cli --mode pipeline --model checkpoint/quanformer.pth` | `prediction.csv` → `prediction_snr.csv` → `prediction_refined.csv` |
-| ④ 评估 | 预测值 + 人工标注 → 模型效果 | `python -m tools.evaluation.evaluate_baseline --labels ../data/test/label/testcase_data.xlsx` | `evaluation_report.json`、`match_details.csv`、`area_pairs.csv` |
+| ④ 评估 | 预测值 + 人工标注 → 模型效果 | `python -m tools.evaluation.evaluate_baseline --labels ../data/label/20260715_shiyaoyuan_test.xlsx` | `evaluation_report.json`、`match_details.csv`、`area_pairs.csv` |
 
 ### E.2 评估口径（重要）
 
@@ -233,7 +233,7 @@ D:\Anaconda3\envs\gamstekpeaking\python.exe -m tools.evaluation.dump_queries --m
 ### E.3 数据泄漏防护
 
 - 训练/评估分样品：train=`20260715_shiyaoyuan_test_1`、val=`20260715_shiyaoyuan_test_2`（同一批仪器数据两次进样，通道一致）——不在同一样品上既训又评；
-- 标注数据集 `data/test/label/testcase_data.xlsx` 双重身份（训练 bbox 来源 + 评估 GT）为**预期设计**，但新增实验数据时必须维持「训练/评估样品隔离」原则。
+- 标注数据集 `data/label/20260715_shiyaoyuan_test.xlsx` 双重身份（训练 bbox 来源 + 评估 GT）为**预期设计**，但新增实验数据时必须维持「训练/评估样品隔离」原则。
 
 ### E.4 典型命令
 
@@ -251,21 +251,21 @@ D:\Anaconda3\envs\gamstekpeaking\python.exe -m train --config configs/quanformer
 D:\Anaconda3\envs\gamstekpeaking\python.exe -m inference.cli --mode pipeline --config configs/inference_pipeline.json --model checkpoint/quanformer.pth --mzml ..\data\test\mzml\20260715_shiyaoyuan_test_1.mzML --output_dir ..\output\test\eval_check
 
 # ④ 评估（--run_inference 1=先跑推理；0=复用已有 prediction.csv）
-D:\Anaconda3\envs\gamstekpeaking\python.exe -m tools.evaluation.evaluate_baseline --labels ..\data\test\label\testcase_data.xlsx --run_inference 0
+D:\Anaconda3\envs\gamstekpeaking\python.exe -m tools.evaluation.evaluate_baseline --labels ..\data\label\20260715_shiyaoyuan_test.xlsx --run_inference 0
 ```
 
 ---
 
 ## 附录 F：数据目录规范（2026-08-20 实施）
 
-> `data/` 按「实验隔离 + 数据类型五分法」组织；正式实验数据放 `data/<实验名>/`，测试数据放 `data/test/`，两者内部结构一致。此前散放的文件（`data/coco`、`data/test/*.mzML`、`data/test/testcase_data.xlsx` 等）已全部迁入规范位置。
+> `data/` 按「实验隔离 + 数据类型五分法」组织；正式实验数据放 `data/<实验名>/`，测试数据放 `data/test/`，两者内部结构一致。此前散放的文件（`data/coco`、`data/test/*.mzML`、`data/test/testcase_data.xlsx` 等）已全部迁入规范位置；**标注文件统一存 `data/label/<trial>.xlsx`**（2026-08-20 起，不再随实验子目录）。
 
 ### F.1 目录结构
 
 ```
 data/
 ├── coco/     # 对应实验构造好的 COCO 训练数据集（train/ + train_coco.json、val/ + val_coco.json；_xic/ 为构建时的 XIC 中间产物）
-├── label/    # 该实验的人工标注数据（testcase_data.xlsx 布局：化合物/通道/起止/面积）
+├── label/    # 各实验的人工标注数据（统一存 data/label/<trial>.xlsx；布局：化合物/通道/rt/peak_label/多峰起止/面积）
 ├── mzml/     # 原始数据转换得到的 mzML 文件
 ├── msdata/   # 原始 msdata 文件
 └── wiff/     # 原始 wiff 文件
@@ -276,7 +276,7 @@ data/
 | 目录 | 内容 |
 |---|---|
 | `data/test/coco/train|val/` | COCO 数据集（train=test_1 样品 61 图，val=test_2 样品 61 图） |
-| `data/test/label/` | `testcase_data.xlsx`（60 化合物 ×2 离子标注） |
+| `data/label/` | `20260715_shiyaoyuan_test.xlsx`（60 化合物 ×2 离子标注） |
 | `data/test/mzml/` | `20260715_shiyaoyuan_test_1.mzML`、`_2.mzML` |
 | `data/test/msdata/` | `20260715_shiyaoyuan_test.msdata` |
 | `data/test/wiff/` | （空） |
@@ -299,7 +299,7 @@ wiff/ + msdata/ ──(converters 格式转换)──> mzml/ ──(coco_annotat
 |---|---|
 | `data/coco`（训练配置 `coco_path`） | `data/test/coco` |
 | `data/test/20260715_shiyaoyuan_test/*.mzML` | `data/test/mzml/*.mzML` |
-| `data/test/testcase_data.xlsx` | `data/test/label/testcase_data.xlsx` |
+| `data/test/testcase_data.xlsx` | `data/label/20260715_shiyaoyuan_test.xlsx`（2026-08-20：标注统一存 `data/label/<trial>.xlsx`） |
 | `data/coco/_xic`（评测 feature.csv 来源） | `data/test/coco/_xic` |
 | `data/test/pred_v1_fixed` 等历史评测产物 | `../output/test/`（输出目录约定） |
 
@@ -315,7 +315,7 @@ wiff/ + msdata/ ──(converters 格式转换)──> mzml/ ──(coco_annotat
 
 P1（训练/评估防线）已实施：`preprocessing/label_qc.py` 新模块 + `coco_annotation.py` 挂点（`--qc_label_rt_tol` 默认 1.0）。
 
-**真实标注回归（data/test/label/testcase_data.xlsx，120 行）首跑即发现 8 组双离子 RT 异常，16 行判「疑似实验有误」**：
+**真实标注回归（data/label/20260715_shiyaoyuan_test.xlsx，120 行）首跑即发现 8 组双离子 RT 异常，16 行判「疑似实验有误」**：
 
 | 化合物（两样品均异常） | 定量离子 RT | 定性离子 RT | 极差 (min) |
 |---|---|---|---|
@@ -375,3 +375,48 @@ inner["rt_range"] = inner["rt_max"] - inner["rt_min"]
 | SNR 框级 | `snr_filter.py` | `box_outside_snr_report.csv`（含 passed_* 列） |
 | 精修框级（20+ 门控） | `peak_refinement.py` | 无记录表（不出现在 refined 输出即被剔） |
 | 训练标注级（RT 越窗/窄框） | `coco_annotation.py` | 终端 WARN + 降级负样本 |
+
+## 附录 H：B 范式（标注驱动 ROI）+ 训练侧 peak_label 正负样本（2026-08-20）
+
+### H.1 背景与动机
+
+原 ROI 生成是**通道驱动**：mzML 里每一条 chromatogram 生成一张 ROI，窗口中心取该通道平滑后**最高强度点**。这带来两个问题：
+
+1. 推理与训练窗口中心不一致（训练用标注 RT 覆盖、推理用 apex），图像口径不统一；
+2. 训练负样本来自「未标注通道」（TIC 等），与「训练识别峰、算峰面积」的目标脱节。
+
+决策（与用户确认）：ROI 改为**标注驱动（B 范式）**，训练侧负样本改用标注文件的 `peak_label` 字段显式区分。
+
+### H.2 ROI 生成范式变更（xic_extraction.py）
+
+`extract_xic_with_pyopenms` 新增 `labels` 参数，提供时进入 label 驱动模式：
+
+- 每行标注 `(compound, channel)` → `label_key()` → `native_id`「化合物名-1/-2」匹配 mzML 色谱；**未标注的通道不生成 ROI**
+- **窗口中心 = 标注 `rt` 字段**（替代最高强度点）；`rt` 缺失/非法 → 剔除（reason=`label_rt_missing`）
+- 标注了但 mzML 无对应通道 → 剔除并记录（reason=`label_no_channel`）
+- 不传 `labels` 维持原 apex 行为（推理无需标注契约不变）
+
+推理侧 `inference.cli --mode pipeline --labels <xlsx>` 触发；多样品标注按 `sample_id` 出现顺序对应 mzML（单样品直接全量）。
+
+### H.3 训练侧正负样本方案（coco_annotation.py）
+
+```
+peak_label = 0  → 负样本：生成 ROI 图（窗口中心=rt）但无 bbox
+peak_label = 1  → 正样本：遍历 peak_start1-3/peak_end1-3，每个有效区间一个 bbox（最多 3 个）
+peak_label 缺失 → 按正样本（兼容无该列的文件）
+其余值（如 2）  → 不入数据集
+```
+
+- RT 一致性 QC（附录 G 防线 1）仍在构建时启用：跨样品/双离子极差可疑行剔除、不入数据集
+- bbox 由 `peak_start/peak_end`（分钟）经 ROI 窗口线性映射为像素；区间完全在窗口外或映射宽 <1px 的峰跳过
+- 效果链：正样本=标注有峰区间 → bbox；负样本=标注无峰 → 无 bbox（模型学"图上无峰"）
+
+### H.4 真实标注文件适配（阻断修复）
+
+真实标注 `data/label/20260715_shiyaoyuan_test.xlsx`（120 行）为**多峰格式**：`peak_label`/`peak_count`/`peak_start1-3`/`peak_end1-3`/`area1-3` 等，**无单数 `peak_start/peak_end`**——原 `parse_labels_xlsx` 解析会直接报错（推理侧 `--labels` 同样受影响）。已扩展 `_LABEL_COLS` 并收紧必需列检查为 `compound/channel`；单数 `peak_start/peak_end` 保留兼容旧文件。
+
+### H.5 验证与注意事项
+
+- 真实文件解析：120 行通过；`peak_label` 分布 118 正 + 2 负；RT QC 240 项中 20 项需人工复核（标注质量待修）
+- 训练侧重建数据集**必须 `--force`**（旧缓存为旧格式生成）
+- ⚠️ 训练数据不再有「未标注通道负样本」——负样本仅来自 `peak_label=0`，当前只有 2 个，正负不平衡需关注（后续可补充负样本标注）

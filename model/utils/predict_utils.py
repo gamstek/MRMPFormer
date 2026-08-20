@@ -35,11 +35,13 @@ def rescale_bboxes(out_bbox, size, device):
     return b
 
 
-def predict(images_path, model, transform, threshold=0.9, device='cpu', verbose=False, return_all=False):
+def predict(images_path, model, transform, threshold=0.9, device='cpu', verbose=False, return_all=False, qc_stats=None):
     """
     对 ROI 图像列表进行预测。verbose=False 时不打印逐图 DEBUG，加快运行。
     return_all=False: 仅当某张图存在置信度 > threshold 的检测时才追加结果（与 newtest 兼容）
     return_all=True:  每张图都返回结果，无检测时 boxes/scores 为空（用于 plot 时生成全部图像）
+    qc_stats (list, optional): 提供时逐图追加阈值丢弃统计 dict（image/n_queries/n_kept/n_dropped/max_confidence），
+        用于 output/QC 的 qc_prediction_threshold.csv。
     """
     predict_results = []
 
@@ -68,6 +70,17 @@ def predict(images_path, model, transform, threshold=0.9, device='cpu', verbose=
             if verbose:
                 max_conf = probas.max().item()
                 print(f"[DEBUG] Max confidence: {max_conf:.6f}, detections: {keep.sum().item()}")
+            
+            if qc_stats is not None:
+                n_queries = int(probas.shape[0])
+                n_kept = int(keep.sum().item())
+                qc_stats.append({
+                    "image": os.path.basename(img_path),
+                    "n_queries": n_queries,
+                    "n_kept": n_kept,
+                    "n_dropped": n_queries - n_kept,
+                    "max_confidence": float(probas.max().item()) if probas.numel() else None,
+                })
             
             if keep.any():
                 # 获取有效检测
@@ -160,6 +173,7 @@ def build_predictor(
     plot_dir="predicted_plots",
     verbose=False,
     plot_out_filenames=None,
+    qc_stats=None,
 ):
     device = resolve_torch_device(verbose=True)
 
@@ -252,7 +266,7 @@ def build_predictor(
     
     # ========== 执行预测 ==========
     return_all = plot
-    results = predict(image_paths, model, transform, threshold, device, verbose=verbose, return_all=return_all)
+    results = predict(image_paths, model, transform, threshold, device, verbose=verbose, return_all=return_all, qc_stats=qc_stats)
     n_with_det = sum(1 for r in results if len(r.get('boxes', [])) > 0)
     print(f"[INFO] Detected peaks in {n_with_det} images (total {len(results)}).")
     
