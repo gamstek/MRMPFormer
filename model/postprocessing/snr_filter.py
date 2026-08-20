@@ -8,9 +8,9 @@
 
 输出（均写在 --output_dir 下自动创建的 SNR_box_<阈值>/ 内）：
   - box_outside_snr_report.csv：每条 prediction 行的原始 SNR 计算结果；
-  - prediction.csv：仅保留 SNR ≥ 阈值 的行（列与输入 prediction 对齐，并追加 snr_outside_box 等）；
+  - prediction_snr.csv：仅保留 SNR ≥ 阈值 的行（列与输入 prediction 对齐，并追加 snr_outside_box 等）；
   - feature.csv、roi_windows.csv、xic_matrix.npy：仅针对保留行，与项目惯例一致；
-  - 筛选保留/、筛选剔除/：带红色预测框的 ROI jpeg（文件名含 SNR）。
+  - snr_kept/、snr_dropped/：带红色预测框的 ROI jpeg（文件名含 SNR）。
 
 依赖：pyopenms、numpy、pandas、scipy、matplotlib
 
@@ -343,7 +343,7 @@ def save_roi_jpeg_with_box(
             except (TypeError, ValueError):
                 pass
 
-    # 实际 / 积分 RT 竖线 + 左上角信息（筛选保留与筛选剔除共用）
+    # 实际 / 积分 RT 竖线 + 左上角信息（snr_kept 与 snr_dropped 共用）
     tr_min = float(_true_rt_from_row(row))
     rt_plot_lo = float(rt_start_sec / 60.0)
     rt_plot_hi = float(rt_end_sec / 60.0)
@@ -504,8 +504,8 @@ def run(
     )
     by_mz = _chrom_lookup_by_mzq3(chroms)
 
-    dir_keep = run_dir / "筛选保留"
-    dir_drop = run_dir / "筛选剔除"
+    dir_keep = run_dir / "snr_kept"
+    dir_drop = run_dir / "snr_dropped"
     if save_jpeg:
         dir_keep.mkdir(parents=True, exist_ok=True)
         dir_drop.mkdir(parents=True, exist_ok=True)
@@ -598,7 +598,7 @@ def run(
     print("[INFO] SNR 报告: %s （%d 行）" % (rep_path, len(df_report)))
 
     if not passed_records:
-        print("[WARN] 无通过 SNR 阈值的行，不生成 prediction.csv / xic_matrix。")
+        print("[WARN] 无通过 SNR 阈值的行，不生成 prediction_snr.csv / xic_matrix。")
         return 0
 
     kept_rows: List[Dict[str, Any]] = []
@@ -671,7 +671,7 @@ def run(
         wh = 1.0
         rt_start_sec = max((rt_apex_min - wh) * 60.0, float(rt_sec[0]))
         rt_end_sec = min((rt_apex_min + wh) * 60.0, float(rt_sec[-1]))
-        rel = Path("筛选保留") / fname
+        rel = Path("snr_kept") / fname
         roi_w.append(
             {
                 "image": rel.as_posix(),
@@ -680,17 +680,17 @@ def run(
             }
         )
 
-    _df_to_csv_safe(pd.DataFrame(kept_rows), run_dir / "prediction.csv")
+    _df_to_csv_safe(pd.DataFrame(kept_rows), run_dir / "prediction_snr.csv")
     _df_to_csv_safe(pd.DataFrame(features), run_dir / "feature.csv")
     _df_to_csv_safe(pd.DataFrame(roi_w), run_dir / "roi_windows.csv")
     arr = np.array(intensity_matrix)
     xic_full = np.vstack([common_rt, arr])
     _npy_save_safe(xic_full, run_dir / "xic_matrix.npy")
-    print("[INFO] 已写入 prediction.csv / feature.csv / roi_windows.csv / xic_matrix.npy")
+    print("[INFO] 已写入 prediction_snr.csv / feature.csv / roi_windows.csv / xic_matrix.npy")
     if save_jpeg:
-        print("[DONE] 筛选保留: %s ，筛选剔除: %s" % (dir_keep, dir_drop))
+        print("[DONE] snr_kept: %s ，snr_dropped: %s" % (dir_keep, dir_drop))
     else:
-        print("[DONE] SNR 筛选完成（save_jpeg=False，未生成 筛选保留/筛选剔除/ 标注图）")
+        print("[DONE] SNR 筛选完成（save_jpeg=False，未生成 snr_kept/snr_dropped/ 标注图）")
     return 0
 
 
@@ -726,7 +726,7 @@ def main():
     ap.add_argument(
         "--no_save_jpeg",
         action="store_true",
-        help="不生成 筛选保留/筛选剔除/ 下的红框标注 jpeg（默认生成）",
+        help="不生成 snr_kept/snr_dropped/ 下的红框标注 jpeg（默认生成）",
     )
     args = ap.parse_args()
     cli = float(args.min_snr)

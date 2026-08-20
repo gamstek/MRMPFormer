@@ -187,7 +187,9 @@ def run_snr(
             continue
 
         snr_run_dir = out_parent / snr_sub
-        pred_in = snr_run_dir / "prediction.csv"
+        pred_in = snr_run_dir / "prediction_snr.csv"
+        if not pred_in.is_file():
+            pred_in = snr_run_dir / "prediction.csv"  # 兼容旧版 SNR 输出名
         if not pred_in.is_file():
             print("[WARN] 无 %s，跳过 post: %s" % (pred_in, stem))
             continue

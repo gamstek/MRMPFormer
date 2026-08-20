@@ -681,7 +681,7 @@ def main_cli():
     parser.add_argument("--feature", type=str, default=None, help="feature.csv 路径，默认 <images_path>/feature.csv")
     parser.add_argument("--images_path", type=str, default=None, help="单样本：ROI/XIC 目录；--from_refined 时为含修正 CSV 的目录")
     parser.add_argument("--batch_dir", type=str, default=None, help="批量：子目录各跑一遍")
-    parser.add_argument("--batch_output", type=str, default="results/batch_predictions_snr", help="批量输出根目录")
+    parser.add_argument("--batch_output", type=str, default="../output/inference/batch_predictions_snr", help="批量输出根目录")
     parser.add_argument(
         "--input_root",
         type=str,
@@ -712,7 +712,7 @@ def main_cli():
         default="prediction_refined_with_area.csv",
         help="--from_refined 时输出文件名（写在样本目录或 batch_output/<name>/）",
     )
-    parser.add_argument("--prediction_output", type=str, default="results/prediction_snr.csv", help="单目录时输出 CSV 路径")
+    parser.add_argument("--prediction_output", type=str, default="../output/inference/prediction_snr.csv", help="单目录时输出 CSV 路径")
     parser.add_argument("--plot_dir", type=str, default="predicted_plots_snr", help="预测可视化输出目录")
     parser.add_argument("--threshold", type=float, default=0.99)
     parser.add_argument("--plot", action="store_true")
@@ -772,7 +772,7 @@ def main_cli():
             run_snr_single(args, str(subdir), str(pred_out), str(plot_dir))
         print(f"[DONE] Batch finished in {time.time() - start_time:.2f} s")
     else:
-        if args.from_refined and args.prediction_output == "results/prediction_snr.csv":
+        if args.from_refined and args.prediction_output == "../output/inference/prediction_snr.csv":
             args.prediction_output = os.path.join(
                 args.images_path, args.refined_output_name
             )

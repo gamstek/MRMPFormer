@@ -73,7 +73,7 @@ def resolve_rt_window(
     name = os.path.basename(s)
     if name not in candidates:
         candidates.append(name)
-    # SNR 有时写 筛选保留/xxx.jpeg；roi 表也可能只有 xxx 或带路径
+    # SNR 有时写 snr_kept/xxx.jpeg（旧产物为 筛选保留/xxx.jpeg）；roi 表也可能只有 xxx 或带路径
     for c in list(candidates):
         if "/" in c or "\\" in c:
             tail = c.replace("\\", "/").split("/")[-1]

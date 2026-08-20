@@ -105,7 +105,9 @@ class _FilteredStdout:
 
     def _write_line(self, line: str) -> None:
         level_val = _classify_line(line)
-        if level_val >= _current_level:
+        # 无标签行（_UNCLASSIFIED）无条件放行：分隔线、启动块、结论行等是用户必看内容，
+        # 不应被日志级别过滤；带 [INFO]/[WARN]/[ERROR] 前缀的行按级别过滤
+        if level_val == _UNCLASSIFIED or level_val >= _current_level:
             self._orig.write(line)
 
     def flush(self) -> None:
@@ -118,13 +120,17 @@ class _FilteredStdout:
         return getattr(self._orig, name)
 
 
+# 无标签行的特殊级别：无条件放行（分隔线、启动块、结论行等用户必看内容）
+_UNCLASSIFIED = -1
+
+
 def _classify_line(line: str) -> int:
-    """返回行对应的日志级别数值；无法识别时返回 DEBUG（放行）。"""
+    """返回行对应的日志级别数值；无法识别时返回 _UNCLASSIFIED（无条件放行）。"""
     for prefix, level_name in _PREFIX_LEVELS:
         if prefix in line:
             return LOG_LEVELS[level_name]
-    # 无标签行（如纯输出、进度条、分隔线等）——放行
-    return LOG_LEVELS["DEBUG"]
+    # 无标签行（如纯输出、进度条、分隔线等）——无条件放行
+    return _UNCLASSIFIED
 
 
 def install_filter() -> None:

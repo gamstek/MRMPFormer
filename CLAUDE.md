@@ -48,6 +48,22 @@ MRMPFormer 是一个基于 **DETR（ResNet-50 + 1 层 Transformer 编解码器�
 - **模型加载**：❌ 严禁直接用 `torch.load()`，必须使用 `safe_torch_load()`（`framework/util/misc.py`）以兼容跨 PyTorch 版本
 - **路径分隔符**：❌ 严禁硬编码 `/` 或 `\\`，必须使用 `os.path.join()` / `pathlib.Path`
 
+### 数据目录（强制）
+- `data/` 按「实验隔离 + 数据类型五分法」组织：每个实验目录（正式 `data/<实验名>/`、测试 `data/test/`）内部统一为 `coco/ label/ mzml/ msdata/ wiff/` 五个子目录
+- 数据流转：`wiff/msdata` →(converters)→ `mzml` →(coco_annotation + label)→ `coco`
+- **禁止**把文件散放在实验目录根（如 `data/test/xxx.mzML` 直放）；**禁止**把推理/评测中间产物写入 `data/`（一律 `../output/`）
+- 当前仅 `data/test/` 有数据（20260715 实验）；`data/` 顶层五目录为占位空目录
+- `data/` 整体在 `.gitignore`，不入库；详见 README「数据目录规范」与实验报告附录 F
+
+### 输出目录（强制）
+- **推理产物统一写到 `../output/`**（相对 `model/` 目录），禁止散落到 `model/` 下或 `data/` 下
+- **默认输出目录**（`configs/inference_pipeline.json` 的 `output_dir` 默认值，及 cli.py 各模式兜底）：
+  - `pipeline` → `../output/inference/full_pipeline`
+  - `roi` → `../output/inference/xic-roi-batch`
+  - `batch_dir` → `../output/inference/batch_predictions`
+- **测试/试跑输出**：显式指定 `--output_dir ../output/test/<名称>` 单独存放，**禁止**与正式产物混放
+- 训练产物：`model/output_v2/`（微调 checkpoint）、`model/output_baseline/`（基线），`.pth` 不入 git（.gitignore 已覆盖 `output/`）
+
 ### 命令执行（强制）
 - **外部命令优先**：涉及训练（`python -m train ...`）、推理（`python -m inference.cli ...` / `predictor`）、XIC 提取（`extract_xic_with_pyopenms` / `coco_annotation`）等会实际运行模型、写文件或触发 matplotlib/pyopenms 渲染的命令，**优先整理成完整命令交给用户在系统 PowerShell 中执行**，不要反复在沙箱内自跑
 - **已知限制**：TRAE 沙箱会拦截 matplotlib 渲染 DLL 延迟加载（崩溃码 `0xc06d007f`）与用户目录 site-packages 写入，导致 XIC 图像生成、推理画图、pip 安装等在其内部不可靠

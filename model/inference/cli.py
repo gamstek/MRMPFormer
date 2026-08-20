@@ -3,15 +3,19 @@
 MRMPFormer 统一推理入口（3 种模式；roi / pipeline 均支持单文件与目录递归扫描）。
 
 用法（须在 model/ 目录下运行）:
-  # 仅 ROI 生成（单文件或目录递归；每个 mzML 输出到 <output_dir>/<文件名stem>/）
-  python -m inference.cli --mode roi --model checkpoint/quanformer.pth --mzml ../data/sample.mzML
-  python -m inference.cli --mode roi --model checkpoint/quanformer.pth --batch_dir ../data/mzML_dir
+  # 仅 ROI 生成（单文件或目录递归；每个 mzML 输出到 <output_dir>/<文件名stem>/）；无需 --model
+  python -m inference.cli --mode roi --mzml ../data/test/mzml/sample.mzML
+  python -m inference.cli --mode roi --batch_dir ../data/test/mzml
+
+  # 想看预测框标注：先 roi 生成 ROI，再 batch_dir --plot 对已有 ROI 目录画图
+  python -m inference.cli --mode roi --batch_dir ../data/test/mzml
+  python -m inference.cli --mode batch_dir --model checkpoint/quanformer.pth --batch_dir ../output/inference/xic-roi-batch --plot
 
   # 对已有 ROI 目录批量预测+积分
-  python -m inference.cli --mode batch_dir --model checkpoint/quanformer.pth --batch_dir xic-roi-batch
+  python -m inference.cli --mode batch_dir --model checkpoint/quanformer.pth --batch_dir ../output/inference/xic-roi-batch
 
   # 完整管线（ROI → 预测 → SNR 筛选 → 精修，单文件或目录递归）
-  python -m inference.cli --mode pipeline --model checkpoint/quanformer.pth --batch_dir ../data/mzML_dir
+  python -m inference.cli --mode pipeline --model checkpoint/quanformer.pth --batch_dir ../data/test/mzml
 
   # 目录递归时不同子目录出现同名 mzML：输出目录自动加路径前缀（如 子目录A__样品1）避免覆盖
 """
@@ -398,6 +402,7 @@ def _build_pipeline_timing_report(
         "total_seconds": float(total_seconds),
         "total_ms": float(total_seconds) * 1000.0,
         "total_roi_images": int(total_roi),
+        "stage_schema": "v2",  # 2026-08-19：阶段键名去 legacy（testXIC→xic_extraction 等）；v1 为旧键名
         "stage_seconds": {k: float(v) for k, v in stage_seconds.items()},
         "stage_ms": {k: float(v) * 1000.0 for k, v in stage_seconds.items()},
         "stage_resource": stage_resource,
@@ -525,21 +530,22 @@ def main_cli():
                             "pipeline=完整流水线（ROI->预测->SNR筛选->post_newtest，单文件或目录递归）"
                         ))
     parser.add_argument("--model", type=str, default=None,
-                        help="模型路径 (.pth)；也可由 --config 提供")
+                        help="模型路径 (.pth)；也可由 --config 提供（roi 模式非必填，其余模式必填）")
     parser.add_argument("--threshold", type=float, default=0.99)
     parser.add_argument("--integration_method", type=str, default="linear",
                         choices=["linear", "raw", "external_baseline"])
     parser.add_argument("--smooth_sigma", type=float, default=0.0)
     parser.add_argument("--output_dir", type=str, default=None,
-                        help="输出根目录；roi 默认 xic-roi-batch/，pipeline 默认 results/full_pipeline/")
+                        help="输出根目录（统一写到 ../output/ 下）；null=按模式默认：roi→../output/inference/xic-roi-batch，"
+                             "batch_dir→../output/inference/batch_predictions，pipeline→../output/inference/full_pipeline。"
+                             "测试运行建议指定 ../output/test/<名称> 单独存放")
     parser.add_argument("--mzml", type=str,
                         help="[roi/pipeline] 单个 mzML 文件路径，或包含 mzML 的目录（递归扫描）")
     parser.add_argument("--batch_dir", type=str,
                         help="[roi/pipeline] mzML 目录（递归扫描）；[batch_dir] testXIC 输出目录")
-    parser.add_argument("--plot", action="store_true", help="生成预测框标注图")
+    parser.add_argument("--plot", action="store_true", help="[pipeline/batch_dir] 生成预测框标注图（roi 模式不支持）")
 
     # ===== Pipeline (QC + post_newtest + SNR) 对齐流程图：低强度/少点数剔除 → 预测 → 框修正/二次峰 → SNR =====
-    parser.add_argument("--standard_refs_csv", type=str, default=None, help="[testXIC] 已弃用：ROI 以各通道 XIC 最高峰 RT 居中，不再读取；传入时仅打印提示")
     parser.add_argument(
         "--pipeline_min_max_intensity",
         type=float,
@@ -653,7 +659,7 @@ def main_cli():
     parser.add_argument(
         "--save_snr_jpeg",
         action="store_true",
-        help="[SNR筛选] 生成 筛选保留/筛选剔除/ 下的红框标注 jpeg（默认关闭，省磁盘）",
+        help="[SNR筛选] 生成 snr_kept/snr_dropped/ 下的红框标注 jpeg（默认关闭，省磁盘）",
     )
 
     # ==================== 日志级别 ====================
@@ -693,8 +699,8 @@ def main_cli():
         parser.set_defaults(**_cfg)
         print(f"[INFO] 已加载推理配置: {_cfg_path}")
     args = parser.parse_args()
-    if not args.model:
-        parser.error("--model 必填（命令行或 --config 提供）")
+    if not args.model and args.mode != "roi":
+        parser.error("--model 必填（命令行或 --config 提供；roi 模式仅生成 ROI，无需模型）")
 
     # ---- 配置运行时日志过滤 ----
     from framework.util.logutil import configure_log_level, install_filter
@@ -710,13 +716,8 @@ def main_cli():
         from .predictor import main as newtest_main
         from postprocessing.snr_filter import run as snr_pipeline_run
         from postprocessing import peak_refinement
-        from utils.torch_device import resolve_torch_device
 
         from preprocessing.xic_extraction import extract_xic_with_pyopenms
-
-        print("=" * 60)
-        resolve_torch_device(verbose=True)
-        print("=" * 60)
 
         pipeline_t0 = time.perf_counter()
         stage_seconds = {}
@@ -730,7 +731,7 @@ def main_cli():
         )
 
         # base output layout (one run per invocation)
-        base_out = Path(args.output_dir) if args.output_dir else Path("results/full_pipeline")
+        base_out = Path(args.output_dir) if args.output_dir else Path("../output/inference/full_pipeline")
         base_out.mkdir(parents=True, exist_ok=True)
         roi_root = base_out / "xic-roi-batch"
         pred_root = base_out / "batch_predictions"
@@ -738,11 +739,6 @@ def main_cli():
         roi_root.mkdir(parents=True, exist_ok=True)
         pred_root.mkdir(parents=True, exist_ok=True)
         snr_root.mkdir(parents=True, exist_ok=True)
-
-        if args.standard_refs_csv:
-            print(
-                "[INFO] --standard_refs_csv 已弃用：mzML ROI 以各通道色谱最高峰（smooth_sigma 平滑后）RT 为中心。"
-            )
 
         # 1) Collect input mzML files (single file, or directory scanned recursively)
         mzml_inputs = _collect_mzml_inputs(args.mzml, args.batch_dir)
@@ -785,8 +781,8 @@ def main_cli():
                 mzml_roi_stats.append({"stem": key, **st})
         _print_mzml_roi_stats_summary(mzml_roi_stats)
         t_roi_end = time.perf_counter()
-        stage_seconds["1_ROI生成(testXIC)"] = t_roi_end - t_roi
-        stage_intervals["1_ROI生成(testXIC)"] = (t_roi, t_roi_end)
+        stage_seconds["1_ROI生成(xic_extraction)"] = t_roi_end - t_roi
+        stage_intervals["1_ROI生成(xic_extraction)"] = (t_roi, t_roi_end)
 
         # 3) Run MRMPFormer (newtest) in batch mode（batch_dir 下逐子目录预测，单样品同样适用）
         integration_method = getattr(args, "integration_method", "linear")
@@ -813,8 +809,8 @@ def main_cli():
         t_pred = time.perf_counter()
         newtest_main(a)
         t_pred_end = time.perf_counter()
-        stage_seconds["2_模型预测(newtest)"] = t_pred_end - t_pred
-        stage_intervals["2_模型预测(newtest)"] = (t_pred, t_pred_end)
+        stage_seconds["2_模型预测(predictor)"] = t_pred_end - t_pred
+        stage_intervals["2_模型预测(predictor)"] = (t_pred, t_pred_end)
 
         # 4) Per-sample: SNR filter -> post_newtest
         snr_intervals = []
@@ -872,8 +868,8 @@ def main_cli():
 
             snr_run_dir = sample_snr_parent / snr_run_dir_name
             refined_root_dir = snr_run_dir  # post_newtest writes inside the same folder
-            if not (refined_root_dir / "prediction.csv").is_file():
-                print(f"[WARN] Skip post_newtest for {stem}: missing {refined_root_dir/'prediction.csv'}")
+            if not (refined_root_dir / "prediction_snr.csv").is_file():
+                print(f"[WARN] Skip post_newtest for {stem}: missing {refined_root_dir/'prediction_snr.csv'}")
                 per_sample_seconds.append(
                     {"stem": stem, "snr": snr_sec, "post": 0.0, "total": time.perf_counter() - sample_t0}
                 )
@@ -957,16 +953,16 @@ def main_cli():
             # ---- 每样品结论行 ----
             _n_roi = int(_roi_by_stem.get(stem, {}).get("n_roi_images", -1))
             print(f"[样品] {stem}: ROI {_n_roi} 张 | 检出 {_count_csv_rows(pred_csv)}"
-                  f" | SNR 保留 {_count_csv_rows(refined_root_dir / 'prediction.csv')}"
+                  f" | SNR 保留 {_count_csv_rows(refined_root_dir / 'prediction_snr.csv')}"
                   f" | 精修输出 {_count_csv_rows(refined_root_dir / args.post_output_name)}"
                   f" | {per_sample_seconds[-1]['total']:.1f}s")
 
         stage_seconds["3_SNR筛选(全部样品)"] = sum(p.get("snr", 0.0) for p in per_sample_seconds)
-        stage_seconds["4_框修正post_newtest(全部)"] = sum(p.get("post", 0.0) for p in per_sample_seconds)
+        stage_seconds["4_框修正(peak_refinement)"] = sum(p.get("post", 0.0) for p in per_sample_seconds)
         if snr_intervals:
             stage_intervals["3_SNR筛选(全部样品)"] = snr_intervals
         if post_intervals:
-            stage_intervals["4_框修正post_newtest(全部)"] = post_intervals
+            stage_intervals["4_框修正(peak_refinement)"] = post_intervals
         accounted = sum(stage_seconds.values())
         resource_monitor.stop()
         total_sec = time.perf_counter() - pipeline_t0
@@ -990,16 +986,13 @@ def main_cli():
         return
 
     if args.mode == "roi":
-        from preprocessing.xic_extraction import extract_xic_with_pyopenms, generate_prediction_plots
+        from preprocessing.xic_extraction import extract_xic_with_pyopenms
         mzml_inputs = _collect_mzml_inputs(args.mzml, args.batch_dir)
         out_base = Path(args.output_dir) if args.output_dir else Path("xic-roi-batch")
         for mzml_path, key in mzml_inputs:
             out_dir = out_base / key
             out_dir.mkdir(parents=True, exist_ok=True)
             extract_xic_with_pyopenms(str(mzml_path), str(out_dir), smooth_sigma=args.smooth_sigma)
-        if args.model and args.plot:
-            for _, key in mzml_inputs:
-                generate_prediction_plots(str(out_base / key), args.model, args.threshold)
         return
 
     if args.mode == "batch_dir":
@@ -1008,8 +1001,8 @@ def main_cli():
         if not args.batch_dir or not os.path.isdir(args.batch_dir):
             print("[ERROR] --batch_dir 必填且需为目录", file=sys.stderr)
             sys.exit(1)
-        a = ap.Namespace(images_path=None, batch_dir=args.batch_dir, batch_output=args.output_dir or "results/batch_predictions",
-                         model=args.model, feature=None, prediction_output="results/prediction.csv",
+        a = ap.Namespace(images_path=None, batch_dir=args.batch_dir, batch_output=args.output_dir or "../output/inference/batch_predictions",
+                         model=args.model, feature=None, prediction_output="../output/inference/prediction.csv",
                          threshold=args.threshold, plot=args.plot, plot_dir="predicted_plots",
                          baseline_correction=False, integration_method="linear", baseline_json=None, verbose=False)
         newtest_main(a)

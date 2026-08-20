@@ -88,7 +88,9 @@ def main():
     snr_base = root / args.snr_subdir
 
     pred_ref = snr_base / "prediction_refined.csv"
-    pred_snr = snr_base / "prediction.csv"
+    pred_snr = snr_base / "prediction_snr.csv"
+    if not pred_snr.is_file():
+        pred_snr = snr_base / "prediction.csv"  # 兼容旧版 SNR 输出名
     roi_snr = snr_base / "roi_windows.csv"
     xic_npy = snr_base / "xic_matrix.npy"
 

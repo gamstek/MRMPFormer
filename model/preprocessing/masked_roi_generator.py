@@ -182,19 +182,19 @@ def main():
     parser.add_argument(
         "--batch_predictions",
         type=str,
-        default="results/batch_predictions",
+        default="../output/inference/batch_predictions",
         help="batch_predictions 根目录",
     )
     parser.add_argument(
         "--images_root",
         type=str,
-        default="xic-roi-batch",
+        default="../output/inference/xic-roi-batch",
         help="ROI 图像所在根目录（子目录名与 batch_predictions 子目录对应）",
     )
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="results/batch_predictions_masked",
+        default="../output/inference/batch_predictions_masked",
         help="掩蔽图像输出根目录",
     )
     parser.add_argument(

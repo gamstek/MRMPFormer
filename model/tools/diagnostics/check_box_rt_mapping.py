@@ -9,9 +9,9 @@
     --roi_windows_csv "D:\\...\\xic-roi-batch\\json\\roi_windows.csv" ^
     --xic_matrix "D:\\...\\xic-roi-batch\\json\\xic_matrix.npy"
 
-SNR 之后的目录（image 可能为 筛选保留/xxx.jpeg）请指向同一次运行写入的 roi_windows.csv：
+SNR 之后的目录（image 可能为 snr_kept/xxx.jpeg，旧产物为 筛选保留/xxx.jpeg）请指向同一次运行写入的 roi_windows.csv：
   ...\\snr_filtered\\json\\SNR_box_3\\roi_windows.csv
-  ...\\snr_filtered\\json\\SNR_box_3\\prediction.csv
+  ...\\snr_filtered\\json\\SNR_box_3\\prediction_snr.csv
 """
 import argparse
 import os

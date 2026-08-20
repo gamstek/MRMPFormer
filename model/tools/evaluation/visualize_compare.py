@@ -15,11 +15,11 @@
 
 用法（model/ 目录下，系统终端执行，涉及 matplotlib 渲染）：
   python -m tools.evaluation.visualize_compare \
-      --labels ../data/test/testcase_data.xlsx \
-      --xic_root ../data/coco/_xic \
-      --pred1 ../data/test/pred_v1_fixed --name1 v1 \
-      --pred2 ../data/test/pred_v2_fixed --name2 v2 \
-      --output_dir ../data/evaluation/vis_v1_v2
+      --labels ../data/test/label/testcase_data.xlsx \
+      --xic_root ../data/test/coco/_xic \
+      --pred1 ../output/test/pred_v1_fixed --name1 v1 \
+      --pred2 ../output/test/pred_v2_fixed --name2 v2 \
+      --output_dir ../output/evaluation/vis_v1_v2
 """
 import argparse
 import html

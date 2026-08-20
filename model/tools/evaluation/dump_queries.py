@@ -13,7 +13,7 @@
 
 用法（model/ 目录下，系统终端执行）：
   python -m tools.evaluation.dump_queries --model checkpoint/quanformer.pth \
-      --xic_root ../data/coco/_xic --labels ../data/test/testcase_data.xlsx --limit 8
+      --xic_root ../data/test/coco/_xic --labels ../data/test/label/testcase_data.xlsx --limit 8
 """
 import argparse
 import os

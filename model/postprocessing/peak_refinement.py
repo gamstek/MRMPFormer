@@ -2005,7 +2005,9 @@ def _plot_refined_predictions(
     else:
         out_dir = result_dir / plot_dir_name
     out_dir.mkdir(parents=True, exist_ok=True)
-    pred_df = _load_optional_csv(pred_lookup_csv) if pred_lookup_csv else _load_optional_csv(result_dir / "prediction.csv")
+    pred_df = _load_optional_csv(pred_lookup_csv) if pred_lookup_csv else _load_optional_csv(result_dir / "prediction_snr.csv")
+    if pred_df is None:
+        pred_df = _load_optional_csv(result_dir / "prediction.csv")
     ft_df = _load_optional_csv(feature_csv) if feature_csv else None
     if ft_df is None:
         alt = result_dir / "feature.csv"
@@ -2088,9 +2090,12 @@ def _plot_refined_predictions(
 
 def run_post_newtest(args):
     root = Path(args.results_dir).resolve()
-    pred_path = root / "prediction.csv"
+    # 兼容两代 SNR 输出名：新版 prediction_snr.csv（snr_filter 输出），旧版 prediction.csv
+    pred_path = root / "prediction_snr.csv"
     if not pred_path.exists():
-        raise FileNotFoundError(f"Need prediction.csv in {root}")
+        pred_path = root / "prediction.csv"
+    if not pred_path.exists():
+        raise FileNotFoundError(f"Need prediction_snr.csv (or legacy prediction.csv) in {root}")
 
     # newtest.py 批量输出通常只写 prediction.csv；xic_matrix.npy 仍在 testXIC 生成的 ROI 目录。
     xic_path = root / "xic_matrix.npy"
@@ -2967,7 +2972,7 @@ def run_post_newtest(args):
             plot_dir_name=str(args.plot_dir_name),
             plot_output_parent=plot_parent,
             plot_file_prefix=pfx,
-            pred_lookup_csv=root / "prediction.csv",
+            pred_lookup_csv=pred_path,
             feature_csv=_feat_csv,
         )
         dest_msg = (
@@ -3612,9 +3617,6 @@ def run_predict_from_standard_rt(args):
     if not feat_path.exists() or not xic_path.exists():
         raise FileNotFoundError(f"Need feature.csv + xic_matrix.npy in {sample_dir}")
 
-    if getattr(args, "standard_refs_csv", None):
-        print("[INFO] --standard_refs_csv 已弃用；ROI 以各通道强度最高点 RT 为中心。")
-
     feat = pd.read_csv(feat_path)
     xic = np.load(str(xic_path))
     rt = xic[0, :].astype(np.float64)
@@ -4044,11 +4046,6 @@ def build_parser():
         help="从样品 xic_matrix 按各通道最高峰 RT 裁 ROI 并运行 MRMPFormer，输出 prediction.csv（与历史子命令名兼容）。",
     )
     p4.add_argument("--sample_xic_dir", required=True, help="样品目录（需含 feature.csv + xic_matrix.npy）")
-    p4.add_argument(
-        "--standard_refs_csv",
-        default=None,
-        help="已弃用；保留仅为兼容旧命令行，不再读取。",
-    )
     p4.add_argument("--model", required=True, help="MRMPFormer checkpoint 路径")
     p4.add_argument("--output_dir", required=True, help="输出基目录（默认会创建子目录 <sample_xic_dir 名称>）")
     p4.add_argument("--flat_output", action="store_true", help="不创建样品子目录，直接写到 --output_dir")

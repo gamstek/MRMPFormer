@@ -839,10 +839,10 @@ def plot_newprediction_on_xic(
 
 def main():
     parser = argparse.ArgumentParser(description="两轮识别：筛选→掩蔽→第二轮→合并→可视化")
-    parser.add_argument("--batch_predictions", type=str, default="results/batch_predictions")
-    parser.add_argument("--images_root", type=str, default="xic-roi-batch")
+    parser.add_argument("--batch_predictions", type=str, default="../output/inference/batch_predictions")
+    parser.add_argument("--images_root", type=str, default="../output/inference/xic-roi-batch")
     parser.add_argument("--model", type=str, required=True, help="模型 checkpoint 路径")
-    parser.add_argument("--output_base", type=str, default="results/two_round",
+    parser.add_argument("--output_base", type=str, default="../output/inference/two_round",
                         help="输出根目录：masked/ round2/ newprediction/ plots/")
     parser.add_argument("--min_confidence", type=float, default=0.99)
     parser.add_argument("--min_snr", type=float, default=3.0)

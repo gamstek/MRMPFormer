@@ -573,7 +573,7 @@ def run_single(args, images_path, prediction_output, plot_dir):
     xic_npy_path = os.path.join(images_path, "xic_matrix.npy")
     if not os.path.exists(xic_npy_path):
         print(f"[ERROR] xic_matrix.npy not found: {xic_npy_path}")
-        print("[ERROR] Please run testXIC.py first to generate XIC matrix.")
+        print("[ERROR] 请先运行 ROI 生成（inference.cli --mode roi 或 preprocessing.xic_extraction）生成 XIC 矩阵。")
         return False
     
     xic_full = np.load(xic_npy_path)
@@ -813,7 +813,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batch_output",
         type=str,
-        default="results/batch_predictions",
+        default="../output/inference/batch_predictions",
         help="Base output dir for batch mode; each subdir's results -> batch_output/<subdir_name>/prediction.csv and predicted_plots/"
     )
     parser.add_argument(
@@ -827,13 +827,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output",
         type=str,
-        default="results/area.csv",
+        default="../output/inference/area.csv",
         help="(disabled) Output quantification CSV path"
     )
     parser.add_argument(
         "--prediction_output",
         type=str,
-        default="results/prediction.csv",
+        default="../output/inference/prediction.csv",
         help="Output CSV path for per-box prediction integration details"
     )
     parser.add_argument(

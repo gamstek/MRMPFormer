@@ -16,16 +16,16 @@ native_id「化合物名-1/-2」对齐标注 xlsx 行（与 coco_annotation 同�
 
 用法（model/ 目录下，系统终端执行；推理涉及画图需绕沙箱）：
   python -m tools.evaluation.evaluate_baseline \
-      --mzmls ../data/test/20260715_shiyaoyuan_test/20260715_shiyaoyuan_test_1.mzML \
-              ../data/test/20260715_shiyaoyuan_test/20260715_shiyaoyuan_test_2.mzML \
-      --labels ../data/test/testcase_data.xlsx \
+      --mzmls ../data/test/mzml/20260715_shiyaoyuan_test_1.mzML \
+              ../data/test/mzml/20260715_shiyaoyuan_test_2.mzML \
+      --labels ../data/test/label/testcase_data.xlsx \
       --model checkpoint/quanformer.pth \
-      --output_dir ../data/evaluation/quanformer
+      --output_dir ../output/evaluation/quanformer
 
   # 复用已跑好的 prediction.csv（跳过推理，纯计算指标）：
   python -m tools.evaluation.evaluate_baseline --run_inference 0 \
-      --labels ../data/test/testcase_data.xlsx \
-      --output_dir ../data/evaluation/quanformer \
+      --labels ../data/test/label/testcase_data.xlsx \
+      --output_dir ../output/evaluation/quanformer \
       --prediction_csvs 20260715_shiyaoyuan_test_1=<pred.csv> 20260715_shiyaoyuan_test_2=<pred.csv> \
       --feature_csvs   20260715_shiyaoyuan_test_1=<feature.csv> 20260715_shiyaoyuan_test_2=<feature.csv>
 

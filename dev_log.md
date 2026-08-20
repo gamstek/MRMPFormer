@@ -27,6 +27,12 @@ MRMPFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 
 ## 开发时间线
 
+### 2026-08-20
+
+- 代码生成(model/preprocessing/label_qc.py): 新建标注 RT 一致性 QC 模块（docs/plan_qc.md 防线1）—— 跨样品极差 groupby(compound,channel)（n≥3 仅剔偏离中位数者、n=2 双剔）+ 双离子极差 groupby(sample_id,compound)（超阈值双通道剔）；极差>tol(默认1.0min) 判疑似实验有误，WARN 警示人工复核；返回全量 qc_rows 与 exclude_keys，配套 mark_excluded_labels（打标记不删行保持行序）/write_qc_table
+- 代码生成(model/preprocessing/coco_annotation.py): 挂接标注 QC —— 新增 --qc_label_rt_tol(默认1.0，0=关闭)；parse_labels_xlsx 后做一致性检查并标记命中行，by_key 构建与行序回退匹配跳过被标记者（ROI 降级负样本，rt_overrides 同步隔离）；QC 表输出 output/QC/coco_<实验名>_<时间戳>/qc_label_rt.csv
+- 调试(数据验证): label_qc 单测通过（构造 B/C/D 三类异常：n=2 双剔、n=3 仅剔离群、双离子双剔；exclude_keys/WARN/CSV 断言）；真实标注回归发现 20260715 实验 8 组双离子 RT 极差 12.8~25.9 min（乙酰甲胺磷/灭螨醌/烯啶虫胺?/苄嘧磺隆? 等定量定性离子不共流出），16 行判疑似实验有误待人工复核 —— QC 首跑即捕获真实数据问题
+
 ### 2026-08-16
 
 - 文档生成(imporove.md): 新建 QuanFormer 基线补齐清单 —— 基于模型缺口分析整理 6 项待办（COCO 标注生成脚本（testcase_data.xlsx→COCO）、参数配置外置、一键精度评测协议、置信度阈值统一、build_predictor 按模型变体路由、train.py resume 逻辑修复），每项含问题说明与大致做法，附 P0/P1/P2 优先级表

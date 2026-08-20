@@ -48,7 +48,7 @@
   "_comment_dataset_file": "数据集类型（coco 为 DETR 标准格式）",
   "dataset_file": "coco",
   "_comment_coco_path": "COCO 数据根目录，其下需有 train/ + train_coco.json、val/ + val_coco.json",
-  "coco_path": "../data/coco",
+  "coco_path": "../data/test/coco",
   "_comment_remove_difficult": "是否剔除 COCO 的 difficult 标注",
   "remove_difficult": false,
   "_comment_device": "设备：auto=自动检测（CUDA>MPS>CPU），或指定 cuda:0/cpu",
@@ -76,11 +76,17 @@
   "_comment_clip_max_norm": "梯度裁剪最大范数",
   "clip_max_norm": 0.1,
   "_comment_output_dir": "训练产物输出目录（checkpoint.pth、log.txt）",
-  "output_dir": "output_baseline",
+  "output_dir": "../output/train/baseline",
   "_comment_resume": "续训权重路径；null=从零训练",
   "resume": null,
   "_comment_start_epoch": "起始 epoch（续训时记录已训练轮数）",
   "start_epoch": 0,
   "_comment_reset_optimizer": "续训/微调时是否重置优化器与学习率调度（true=不沿用旧动量）",
-  "reset_optimizer": false
+  "reset_optimizer": false,
+  "_comment_frozen_weights": "冻结训练权重（仅 mask 头训练，segmentation 专用；null=不启用）",
+  "frozen_weights": null,
+  "_comment_coco_panoptic_path": "COCO panoptic 标注路径（panoptic 分割专用；null=不启用）",
+  "coco_panoptic_path": null,
+  "_comment_eval": "true=仅评估不训练（加载 --resume 权重跑验证集）",
+  "eval": false
 }

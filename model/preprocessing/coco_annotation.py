@@ -16,10 +16,10 @@
 
 用法（model/ 目录下执行）：
   python -m preprocessing.coco_annotation \
-      --mzmls ../data/test/20260715_shiyaoyuan_test/20260715_shiyaoyuan_test_1.mzML \
-              ../data/test/20260715_shiyaoyuan_test/20260715_shiyaoyuan_test_2.mzML \
-      --labels ../data/test/testcase_data.xlsx \
-      --output_dir ../data/coco \
+      --mzmls ../data/test/mzml/20260715_shiyaoyuan_test_1.mzML \
+              ../data/test/mzml/20260715_shiyaoyuan_test_2.mzML \
+      --labels ../data/test/label/testcase_data.xlsx \
+      --output_dir ../data/test/coco \
       --val_stems 20260715_shiyaoyuan_test_2
 
 复用已有 XIC 输出：work_dir/<stem>/ 下已存在 feature.csv + roi_windows.csv 时默认跳过提取，
@@ -190,6 +190,7 @@ def build_coco_for_mzml(mzml_path, work_dir, labels_group, smooth_sigma, force=F
         extract_xic_with_pyopenms(
             str(mzml_path), str(out_dir), smooth_sigma=smooth_sigma,
             rt_center_overrides=rt_overrides,
+            exclude_tic=exclude_tic,
         )
 
     feats = pd.read_csv(feature_csv)
@@ -210,8 +211,10 @@ def build_coco_for_mzml(mzml_path, work_dir, labels_group, smooth_sigma, force=F
         if native_id and native_id in by_key:
             rec = by_key[native_id][1]
         elif i < len(labels_group):  # 回退：组内行序（xlsx 行序 = 色谱序，已验证 60/60）
-            rec = labels_group[i]
-            stats["fallback_order"] += 1
+            cand = labels_group[i]
+            if not cand.get("_qc_excluded"):
+                rec = cand
+                stats["fallback_order"] += 1
 
         img_id = id_offset + i + 1
         images.append({
@@ -303,6 +306,13 @@ def main():
     parser.add_argument("--no_include_unlabeled", dest="include_unlabeled",
                         action="store_false",
                         help="不把无标注 ROI（TIC/匹配失败等）作为负样本纳入数据集")
+    parser.add_argument("--qc_label_rt_tol", type=float, default=1.0,
+                        help="标注 RT 一致性 QC 阈值（min）：跨样品/双离子 rt 极差超此值判疑似实验有误，"
+                             "剔除涉事行（不进 bbox）并警示人工复核；0=关闭。默认 1.0")
+    parser.add_argument("--exclude_tic", action="store_true", default=True,
+                        help="不生成 TIC 等无 (Q1,Q3) 数值通道的 ROI（默认开启；--no_exclude_tic 关闭）")
+    parser.add_argument("--no_exclude_tic", dest="exclude_tic", action="store_false",
+                        help="保留 TIC 通道 ROI（作为负样本）")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir).resolve()
@@ -311,6 +321,26 @@ def main():
 
     labels = parse_labels_xlsx(args.labels)
     print(f"[INFO] 标注 xlsx: {len(labels)} 行")
+
+    # ===== 标注 RT 一致性 QC（防线 1，详见 docs/plan_qc.md）=====
+    if args.qc_label_rt_tol > 0:
+        from preprocessing.label_qc import (
+            check_label_rt_consistency, mark_excluded_labels, write_qc_table,
+        )
+        qc_rows, exclude_keys = check_label_rt_consistency(labels, tol=args.qc_label_rt_tol)
+        n_excl = mark_excluded_labels(labels, exclude_keys)
+        n_review = sum(1 for r in qc_rows if r.get("suggest_review"))
+        print(f"[INFO] 标注 QC: 检查 {len(qc_rows)} 项，剔除 {n_excl} 行标注"
+              f"（对应 ROI 降级负样本），需人工复核 {n_review} 项")
+        if qc_rows:
+            from datetime import datetime
+            repo_root = Path(__file__).resolve().parent.parent.parent
+            exp_name = output_dir.parent.name or "exp"
+            qc_dir = repo_root / "output" / "QC" / f"coco_{exp_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            qc_path = qc_dir / "qc_label_rt.csv"
+            n_written = write_qc_table(qc_rows, qc_path)
+            print(f"[INFO] QC 结果表: {qc_path}（{n_written} 行）")
+
     sample_order, groups = group_labels_by_sample(labels)
     stems = [Path(p).stem for p in args.mzmls]
     stem2sample = map_samples_to_mzmls(stems, sample_order, args.sample_map)
@@ -323,6 +353,7 @@ def main():
         images, annotations, stats = build_coco_for_mzml(
             mzml_path, work_dir, groups[stem2sample[stem]],
             smooth_sigma=args.smooth_sigma, force=args.force, id_offset=id_offset,
+            exclude_tic=args.exclude_tic,
         )
         id_offset += stats["n_roi"]
         anns_by_img = {}

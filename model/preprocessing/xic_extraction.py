@@ -194,6 +194,7 @@ def extract_xic_with_pyopenms(
     min_chrom_points=0,
     min_max_intensity=0.0,
     rt_center_overrides=None,
+    exclude_tic=False,
 ):
     """
     提取 XIC 并生成 ROI 图像，支持高斯平滑。
@@ -208,6 +209,8 @@ def extract_xic_with_pyopenms(
         rt_center_overrides (dict): {native_id: RT分钟}，ROI 窗口中心覆盖表 —— 命中 native_id 时以
             指定 RT（如人工标注 RT）为窗口中心，替代默认的谱图最高强度点；未命中的通道（TIC 等）
             仍用最高强度点。用于训练数据生成时与标注对齐（improve.md 第 7 项）。
+        exclude_tic (bool): True 时跳过无 (Q1,Q3) 数值的通道（TIC 等），不生成 ROI、不进 feature/xic_matrix；
+            剔除记录写入 pipeline_qc_excluded.csv（reason=tic_excluded）。
     """
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     print(f"[INFO] Reading mzML with pyopenms: {mzml_path}")
@@ -253,6 +256,22 @@ def extract_xic_with_pyopenms(
             print(f"[WARN] Skip duplicate (Q1,Q3) chromatogram: Q1={q1}, Q3={q3}, native_id={native_id[:60]}...")
             continue
         seen_q1_q3.add(key)
+
+        # === TIC 等无 (Q1,Q3) 数值通道剔除（--exclude_tic / exclude_tic=True）===
+        if exclude_tic and q1 is None and q3 is None:
+            print(
+                f"[WARN] Skip chrom {i}: no numeric (Q1,Q3) (TIC-like); native_id={native_id[:72]}..."
+            )
+            qc_excluded.append({
+                "chrom_index": i,
+                "native_id": native_id,
+                "q1": q1,
+                "q3": q3,
+                "reason": "tic_excluded",
+                "n_points": int(len(rt_sec)),
+                "max_intensity_smoothed": float(np.max(intensity)) if len(intensity) else 0.0,
+            })
+            continue
 
         # === 【新增】高斯平滑处理 ===
         if smooth_sigma > 0:
@@ -745,8 +764,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--output_dir", type=str,
-        default=str(ROOT_DIR / "xic-roi-batch"),
-        help="Base output directory. Single mzML: results go under output_dir/<stem>/ unless --flat_output. Batch: one subfolder per mzML (stem = filename without extension)."
+        default=str(ROOT_DIR.parent.parent / "output" / "inference" / "xic-roi-batch"),
+        help="Base output directory (default: <repo>/output/inference/xic-roi-batch). Single mzML: results go under output_dir/<stem>/ unless --flat_output. Batch: one subfolder per mzML (stem = filename without extension)."
     )
     parser.add_argument(
         "--flat_output",
@@ -756,10 +775,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--smooth_sigma", type=float, default=0.0,
         help="Gaussian smoothing sigma (0 means no smoothing)"
-    )
-    parser.add_argument(
-        "--standard_refs_csv", type=str, default=None,
-        help="已弃用：不再用于 ROI 居中；ROI 以各通道 XIC 最高峰 RT 为准。传入时仅打印提示。"
     )
     parser.add_argument(
         "--model", type=str, default=None,
@@ -782,10 +797,6 @@ if __name__ == "__main__":
         help="External输入：JSON 中每化合物含 mz_name, rt, intensity；可选 q3。expected_rt 已忽略。"
     )
     args = parser.parse_args()
-    if args.standard_refs_csv:
-        print(
-            "[INFO] --standard_refs_csv 已弃用：ROI 以各通道 XIC 最高峰 RT 为中心，不再读取该文件。"
-        )
 
     # 外部数组输入模式：--from_json 指定 JSON 文件
     if args.from_json:
