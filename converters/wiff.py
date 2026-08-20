@@ -1,5 +1,6 @@
 """
-使用 msconvert.exe (ProteoWizard) 批量将 data/ 目录下的 .wiff 文件转换为 .mzML 格式。
+使用 msconvert.exe (ProteoWizard) 批量将 data/wiff/ 目录下的 .wiff 文件转换为 .mzML 格式，
+转换结果统一输出到 data/mzml/ 目录（按源文件名分目录存放）。
 注意: 项目路径不能包含中文字符。
 """
 
@@ -12,7 +13,8 @@ from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
+DATA_DIR = BASE_DIR / "data" / "wiff"
+OUTPUT_DIR = BASE_DIR / "data" / "mzml"
 WIFF_BIN_DIR = BASE_DIR / "wiff_bin"
 LEGACY_BIN_DIR = BASE_DIR / "bin"
 BIN_DIR = WIFF_BIN_DIR if WIFF_BIN_DIR.exists() else LEGACY_BIN_DIR
@@ -20,9 +22,9 @@ MSCONVERT_EXE = BIN_DIR / "msconvert.exe"
 
 
 def convert_file(input_file: Path, no_peak_picking: bool = False):
-    """转换单个 .wiff 为 .mzML，输出到 data/<basename>/ 子目录中。
+    """转换单个 .wiff 为 .mzML，输出到 data/mzml/<basename>/ 子目录中。
     返回 (成功标志, 信息字符串)"""
-    output_dir = DATA_DIR / input_file.stem
+    output_dir = OUTPUT_DIR / input_file.stem
     output_dir.mkdir(parents=True, exist_ok=True)
 
     cmd = [
@@ -72,7 +74,7 @@ def convert_file(input_file: Path, no_peak_picking: bool = False):
 def main():
     parser = argparse.ArgumentParser(description="批量转换 .wiff / .wiff2 为 .mzML")
     parser.add_argument("--input", type=str, default=None,
-                        help="指定单个文件路径，不传则处理 data/*.wiff 和 data/*.wiff2")
+                        help="指定单个文件路径，不传则处理 data/wiff/*.wiff 和 data/wiff/*.wiff2")
     parser.add_argument("--no-peak-picking", action="store_true",
                         help="不做峰检测，保留原始 profile 数据")
     parser.add_argument("--dry-run", action="store_true",
@@ -94,7 +96,7 @@ def main():
         files = sorted(DATA_DIR.glob("*.wiff")) + sorted(DATA_DIR.glob("*.wiff2"))
 
     if not files:
-        print("未找到 .wiff / .wiff2 文件，请将文件放入 data/ 目录")
+        print("未找到 .wiff / .wiff2 文件，请将文件放入 data/wiff/ 目录")
         return
 
     print(f"找到 {len(files)} 个文件\n")

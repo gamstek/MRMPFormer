@@ -1,16 +1,19 @@
 """
-使用 msdata2mzml.exe 批量将 data/ 目录下的 .msdata 文件转换为 .mzML 格式。
+使用 msdata2mzml.exe 批量将 data/msdata/ 目录下的 .msdata 文件转换为 .mzML 格式，
+转换结果统一输出到 data/mzml/ 目录（按源文件名分目录存放）。
 注意: 项目路径不能包含中文字符，否则 OpenMS C++ 层会报路径不存在。
 """
 
 import subprocess
 import os
 import argparse
+import shutil
 from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
+DATA_DIR = BASE_DIR / "data" / "msdata"
+OUTPUT_DIR = BASE_DIR / "data" / "mzml"
 MSDATA_BIN_DIR = BASE_DIR / "msdata_bin"
 LEGACY_BIN_DIR = BASE_DIR / "bin"
 BIN_DIR = MSDATA_BIN_DIR if MSDATA_BIN_DIR.exists() else LEGACY_BIN_DIR
@@ -19,7 +22,8 @@ OPENMS_SHARE = BIN_DIR / "share" / "OpenMS"
 
 
 def convert_file(input_file: Path):
-    """转换单个 .msdata 为 .mzML，输出自动放在输入文件同目录下的同名子目录中。
+    """转换单个 .msdata 为 .mzML。exe 会在输入文件同级生成 <stem>/ 子目录，
+    脚本随后将其中生成的 .mzML 移动到 data/mzml/<stem>/ 统一输出。
     返回 (成功标志, 信息字符串)"""
     env = os.environ.copy()
     env["OPENMS_DATA_PATH"] = str(OPENMS_SHARE)
@@ -39,12 +43,17 @@ def convert_file(input_file: Path):
         print("CRASH")
         return False, f"进程异常退出: {e}"
 
-    # exe 输出到 data/{stem}/ 目录下
-    expected_output_dir = input_file.parent / input_file.stem
-    mzml_files = list(expected_output_dir.glob("*.mzML")) if expected_output_dir.exists() else []
+    # exe 输出到输入文件同级目录下的 <stem>/ 子目录
+    exe_output_dir = input_file.parent / input_file.stem
+    mzml_files = list(exe_output_dir.glob("*.mzML")) if exe_output_dir.exists() else []
 
     if mzml_files:
-        total_bytes = sum(f.stat().st_size for f in mzml_files)
+        # 统一移动到 data/mzml/<stem>/
+        target_dir = OUTPUT_DIR / input_file.stem
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for mzml in mzml_files:
+            shutil.move(str(mzml), str(target_dir / mzml.name))
+        total_bytes = sum(f.stat().st_size for f in target_dir.glob("*.mzML"))
         print(f"OK ({len(mzml_files)} 个 mzML, {total_bytes} bytes)")
         return True, ""
     else:
@@ -72,7 +81,7 @@ def main():
     files = [Path(args.input)] if args.input else sorted(DATA_DIR.glob("*.msdata"))
 
     if not files:
-        print("未找到 .msdata 文件")
+        print("未找到 .msdata 文件，请将文件放入 data/msdata/ 目录")
         return
 
     print(f"找到 {len(files)} 个文件\n")
