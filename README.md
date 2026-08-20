@@ -208,12 +208,12 @@ cd converters
 python rename_cn.py                 # 预览映射
 python rename_cn.py --no-dry-run    # 确认后执行
 
-# 1. 将原始文件放入 converters/data/ 目录
+# 1. 将原始文件放入项目根目录 data/ 下（读取路径：data/msdata、data/wiff）
 # 2. 预览待转换文件（不执行转换）
 python msdata.py --dry-run          # .msdata
 python wiff.py --dry-run            # .wiff / .wiff2
 
-# 3. 批量转换，输出自动生成于 data/<文件名>/ 子目录
+# 3. 批量转换，输出统一生成于 data/mzml/<文件名>/ 子目录
 python msdata.py                    # .msdata → .mzML
 python wiff.py                      # .wiff → .mzML（默认带峰检测）
 python wiff.py --no-peak-picking    # 保留 profile 原始轮廓

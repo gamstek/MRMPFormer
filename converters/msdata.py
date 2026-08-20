@@ -12,8 +12,8 @@ from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data" / "msdata"
-OUTPUT_DIR = BASE_DIR / "data" / "mzml"
+DATA_DIR = BASE_DIR.parent / "data" / "msdata"
+OUTPUT_DIR = BASE_DIR.parent / "data" / "mzml"
 MSDATA_BIN_DIR = BASE_DIR / "msdata_bin"
 LEGACY_BIN_DIR = BASE_DIR / "bin"
 BIN_DIR = MSDATA_BIN_DIR if MSDATA_BIN_DIR.exists() else LEGACY_BIN_DIR

@@ -13,8 +13,8 @@ from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data" / "wiff"
-OUTPUT_DIR = BASE_DIR / "data" / "mzml"
+DATA_DIR = BASE_DIR.parent / "data" / "wiff"
+OUTPUT_DIR = BASE_DIR.parent / "data" / "mzml"
 WIFF_BIN_DIR = BASE_DIR / "wiff_bin"
 LEGACY_BIN_DIR = BASE_DIR / "bin"
 BIN_DIR = WIFF_BIN_DIR if WIFF_BIN_DIR.exists() else LEGACY_BIN_DIR
