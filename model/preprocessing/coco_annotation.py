@@ -12,21 +12,38 @@
 4. 按 mzML 文件分组划分 train/val，输出：
      {output_dir}/train/*.jpeg + train_coco.json
      {output_dir}/val/*.jpeg   + val_coco.json
-   与 framework/datasets/coco.py 的读取约定一致（category_id=1 峰类，num_classes=1）
+   与 framework/datasets/coco.py 的读取约定一致（category_id=0 峰类，num_classes=1；
+   DETR 约定 category_id 直接作类别索引，no-object 占 num_classes 索引——若写成 1 会与
+   no-object 索引冲突，导致训练被教成"全输出无目标"）
 
 用法（model/ 目录下执行）：
+  # 一键配置（推荐）：所有输入参数 + 路径参数都在 configs/coco_annotation.json
+  python -m preprocessing.coco_annotation --config configs/coco_annotation.json
+
+  # 显式参数（--config 提供默认值，CLI 可覆盖）
   python -m preprocessing.coco_annotation \
       --mzmls ../data/mzml/20260715_shiyaoyuan_test/20260715_shiyaoyuan_test_1.mzML \
               ../data/mzml/traindata1/traindata1_1.mzML \
       --labels auto \
       --output_dir ../data/coco/merged \
-      --val_stems 20260715_shiyaoyuan_test_2
+      --val_ratio 0.3
 
 说明：
   --labels 支持多个实验标注自动合并（多文件时 sample_id 加 "<实验名>__" 前缀隔离，
   避免跨实验同名样品混淆；RT 一致性 QC 按实验分别执行，不跨实验混检）；
-  传 'auto' 或缺省时按 --mzmls 的 stem 前缀自动匹配 data/label/<实验>.xlsx。
+  传 'auto' 或缺省时按 --mzmls 的 stem 前缀自动匹配 --label_dir/<实验>.xlsx（默认
+  ../data/label）。
   --mzmls 顺序须与合并后各实验样品的出现顺序一致（或用 --sample_map 显式映射）。
+
+路径参数全部可配（不硬编码）：
+  --label_dir   标注文件目录（auto 匹配用）
+  --output_dir  COCO 数据集输出根目录
+  --work_dir    XIC 中间输出目录（缺省 <output_dir>/_xic）
+  --qc_root     QC 阶段表输出根目录（缺省 ../output/QC；构建侧表写入 <qc_root>/coco_<数据集名>/）
+
+TIC 等无 (Q1,Q3) 数值的通道永远剔除（不再提供保留开关）。
+pipeline_qc_excluded.csv 仅为聚合 qc_roi_channels.csv 阶段表的样品级中间台账，
+聚合完成后自动清理，不保留原始明细文件。
 
 复用已有 XIC 输出：work_dir/<stem>/ 下已存在 feature.csv + roi_windows.csv 时默认跳过提取，
 加 --force 重新提取。
@@ -100,13 +117,13 @@ def _peak_label_val(rec):
         return None
 
 
-def resolve_label_paths(labels_arg, mzml_stems):
+def resolve_label_paths(labels_arg, mzml_stems, label_dir):
     """解析标注文件列表：
     --labels 传多个路径 → 直接使用；
-    传 'auto' 或缺省 → 按 --mzmls 的 stem 前缀自动匹配 data/label/<实验>.xlsx。"""
+    传 'auto' 或缺省 → 按 --mzmls 的 stem 前缀自动匹配 label_dir/<实验>.xlsx。"""
     if labels_arg and labels_arg != ["auto"]:
         return [Path(p) for p in labels_arg]
-    label_dir = Path(__file__).resolve().parent.parent.parent / "data" / "label"
+    label_dir = Path(label_dir)
     found, seen = [], set()
     for stem in mzml_stems:
         for x in sorted(label_dir.glob("*.xlsx")):
@@ -114,7 +131,7 @@ def resolve_label_paths(labels_arg, mzml_stems):
                 seen.add(str(x))
                 found.append(x)
     if not found:
-        print("[ERROR] --labels 未指定且 data/label/ 未匹配到任何实验标注（按 mzML stem 前缀匹配 <实验>.xlsx）")
+        print(f"[ERROR] --labels 未指定且 {label_dir} 未匹配到任何实验标注（按 mzML stem 前缀匹配 <实验>.xlsx）")
         sys.exit(1)
     return found
 
@@ -267,7 +284,7 @@ def map_samples_to_mzmls(mzml_stems, sample_order, sample_map_str, mzml_names=No
     return dict(zip(mzml_stems, sample_order))
 
 
-def build_coco_for_mzml(mzml_path, work_dir, labels_group, smooth_sigma, force=False, id_offset=0, exclude_tic=False):
+def build_coco_for_mzml(mzml_path, work_dir, labels_group, smooth_sigma, force=False, id_offset=0):
     """提取（或复用）单 mzML 的 XIC 输出，生成 COCO images/annotations 条目。
 
     labels_group: 该 mzML 对应 sample_id 的 xlsx 行列表（保持行序）。
@@ -299,7 +316,6 @@ def build_coco_for_mzml(mzml_path, work_dir, labels_group, smooth_sigma, force=F
         extract_xic_with_pyopenms(
             str(mzml_path), str(out_dir), smooth_sigma=smooth_sigma,
             labels=labels_active,
-            exclude_tic=exclude_tic,
         )
 
     feats = pd.read_csv(feature_csv)
@@ -319,7 +335,16 @@ def build_coco_for_mzml(mzml_path, work_dir, labels_group, smooth_sigma, force=F
         rec = None
         if native_id and native_id in by_key:
             rec = by_key[native_id][1]
-        elif i < len(labels_active):  # 回退：组内行序（xlsx 行序 = 色谱序，已验证 60/60）
+        if rec is None and native_id:
+            # SCIEX msconvert 生成的 id 形如 "... name=<化合物名>"（name 为最后字段，可能含空格）：
+            # 提取 name 后按化合物名匹配标注键（-1/-2 后缀）
+            _m = re.search(r"\bname=([^\"]*)$", native_id)
+            if _m:
+                _short = _m.group(1).strip()
+                _cands = [k for k in by_key if k.endswith(("-1", "-2")) and k[:-2] == _short]
+                if len(_cands) == 1:
+                    rec = by_key[_cands[0]][1]
+        if rec is None and i < len(labels_active):  # 回退：组内行序（xlsx 行序 = 色谱序）
             rec = labels_active[i]
             stats["fallback_order"] += 1
 
@@ -374,7 +399,7 @@ def build_coco_for_mzml(mzml_path, work_dir, labels_group, smooth_sigma, force=F
             annotations.append({
                 "id": ann_id,
                 "image_id": img_id,
-                "category_id": 1,
+                "category_id": 0,
                 "bbox": [round(x1, 2), 0.0, round(w, 2), float(ROI_IMAGE_HEIGHT_PX)],
                 "area": round(w * ROI_IMAGE_HEIGHT_PX, 2),
                 "iscrowd": 0,
@@ -407,7 +432,7 @@ def write_split(split, entries, output_dir, json_name, include_unlabeled=True):
     coco = {
         "images": images,
         "annotations": annotations,
-        "categories": [{"id": 1, "name": "peak", "supercategory": "chromatographic_peak"}],
+        "categories": [{"id": 0, "name": "peak", "supercategory": "chromatographic_peak"}],
     }
     json_path = split_dir / json_name
     with open(json_path, "w", encoding="utf-8") as f:
@@ -419,11 +444,11 @@ def main():
     parser = argparse.ArgumentParser(
         description="Generate COCO-format dataset (train/val) from labeled xlsx + mzML files."
     )
-    parser.add_argument("--mzmls", nargs="+", required=True, help="mzML 文件路径列表")
+    parser.add_argument("--mzmls", nargs="+", help="mzML 文件路径列表（也可由 --config 提供）")
     parser.add_argument("--labels", nargs="+", default=None,
                         help="标注 xlsx 路径（可传多个实验文件自动合并；传 'auto' 或缺省则按 --mzmls stem 前缀"
-                             "自动匹配 data/label/<实验>.xlsx）")
-    parser.add_argument("--output_dir", required=True, help="COCO 数据集输出根目录")
+                             "自动匹配 --label_dir/<实验>.xlsx）")
+    parser.add_argument("--output_dir", help="COCO 数据集输出根目录（也可由 --config 提供）")
     parser.add_argument("--val_stems", nargs="*", default=[],
                         help="划入 val 的 mzML stem 列表（按文件分组划分），其余进 train")
     parser.add_argument("--val_ratio", type=float, default=0.0,
@@ -438,24 +463,55 @@ def main():
                         help="显式指定 stem=sample_id 映射（逗号分隔）；缺省按出现顺序对应")
     parser.add_argument("--no_include_unlabeled", dest="include_unlabeled",
                         action="store_false",
-                        help="不把无标注 ROI（TIC/匹配失败等）作为负样本纳入数据集")
+                        help="不把无标注 ROI（匹配失败等）作为负样本纳入数据集")
     parser.add_argument("--qc_label_rt_tol", type=float, default=1.0,
                         help="标注 RT 一致性 QC 阈值（min）：跨样品/双离子 rt 极差超此值判疑似实验有误，"
                              "剔除涉事行（不进 bbox）并警示人工复核；0=关闭。默认 1.0")
-    parser.add_argument("--exclude_tic", action="store_true", default=True,
-                        help="不生成 TIC 等无 (Q1,Q3) 数值通道的 ROI（默认开启；--no_exclude_tic 关闭）")
-    parser.add_argument("--no_exclude_tic", dest="exclude_tic", action="store_false",
-                        help="保留 TIC 通道 ROI（作为负样本）")
+    parser.add_argument("--label_dir", default=None,
+                        help="标注文件目录（--labels auto 自动匹配用；默认 ../data/label，相对 model/ 解析）")
+    parser.add_argument("--qc_root", default=None,
+                        help="QC 阶段表输出根目录（默认 ../output/QC；构建侧表写入 <qc_root>/coco_<数据集名>/）")
+    parser.add_argument("--config", type=str, default=None,
+                        help="JSON 配置文件路径（作为默认参数，CLI 可覆盖；参数外置，仿 train.py --config）")
+
+    # 参数配置外置：手动提取 --config（避免 parse_known_args 触发 required 校验），
+    # 加载 JSON 作为默认值，CLI 参数仍可覆盖
+    _cfg_path = None
+    for _i, _tok in enumerate(sys.argv[1:]):
+        if _tok == "--config" and _i + 1 < len(sys.argv[1:]):
+            _cfg_path = sys.argv[2 + _i]
+            break
+        if _tok.startswith("--config="):
+            _cfg_path = _tok.split("=", 1)[1]
+            break
+    if _cfg_path:
+        with open(_cfg_path, encoding="utf-8") as _f:
+            _cfg = json.load(_f)
+        _cfg.pop("config", None)
+        _cfg = {_k: _v for _k, _v in _cfg.items() if not _k.startswith("_")}  # 过滤 _comment_* 注释键
+        parser.set_defaults(**_cfg)
+        print(f"[INFO] 已加载数据集构建配置: {_cfg_path}")
     args = parser.parse_args()
 
+    # config 中 labels 可能是字符串 'auto'（nargs='+' 无法用 set_defaults 归一为列表）
+    if isinstance(args.labels, str):
+        args.labels = [args.labels]
+    if not args.mzmls:
+        parser.error("--mzmls 必填（命令行或 --config 提供）")
+    if not args.output_dir:
+        parser.error("--output_dir 必填（命令行或 --config 提供）")
+
+    repo_root = Path(__file__).resolve().parent.parent.parent
     output_dir = Path(args.output_dir).resolve()
     work_dir = Path(args.work_dir).resolve() if args.work_dir else output_dir / "_xic"
     work_dir.mkdir(parents=True, exist_ok=True)
+    label_dir = Path(args.label_dir).resolve() if args.label_dir else repo_root / "data" / "label"
+    qc_root = Path(args.qc_root).resolve() if args.qc_root else repo_root / "output" / "QC"
 
     stems = [Path(p).stem for p in args.mzmls]
 
     # ===== 多实验标注：解析 → QC 标记（原始行，sample_id 无前缀）→ 合并（加前缀）=====
-    label_paths = resolve_label_paths(args.labels, stems)
+    label_paths = resolve_label_paths(args.labels, stems, label_dir)
     per_file = [(Path(p).stem, parse_labels_xlsx(str(p))) for p in label_paths]
     print(f"[INFO] 标注文件: {len(label_paths)} 个")
     for trial, rows in per_file:
@@ -480,8 +536,7 @@ def main():
               f"（不生成 ROI），需人工复核 {n_review} 项")
         if qc_rows:
             # 目录名固定为 coco_<数据集名>（同数据集多次构建汇总/覆盖到同一处，便于对照）
-            repo_root = Path(__file__).resolve().parent.parent.parent
-            qc_dir = repo_root / "output" / "QC" / f"coco_{output_dir.name}"
+            qc_dir = qc_root / f"coco_{output_dir.name}"
             qc_path = qc_dir / "qc_label_rt.csv"
             n_written = write_qc_table(qc_rows, qc_path)
             print(f"[INFO] QC 结果表: {qc_path}（{n_written} 行）")
@@ -517,7 +572,6 @@ def main():
             images, annotations, stats = build_coco_for_mzml(
                 mzml_path, work_dir, groups[stem2sample[stem]],
                 smooth_sigma=args.smooth_sigma, force=args.force, id_offset=id_offset,
-                exclude_tic=args.exclude_tic,
             )
         id_offset += stats["n_roi"]
         anns_by_img = {}
@@ -634,6 +688,13 @@ def main():
             lines.append("| （无） | | | | | | | |")
         (qc_dir / "qc_summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
         print(f"[INFO] QC 阶段表: {qc_dir}（qc_label_rt.csv / qc_roi_channels.csv / qc_summary.md）")
+
+    # pipeline_qc_excluded.csv 仅为聚合 qc_roi_channels.csv 的样品级中间台账，消费后不再保留
+    _pexcl = sorted(work_dir.glob("*/pipeline_qc_excluded.csv"))
+    for _p in _pexcl:
+        _p.unlink(missing_ok=True)
+    if _pexcl:
+        print(f"[INFO] 已清理 {len(_pexcl)} 个样品级 pipeline_qc_excluded.csv（剔除明细已并入 QC 阶段表 qc_roi_channels.csv）")
 
     for split, json_name in (("train", "train_coco.json"), ("val", "val_coco.json")):
         entries = [(img, anns) for s, img, anns in all_entries if s == split]

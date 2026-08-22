@@ -152,7 +152,7 @@ def _label_key_from_channel(compound, channel):
 
 
 def _parse_label_rt(s):
-    """解析标注 rt 字段 '16.428(0.000)' / '16.428' → 分钟；空/非法 → None（与 label_qc 一致）。"""
+    """解析标注 rt/ert 字段 '16.428(0.000)' / '16.428' → 分钟；空/非法 → None（与 label_qc 一致）。"""
     s = (s or "").strip()
     if not s:
         return None
@@ -212,7 +212,6 @@ def extract_xic_with_pyopenms(
     min_chrom_points=0,
     min_max_intensity=0.0,
     rt_center_overrides=None,
-    exclude_tic=False,
     exclude_native_ids=None,
     labels=None,
 ):
@@ -229,16 +228,17 @@ def extract_xic_with_pyopenms(
         rt_center_overrides (dict): {native_id: RT分钟}，ROI 窗口中心覆盖表 —— 命中 native_id 时以
             指定 RT（如人工标注 RT）为窗口中心，替代默认的谱图最高强度点；未命中的通道（TIC 等）
             仍用最高强度点。用于训练数据生成时与标注对齐（improve.md 第 7 项）。
-        exclude_tic (bool): True 时跳过无 (Q1,Q3) 数值的通道（TIC 等），不生成 ROI、不进 feature/xic_matrix；
-            剔除记录写入 pipeline_qc_excluded.csv（reason=tic_excluded）。
         exclude_native_ids (dict/set): 标注 RT 一致性 QC 命中剔除的 native_id 集合；dict 时 value 为剔除原因
             （label_rt_cross_sample / label_rt_ion_pair），set 时原因记为 label_rt。命中通道不生成 ROI、
             不进 feature/xic_matrix，剔除记录写入 pipeline_qc_excluded.csv（reason 区分检查类型）。
-        labels (list[dict]): 标注行列表（键含 compound/channel/rt）。提供时 ROI 由标注驱动（B 范式）：
-            仅标注命中（native_id == label_key(compound, channel)）的通道生成 ROI，窗口中心 = 标注 rt
-            （替代最高强度点）；标注了但 mzML 无对应通道的行记 pipeline_qc_excluded.csv（reason=label_no_channel）；
-            标注 rt 无法解析的行 reason=label_rt_missing；未标注的 mzML 通道不生成 ROI。
+        labels (list[dict]): 标注行列表（键含 compound/channel/rt/ert）。提供时 ROI 由标注驱动（B 范式）：
+            仅标注命中（native_id == label_key(compound, channel)）的通道生成 ROI，窗口中心 = 标注 ert
+            （缺省回退 rt；替代最高强度点）；标注了但 mzML 无对应通道的行记 pipeline_qc_excluded.csv（reason=label_no_channel）；
+            标注 rt/ert 均无法解析的行 reason=label_rt_missing；未标注的 mzML 通道不生成 ROI。
             不提供时维持通道驱动（默认最高强度点居中，rt_center_overrides 可覆盖）。
+
+    TIC 等无 (Q1,Q3) 数值的通道永远剔除（不提供保留开关）：不生成 ROI、不进 feature/xic_matrix，
+    剔除记录写入 pipeline_qc_excluded.csv（reason=tic_excluded）。
     """
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     print(f"[INFO] Reading mzML with pyopenms: {mzml_path}")
@@ -258,7 +258,9 @@ def extract_xic_with_pyopenms(
         mzml_path, chromatograms, _native_id_to_str
     )
 
-    # === label 驱动模式（B 范式）：ROI 由标注行决定，窗口中心 = 标注 rt ===
+    # === label 驱动模式（B 范式）：ROI 由标注行决定，窗口中心 = 标注 ert（预期 RT）===
+    # ert 为同化合物统一的预期/标准品 RT，避免各样品实测 rt 抖动导致窗口漂移；
+    # ert 缺失/非法时回退 rt（兼容旧标注格式）。
     label_rt_map = None  # {native_id: rt_min|None}
     matched_nids = set()
     if labels:
@@ -269,7 +271,10 @@ def extract_xic_with_pyopenms(
             kid = _label_key_from_channel(rec.get("compound"), rec.get("channel"))
             if not kid:
                 continue
-            label_rt_map.setdefault(kid, _parse_label_rt(rec.get("rt")))
+            _center = _parse_label_rt(rec.get("ert"))
+            if _center is None:
+                _center = _parse_label_rt(rec.get("rt"))
+            label_rt_map.setdefault(kid, _center)
 
     features = []
     intensity_matrix = []  # 存储对齐后的强度 (N, S)
@@ -294,13 +299,24 @@ def extract_xic_with_pyopenms(
         if label_rt_map is not None:
             matched_key = native_id if native_id in label_rt_map else None
             if matched_key is None:
-                # 回退：mzML 通道 id 不带 -1/-2 后缀（如 traindata1）时，按化合物裸名唯一匹配标注键；
-                # 裸名同时命中 -1/-2（歧义）则不匹配，保持严格
-                _cands = [k for k in label_rt_map
-                          if k.endswith(("-1", "-2")) and k[: -2] == native_id]
-                if len(_cands) == 1:
-                    matched_key = _cands[0]
-                    print(f"[INFO] label 匹配回退（裸名）: mzML「{native_id}」→ 标注键「{matched_key}」")
+                # 回退1：SCIEX msconvert 生成的 id 形如
+                #   "SRM SIC Q1=.. Q3=.. ... name=<化合物名>"（name 为最后字段，可能含空格）
+                # 提取 name= 后按化合物名匹配标注键（-1/-2 后缀）
+                _nid_short = None
+                _m = re.search(r"\bname=([^\"]*)$", native_id)
+                if _m:
+                    _nid_short = _m.group(1).strip()
+                for _cand_name in (_nid_short, native_id):
+                    if not _cand_name:
+                        continue
+                    # 回退2：mzML 通道 id 不带 -1/-2 后缀（如 traindata1）时，按化合物裸名唯一匹配标注键；
+                    # 裸名同时命中 -1/-2（歧义）则不匹配，保持严格
+                    _cands = [k for k in label_rt_map
+                              if k.endswith(("-1", "-2")) and k[: -2] == _cand_name]
+                    if len(_cands) == 1:
+                        matched_key = _cands[0]
+                        print(f"[INFO] label 匹配回退（裸名）: mzML「{native_id}」→ 标注键「{matched_key}」")
+                        break
             if matched_key is None:
                 # mzML 有通道但标注未覆盖 → 不生成 ROI（ROI 由标注驱动）
                 continue
@@ -322,9 +338,10 @@ def extract_xic_with_pyopenms(
                 })
                 continue
 
-        # 数值型 (Q1,Q3) 去重；若仍缺（如 TIC），用 native_id 避免全部为 (None,None) 误判重复
+        # 去重：同 (Q1,Q3) 且同 native_id 的通道（mzML 重复记录）才跳过；
+        # 不同化合物共享相同 (Q1,Q3)（同分异构体/共流出物，如 Tyrosine vs L-Tyrosine）必须都保留
         if q1 is not None and q3 is not None:
-            key = (round(q1, 4), round(q3, 2))
+            key = (round(q1, 4), round(q3, 2), native_id)
         else:
             key = ("native_id", native_id)
         if key in seen_q1_q3:
@@ -332,8 +349,8 @@ def extract_xic_with_pyopenms(
             continue
         seen_q1_q3.add(key)
 
-        # === TIC 等无 (Q1,Q3) 数值通道剔除（--exclude_tic / exclude_tic=True）===
-        if exclude_tic and q1 is None and q3 is None:
+        # === TIC 等无 (Q1,Q3) 数值通道：永远剔除 ===
+        if q1 is None and q3 is None:
             print(
                 f"[WARN] Skip chrom {i}: no numeric (Q1,Q3) (TIC-like); native_id={native_id[:72]}..."
             )
@@ -413,7 +430,7 @@ def extract_xic_with_pyopenms(
         max_idx = np.argmax(intensity)
         rt_apex_min = rt_sec[max_idx] / 60.0  # 转为分钟
         rt_apex_sec = rt_sec[max_idx]
-        # ROI 窗口中心：label 驱动（B 范式）时以标注 rt 为源头（标注即正确答案，无需与 apex 对比报差异）；
+        # ROI 窗口中心：label 驱动（B 范式）时以标注 ert（缺省回退 rt）为源头（标注即正确答案，无需与 apex 对比报差异）；
         # 否则外部覆盖表（rt_center_overrides）；再否则以（平滑后）强度最高点对应 RT 为中心
         rt_center_min = rt_apex_min
         if label_rt_center is not None:
@@ -806,10 +823,18 @@ def run_batch_mzml(
     standard_rt_mz_to_rt=None,
     min_chrom_points=0,
     min_max_intensity=0.0,
+    labels=None,
+    exclude_native_ids=None,
 ):
     """
     批量处理 batch_dir 中所有 .mzml / .mzML 文件，每个文件的结果保存到 output_base/<文件名(无扩展名)>/
+
+    labels: 标注行列表（B 范式标注驱动，必传——ROI 仅标注命中通道生成、窗口中心=标注 rt）。
+    注意：本函数不做按样品分组（整份 labels 用于每个 mzML）；多样品批量请改用 inference.cli。
     """
+    if not labels:
+        raise ValueError("[ERROR] run_batch_mzml 需要 labels（B 范式标注驱动）；"
+                         "多样品批量请改用 inference.cli（按 sample_id 分组）")
     batch_path = Path(batch_dir)
     output_base_path = Path(output_base)
     if not batch_path.exists():
@@ -843,6 +868,8 @@ def run_batch_mzml(
             standard_rt_mz_to_rt=standard_rt_mz_to_rt,
             min_chrom_points=min_chrom_points,
             min_max_intensity=min_max_intensity,
+            labels=labels,
+            exclude_native_ids=exclude_native_ids,
         )
         if st:
             batch_stats.append({"stem": stem, **st})
@@ -915,6 +942,11 @@ if __name__ == "__main__":
         "--from_json", type=str, default=None,
         help="External输入：JSON 中每化合物含 mz_name, rt, intensity；可选 q3。expected_rt 已忽略。"
     )
+    parser.add_argument(
+        "--labels", type=str, default=None,
+        help="必填（mzML 输入时）：人工标注 xlsx。ROI 标注驱动（B 范式），仅标注命中通道生成 ROI、"
+             "窗口中心=标注 rt；不再支持 apex 通道驱动。多样品批量建议改用 inference.cli"
+    )
     args = parser.parse_args()
 
     # 外部数组输入模式：--from_json 指定 JSON 文件
@@ -937,6 +969,13 @@ if __name__ == "__main__":
                 plot_dir=args.plot_dir,
             )
     else:
+        # mzML 输入：标注驱动（B 范式）必填 --labels
+        if not args.labels:
+            parser.error("--labels 必填：ROI 生成只支持标注驱动（B 范式，与训练一致），"
+                         "不再支持 apex（最高强度点）通道驱动")
+        from preprocessing.coco_annotation import parse_labels_xlsx  # 延迟 import（coco_annotation 顶部依赖本模块）
+        labels = parse_labels_xlsx(args.labels)
+        print(f"[INFO] 标注 xlsx: {len(labels)} 行（多样品批量请改用 inference.cli，其按 sample_id 分组）")
         # 批量模式：--batch 或显式指定 --batch_dir
         batch_dir = args.batch_dir
         if args.batch and batch_dir is None:
@@ -951,6 +990,7 @@ if __name__ == "__main__":
                 plot_predictions=args.plot_predictions,
                 threshold=args.threshold,
                 plot_dir=args.plot_dir,
+                labels=labels,
             )
         else:
             # 单文件模式：默认取 truedata/test 下第一个 .mzML
@@ -971,6 +1011,7 @@ if __name__ == "__main__":
                 str(mzml_path_obj),
                 str(out_dir),
                 smooth_sigma=args.smooth_sigma,
+                labels=labels,
             )
             if args.plot_predictions:
                 if not args.model:

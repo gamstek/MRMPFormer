@@ -58,6 +58,37 @@ DEFAULT_SCORE = 0.90  # 预测框纳入评测的最低置信度（同时天然�
 MODEL_ROOT = Path(__file__).resolve().parents[2]  # model/
 
 
+def _parse_area(v):
+    """xlsx area 字段（字符串）→ float；空/非法 → NaN。"""
+    s = str(v).strip() if v is not None else ""
+    if not s or s.lower() == "nan":
+        return float("nan")
+    try:
+        return float(s)
+    except ValueError:
+        return float("nan")
+
+
+def _parse_gt_peaks(rec):
+    """标注行 → [(start, end, area), ...]。
+
+    多峰格式 peak_start1-3/peak_end1-3（真实标注文件，与 coco_annotation 同一规则），
+    回退旧单数 peak_start/peak_end；面积按峰对应取 area1-3（回退 area）。
+    """
+    gt_peaks = []
+    for k in (1, 2, 3):
+        s = parse_rt_field(rec.get("peak_start%d" % k))
+        e = parse_rt_field(rec.get("peak_end%d" % k))
+        if s is not None and e is not None:
+            gt_peaks.append((min(s, e), max(s, e), _parse_area(rec.get("area%d" % k))))
+    if not gt_peaks:
+        s = parse_rt_field(rec.get("peak_start"))
+        e = parse_rt_field(rec.get("peak_end"))
+        if s is not None and e is not None:
+            gt_peaks.append((min(s, e), max(s, e), _parse_area(rec.get("area"))))
+    return gt_peaks
+
+
 # ---------- 核心指标 ----------
 
 def match_image(pred_rows, gt_peaks, tol, loose_tol=0.2):
@@ -130,8 +161,14 @@ def prf(tp, fp, fn):
 
 # ---------- 推理 ----------
 
-def run_inference_for_mzml(mzml, model, out_dir, threshold, smooth_sigma):
-    """subprocess 调 inference.cli --mode pipeline（与手工执行完全一致），返回 (pred_csv, feature_csv)。"""
+def run_inference_for_mzml(mzml, model, out_dir, threshold, smooth_sigma,
+                           labels=None, qc_label_rt_tol=None):
+    """subprocess 调 inference.cli --mode pipeline（与手工执行完全一致），返回 (pred_csv, feature_csv)。
+
+    labels: 人工标注 xlsx。传入时透传 --labels → ROI 由标注驱动（B 范式），
+    与训练数据生成（coco_annotation）同一路径：仅标注命中通道生成 ROI、窗口中心=标注 rt。
+    qc_label_rt_tol: 标注 RT 一致性 QC 阈值（min），缺省用 CLI 默认（1.0，与训练一致）。
+    """
     cmd = [
         sys.executable, "-m", "inference.cli",
         "--mode", "pipeline",
@@ -141,6 +178,10 @@ def run_inference_for_mzml(mzml, model, out_dir, threshold, smooth_sigma):
         "--threshold", str(threshold),
         "--smooth_sigma", str(smooth_sigma),
     ]
+    if labels:
+        cmd += ["--labels", str(labels)]
+        if qc_label_rt_tol is not None:
+            cmd += ["--qc_label_rt_tol", str(qc_label_rt_tol)]
     print("[INFO] 推理:", " ".join(cmd))
     ret = subprocess.run(cmd, cwd=str(MODEL_ROOT))
     if ret.returncode != 0:
@@ -239,11 +280,7 @@ def evaluate(pred_feat_map, labels_path, tol, min_score, quant_tol=0.2):
             rows = pred_by_img.get(img_name, []) if img_name else []
 
             rec = by_key.get(native_id)
-            gt_peaks = []
-            if rec is not None:
-                s, e = parse_rt_field(rec.get("peak_start")), parse_rt_field(rec.get("peak_end"))
-                if s is not None and e is not None:
-                    gt_peaks.append((min(s, e), max(s, e)))
+            gt_peaks = _parse_gt_peaks(rec) if rec is not None else []
 
             pairs, fps, fns, loose = match_image(rows, gt_peaks, tol, loose_tol=quant_tol)
             tp += len(pairs)
@@ -254,11 +291,8 @@ def evaluate(pred_feat_map, labels_path, tol, min_score, quant_tol=0.2):
                 rt_devs_start.append(abs(float(pr["rt_min"]) - g[0]))
                 rt_devs_end.append(abs(float(pr["rt_max"]) - g[1]))
                 if rec is not None:
-                    try:
-                        gt_area = float(rec.get("area") or "nan")
-                        pred_area = float(pr.get("area") or 0.0)
-                    except (TypeError, ValueError):
-                        gt_area = pred_area = float("nan")
+                    gt_area = float(g[2])  # 多峰格式下按峰对应的 area1-3
+                    pred_area = float(pr.get("area") or 0.0)
                     if np.isfinite(gt_area) and gt_area > 0 and pred_area > 0:
                         area_rows.append({"stem": stem, "native_id": native_id,
                                           "pred_area": pred_area, "manual_area": gt_area,
@@ -352,6 +386,9 @@ def main():
     ap.add_argument("--quant_tolerance", type=float, default=DEFAULT_QUANT_TOL,
                     help="起止偏差容差（min）：定量口径宽松配对（面积R2/RSD/RT偏差），不影响 P/R/F1")
     ap.add_argument("--smooth_sigma", type=float, default=0.8, help="推理平滑参数（与管线一致）")
+    ap.add_argument("--qc_label_rt_tol", type=float, default=None,
+                    help="run_inference=1 时透传 inference.cli 的标注 RT 一致性 QC 阈值（min）；"
+                         "缺省用 CLI 默认 1.0（与训练数据生成一致）；0=关闭")
     ap.add_argument("--config", type=str, default=None,
                     help="JSON 配置文件路径（作为默认参数，CLI 可覆盖；参数外置，仿 train.py --config）")
 
@@ -389,7 +426,8 @@ def main():
             stem = Path(mzml).stem
             pred_csv, feat_csv = run_inference_for_mzml(
                 mzml, args.model, out_dir / "_pipeline" / stem,
-                args.threshold, args.smooth_sigma)
+                args.threshold, args.smooth_sigma,
+                labels=args.labels, qc_label_rt_tol=args.qc_label_rt_tol)
             pred_feat_map[stem] = {"pred": str(pred_csv), "feat": str(feat_csv)}
     else:
         feats = dict(item.split("=", 1) for item in args.feature_csvs)

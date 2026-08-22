@@ -2,20 +2,23 @@
 """
 MRMPFormer 统一推理入口（3 种模式；roi / pipeline 均支持单文件与目录递归扫描）。
 
+ROI 生成一律标注驱动（B 范式，与训练数据生成同一路径）：roi / pipeline 模式必须提供
+--labels，仅标注命中通道生成 ROI、窗口中心=标注 rt；不再支持 apex（最高强度点）通道驱动。
+
 用法（须在 model/ 目录下运行）:
   # 仅 ROI 生成（单文件或目录递归；每个 mzML 输出到 <output_dir>/<文件名stem>/）；无需 --model
-  python -m inference.cli --mode roi --mzml ../data/test/mzml/sample.mzML
-  python -m inference.cli --mode roi --batch_dir ../data/test/mzml
+  python -m inference.cli --mode roi --mzml ../data/test/mzml/sample.mzML --labels ../data/label/<实验>.xlsx
+  python -m inference.cli --mode roi --batch_dir ../data/test/mzml --labels ../data/label/<实验>.xlsx
 
   # 想看预测框标注：先 roi 生成 ROI，再 batch_dir --plot 对已有 ROI 目录画图
-  python -m inference.cli --mode roi --batch_dir ../data/test/mzml
+  python -m inference.cli --mode roi --batch_dir ../data/test/mzml --labels ../data/label/<实验>.xlsx
   python -m inference.cli --mode batch_dir --model checkpoint/quanformer.pth --batch_dir ../output/inference/xic-roi-batch --plot
 
   # 对已有 ROI 目录批量预测+积分
   python -m inference.cli --mode batch_dir --model checkpoint/quanformer.pth --batch_dir ../output/inference/xic-roi-batch
 
   # 完整管线（ROI → 预测 → SNR 筛选 → 精修，单文件或目录递归）
-  python -m inference.cli --mode pipeline --model checkpoint/quanformer.pth --batch_dir ../data/test/mzml
+  python -m inference.cli --mode pipeline --model checkpoint/quanformer.pth --batch_dir ../data/test/mzml --labels ../data/label/<实验>.xlsx
 
   # 目录递归时不同子目录出现同名 mzML：输出目录自动加路径前缀（如 子目录A__样品1）避免覆盖
 """
@@ -521,6 +524,56 @@ def _collect_mzml_inputs(mzml_arg, batch_dir_arg):
     return inputs
 
 
+def _prepare_label_driven_roi(labels_path, qc_label_rt_tol):
+    """ROI 标注驱动（B 范式）必经准备：解析标注 xlsx + RT 一致性 QC。
+
+    返回 (labels, label_qc_rows, exclude_native_ids, n_excl, n_review)。"""
+    from preprocessing.coco_annotation import parse_labels_xlsx, label_key
+    from preprocessing.label_qc import check_label_rt_consistency
+
+    labels = parse_labels_xlsx(labels_path)
+    print(f"[INFO] 标注 xlsx: {len(labels)} 行")
+    label_qc_rows, _exclude_keys = check_label_rt_consistency(labels, tol=qc_label_rt_tol)
+    exclude_native_ids = {}
+    for r in label_qc_rows:
+        if r.get("action") == "excluded":
+            kid = label_key(r.get("compound"), r.get("channel"))
+            if kid:
+                exclude_native_ids.setdefault(kid, "label_rt_" + str(r.get("check_type", "")))
+    n_excl = len(exclude_native_ids)
+    n_review = sum(1 for r in label_qc_rows if r.get("suggest_review"))
+    print(f"[INFO] 标注 QC: 检查 {len(label_qc_rows)} 项，剔除通道 {n_excl} 个"
+          f"（{n_review} 项需人工复核，详见 QC 表）")
+    return labels, label_qc_rows, exclude_native_ids, n_excl, n_review
+
+
+def _group_labels_by_sample(labels):
+    """按 sample_id 分组（保持出现顺序），返回 ({sid: [rows]}, [sid, ...])。"""
+    _by, _order = {}, []
+    for rec in labels:
+        _sid = (rec.get("sample_id") or "").strip()
+        if _sid not in _by:
+            _by[_sid] = []
+            _order.append(_sid)
+        _by[_sid].append(rec)
+    return _by, _order
+
+
+def _pick_sample_labels(labels, groups, key, mzml_name, mzml_idx):
+    """多样品标注 → 当前 mzML 对应行（与 coco_annotation 同规则；匹配失败回退全部标注）。"""
+    _by, _order = groups
+    if key in _by:
+        return _by[key]
+    if mzml_name in _by:
+        return _by[mzml_name]
+    if len(_order) == 1:
+        return _by[_order[0]]
+    if mzml_idx < len(_order):
+        return _by[_order[mzml_idx]]
+    print(f"[WARN] mzML「{key}」未匹配到标注样品({list(_order)})，回退用全部标注")
+    return labels
+
+
 _QC_POST_GATE_COLS = [
     "image", "compound_name", "mz", "q3", "rt_min", "rt_max", "rt_peak",
     "score_ai", "main_score_ai", "main_snr", "main_interval_width",
@@ -701,10 +754,6 @@ def main_cli():
     parser.add_argument("--batch_dir", type=str,
                         help="[roi/pipeline] mzML 目录（递归扫描）；[batch_dir] testXIC 输出目录")
     parser.add_argument("--plot", action="store_true", help="[pipeline/batch_dir] 生成预测框标注图（roi 模式不支持）")
-    parser.add_argument("--exclude_tic", action="store_true", default=True,
-                        help="不生成 TIC 等无 (Q1,Q3) 数值通道的 ROI（默认开启，直接跳过；--no_exclude_tic 关闭）")
-    parser.add_argument("--no_exclude_tic", dest="exclude_tic", action="store_false",
-                        help="保留 TIC 通道 ROI（默认关闭此选项，即默认跳过 TIC）")
 
     # ===== Pipeline (QC + post_newtest + SNR) 对齐流程图：低强度/少点数剔除 → 预测 → 框修正/二次峰 → SNR =====
     parser.add_argument(
@@ -723,8 +772,9 @@ def main_cli():
         "--labels",
         type=str,
         default=None,
-        help="[pipeline] 可选标注 xlsx（data/label/<实验>.xlsx）：开启标注 RT 一致性 QC（跨样品/双离子极差）与标注驱动 ROI（B 范式），"
-             "命中通道不生成 ROI，结果写入 output/QC/<run_name>/；不传则跳过（推理无需标注）",
+        help="[roi/pipeline] 必填：人工标注 xlsx（data/label/<实验>.xlsx）。ROI 由标注驱动（B 范式，"
+             "与训练数据生成同一路径）：仅标注命中通道生成 ROI、窗口中心=标注 rt；"
+             "同时开启标注 RT 一致性 QC（--qc_label_rt_tol），结果写入 output/QC/<run_name>/",
     )
     parser.add_argument(
         "--qc_label_rt_tol",
@@ -876,6 +926,9 @@ def main_cli():
     args = parser.parse_args()
     if not args.model and args.mode != "roi":
         parser.error("--model 必填（命令行或 --config 提供；roi 模式仅生成 ROI，无需模型）")
+    if args.mode in ("roi", "pipeline") and not args.labels:
+        parser.error("--labels 必填：ROI 生成只支持标注驱动（B 范式，与训练一致），"
+                     "不再支持 apex（最高强度点）通道驱动")
 
     # ---- 配置运行时日志过滤 ----
     from framework.util.logutil import configure_log_level, install_filter
@@ -917,52 +970,21 @@ def main_cli():
         pred_root.mkdir(parents=True, exist_ok=True)
         snr_root.mkdir(parents=True, exist_ok=True)
 
-        # ---- 标注 RT 一致性 QC（可选：传 --labels 才启用，不传保持"推理无需标注"契约）----
-        # B 范式（ROI 由标注驱动）：提供 --labels 时，ROI 仅按标注行生成，窗口中心 = 标注 rt
+        # ---- 标注驱动 ROI（B 范式，必填 --labels）：解析 + RT 一致性 QC + 按样品分组 ----
         exclude_native_ids = None
         labels = None
         label_qc_rows = []
         n_label_excl = 0
         n_label_review = 0
-        if args.labels and args.qc_label_rt_tol > 0:
-            from preprocessing.coco_annotation import parse_labels_xlsx, label_key
-            from preprocessing.label_qc import check_label_rt_consistency, write_qc_table
+        labels, label_qc_rows, exclude_native_ids, n_label_excl, n_label_review = (
+            _prepare_label_driven_roi(args.labels, args.qc_label_rt_tol)
+        )
+        if label_qc_rows:
+            qc_root.mkdir(parents=True, exist_ok=True)
+            from preprocessing.label_qc import write_qc_table
+            write_qc_table(label_qc_rows, qc_root / "qc_label_rt.csv")
 
-            labels = parse_labels_xlsx(args.labels)
-            print(f"[INFO] 标注 xlsx: {len(labels)} 行")
-            label_qc_rows, exclude_keys = check_label_rt_consistency(
-                labels, tol=args.qc_label_rt_tol
-            )
-            # exclude_keys: set[(sample_id, compound, channel)] → {native_id: reason}，dict 复用 label_key 键格式
-            exclude_native_ids = {}
-            for r in label_qc_rows:
-                if r.get("action") == "excluded":
-                    kid = label_key(r.get("compound"), r.get("channel"))
-                    if kid:
-                        exclude_native_ids.setdefault(
-                            kid, "label_rt_" + str(r.get("check_type", ""))
-                        )
-            n_label_excl = len(exclude_native_ids)
-            n_label_review = sum(1 for r in label_qc_rows if r.get("suggest_review"))
-            print(
-                f"[INFO] 标注 QC: 检查 {len(label_qc_rows)} 项，剔除通道 {n_label_excl} 个"
-                f"（{n_label_review} 项需人工复核，详见 QC 表）"
-            )
-            if label_qc_rows:
-                qc_root.mkdir(parents=True, exist_ok=True)
-                write_qc_table(label_qc_rows, qc_root / "qc_label_rt.csv")
-
-        # 多样品标注：按 sample_id 首次出现顺序对应 mzML 顺序（与 coco_annotation 一致）；单样品时全部行即当前样品
-        labels_by_sample = None
-        if labels:
-            _by, _order = {}, []
-            for rec in labels:
-                _sid = (rec.get("sample_id") or "").strip()
-                if _sid not in _by:
-                    _by[_sid] = []
-                    _order.append(_sid)
-                _by[_sid].append(rec)
-            labels_by_sample = (_by, _order)
+        labels_by_sample = _group_labels_by_sample(labels)
 
         # 1) Collect input mzML files (single file, or directory scanned recursively)
         mzml_inputs = _collect_mzml_inputs(args.mzml, args.batch_dir)
@@ -995,30 +1017,14 @@ def main_cli():
         for mzml_idx, (mzml_path, key) in enumerate(mzml_inputs):
             out_dir = roi_root / key
             out_dir.mkdir(parents=True, exist_ok=True)
-            sample_labels = labels
-            if labels_by_sample is not None:
-                _by, _order = labels_by_sample
-                if key in _by:
-                    # 新式 sample_id = mzML 文件名（stem 精确匹配）
-                    sample_labels = _by[key]
-                elif mzml_path.name in _by:
-                    # 新式 sample_id = mzML 完整文件名（含 .mzML）
-                    sample_labels = _by[mzml_path.name]
-                elif len(_order) == 1:
-                    sample_labels = _by[_order[0]]
-                elif mzml_idx < len(_order):
-                    # 旧式样品逻辑名：按出现顺序对应
-                    sample_labels = _by[_order[mzml_idx]]
-                else:
-                    print(f"[WARN] mzML「{key}」未匹配到标注样品({list(_order)})，回退用全部标注")
-                    sample_labels = labels
+            sample_labels = _pick_sample_labels(
+                labels, labels_by_sample, key, mzml_path.name, mzml_idx)
             st = extract_xic_with_pyopenms(
                 str(mzml_path),
                 str(out_dir),
                 smooth_sigma=args.smooth_sigma,
                 exclude_native_ids=exclude_native_ids,
                 labels=sample_labels,
-                exclude_tic=bool(args.exclude_tic),
                 **qc_kw,
             )
             if st:
@@ -1239,13 +1245,20 @@ def main_cli():
 
     if args.mode == "roi":
         from preprocessing.xic_extraction import extract_xic_with_pyopenms
+        # 标注驱动（B 范式）：--labels 必填（参数校验已强制），与训练/pipeline 同一路径
+        labels, _lqc, exclude_native_ids, _n_excl, _n_rev = _prepare_label_driven_roi(
+            args.labels, args.qc_label_rt_tol)
+        groups = _group_labels_by_sample(labels)
         mzml_inputs = _collect_mzml_inputs(args.mzml, args.batch_dir)
-        out_base = Path(args.output_dir) if args.output_dir else Path("xic-roi-batch")
-        for mzml_path, key in mzml_inputs:
+        out_base = Path(args.output_dir) if args.output_dir else Path("../output/inference/xic-roi-batch")
+        for mzml_idx, (mzml_path, key) in enumerate(mzml_inputs):
             out_dir = out_base / key
             out_dir.mkdir(parents=True, exist_ok=True)
-            extract_xic_with_pyopenms(str(mzml_path), str(out_dir), smooth_sigma=args.smooth_sigma,
-                                      exclude_tic=bool(args.exclude_tic))
+            sample_labels = _pick_sample_labels(
+                labels, groups, key, mzml_path.name, mzml_idx)
+            extract_xic_with_pyopenms(
+                str(mzml_path), str(out_dir), smooth_sigma=args.smooth_sigma,
+                exclude_native_ids=exclude_native_ids, labels=sample_labels)
         return
 
     if args.mode == "batch_dir":
