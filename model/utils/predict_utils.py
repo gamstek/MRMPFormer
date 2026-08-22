@@ -62,9 +62,10 @@ def predict(images_path, model, transform, threshold=0.9, device='cpu', verbose=
             pred_logits = outputs['pred_logits']  # [1, num_queries, 2]
             pred_boxes = outputs['pred_boxes']    # [1, num_queries, 4]
             
-            # 计算置信度（排除背景类；logits 布局为 [背景, 峰1, 峰2, ...]，
-            # 取 [..., 1:] 得到所有真实类别，不要用 :-1 —— 那会取到背景列导致检测恒为空）
-            probas = pred_logits.softmax(-1)[0, :, 1:]  # [num_queries, num_classes]
+            # 计算置信度：DETR 约定 logits 布局为 [类别0, ..., 类别N-1, no-object]，
+            # no-object 恒在最后一列。本项目单类（num_classes=1）：峰=类别0，no-object=索引1，
+            # 故取 [..., :1]（类别 0）。不要用 [..., :-1] 或 [..., 1:]（都会取到 no-object 列）。
+            probas = pred_logits.softmax(-1)[0, :, :1]  # [num_queries, 1]
             keep = probas.max(-1).values > threshold     # [num_queries]
             
             if verbose:
@@ -193,31 +194,57 @@ def build_predictor(
     if train_args is not None:
         train_args.device = str(device)
         model = None
-        
+
         try:
-            from models.quanformer.detr import build
-            result = build(train_args)  # 返回 (model, criterion, postprocessors)
-            
+            # 按 checkpoint 记录的模型变体路由（quanformer / mrmpformer_v1），
+            # 不再硬编码 quanformer；旧 checkpoint 无 model 字段时回退 quanformer
+            from models import build_model
+            if not getattr(train_args, "model", None):
+                train_args.model = "quanformer"
+            result = build_model(train_args)  # 返回 (model, criterion, postprocessors)
+
             # ✅ 关键：从元组中提取模型
             if isinstance(result, tuple):
                 model = result[0]  # 第一个元素是模型
                 print(f"[INFO] Model extracted from tuple (length: {len(result)})")
             else:
                 model = result
-                
+
         except Exception as e:
             print(f"[WARN] Failed to build model: {e}")
     else:
         print("[ERROR] No args in checkpoint!")
         return []
-    
+
     # ========== 加载权重 ==========
     if model is not None and hasattr(model, 'load_state_dict'):
-        try:
-            model.load_state_dict(state_dict, strict=False)
-            print("[INFO] Model weights loaded successfully!")
-        except Exception as e:
-            print(f"[WARN] Failed to load weights: {e}")
+        # MRMPFormer v1：支持旧 QuanFormer 单层 checkpoint 迁移（L1→L2/L3 复制初始化），
+        # 迁移报告分类列出 expected missing / unexpected / shape mismatch
+        if getattr(train_args, "model", "") == "mrmpformer_v1":
+            _is_legacy = any(k.startswith("transformer.decoder.layers.") for k in state_dict) \
+                and not any(k.startswith("fdr_heads.") for k in state_dict)
+            if _is_legacy:
+                from models.mrmpformer.v1.detr import load_legacy_quanformer_state
+                load_legacy_quanformer_state(model, state_dict, verbose=True)
+                model_loaded = True
+            else:
+                model_loaded = False
+        else:
+            model_loaded = False
+
+        if not model_loaded:
+            # 非静默加载：先严格匹配，失败则打印分类报告后宽松加载
+            _report = model.load_state_dict(state_dict, strict=False)
+            _miss = list(_report.missing_keys)
+            _unexp = list(_report.unexpected_keys)
+            if _miss or _unexp:
+                print(f"[WARN] 权重加载差异：missing={len(_miss)} unexpected={len(_unexp)}")
+                print(f"[WARN]   missing 前 20: {_miss[:20]}")
+                print(f"[WARN]   unexpected 前 20: {_unexp[:20]}")
+            else:
+                print("[INFO] Model weights loaded successfully!")
+        else:
+            print("[INFO] Model weights loaded (legacy migration)!")
     else:
         print("[ERROR] Model is None or doesn't have load_state_dict!")
         return []

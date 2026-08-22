@@ -174,6 +174,12 @@ class MetricLogger(object):
     def __init__(self, delimiter="\t"):
         self.meters = defaultdict(SmoothedValue)
         self.delimiter = delimiter
+        # 逐步打印的指标子集（None=全部，旧行为）。
+        # epoch 汇总与 log.txt 始终记录全部 meters，不受此影响。
+        self.display_keys = None
+        # key → 终端显示名（中英对照，如 loss → loss/总损失）；
+        # None=直接用原始 key。log.txt 不受影响。
+        self.label_map = None
 
     def update(self, **kwargs):
         for k, v in kwargs.items():
@@ -191,6 +197,14 @@ class MetricLogger(object):
             type(self).__name__, attr))
 
     def __str__(self):
+        # 防御式读取：display_keys/label_map 缺失时回退全量旧行为，绝不让日志炸训练
+        display_keys = getattr(self, 'display_keys', None)
+        if display_keys is not None:
+            # 逐步日志只显示核心指标（中英对照显示名），避免单行 20~40 项无法扫读
+            labels = getattr(self, 'label_map', None) or {}
+            return self.delimiter.join(
+                "{}: {}".format(labels.get(k, k), str(self.meters[k]))
+                for k in display_keys if k in self.meters)
         loss_str = []
         for name, meter in self.meters.items():
             loss_str.append(
@@ -214,24 +228,24 @@ class MetricLogger(object):
         iter_time = SmoothedValue(fmt='{avg:.4f}')
         data_time = SmoothedValue(fmt='{avg:.4f}')
         space_fmt = ':' + str(len(str(len(iterable)))) + 'd'
+        # 紧凑逐步行：短英文码 + 均值步时 + GB 显存，单行 ≤90 字符不折行；
+        # 取数耗时（data）仅在汇总级异常时才有意义，逐步行不再打印
         if torch.cuda.is_available():
             log_msg = self.delimiter.join([
                 header,
                 '[{0' + space_fmt + '}/{1}]',
-                'eta: {eta}',
+                'eta {eta}',
                 '{meters}',
-                'time: {time}',
-                'data: {data}',
-                'max mem: {memory:.0f}'
+                '{time}',
+                '{mem}'
             ])
         else:
             log_msg = self.delimiter.join([
                 header,
                 '[{0' + space_fmt + '}/{1}]',
-                'eta: {eta}',
+                'eta {eta}',
                 '{meters}',
-                'time: {time}',
-                'data: {data}'
+                '{time}'
             ])
         MB = 1024.0 * 1024.0
         for obj in iterable:
@@ -240,18 +254,18 @@ class MetricLogger(object):
             iter_time.update(time.time() - end)
             if i % print_freq == 0 or i == len(iterable) - 1:
                 eta_seconds = iter_time.global_avg * (len(iterable) - i)
-                eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
+                eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))[2:] if len(iterable) - i else '0:00'
                 if torch.cuda.is_available():
                     print(log_msg.format(
                         i, len(iterable), eta=eta_string,
                         meters=str(self),
-                        time=str(iter_time), data=str(data_time),
-                        memory=torch.cuda.max_memory_allocated() / MB))
+                        time=f'{iter_time.avg:.2f}s',
+                        mem=f'{torch.cuda.max_memory_allocated() / MB / 1024:.1f}G'))
                 else:
                     print(log_msg.format(
                         i, len(iterable), eta=eta_string,
                         meters=str(self),
-                        time=str(iter_time), data=str(data_time)))
+                        time=f'{iter_time.avg:.2f}s'))
             i += 1
             end = time.time()
         total_time = time.time() - start_time

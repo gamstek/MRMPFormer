@@ -80,7 +80,49 @@ def get_args_parser():
     parser.add_argument('--bbox_loss_coef', default=5, type=float)
     parser.add_argument('--iou_loss_coef', default=2, type=float)
     parser.add_argument('--eos_coef', default=0.1, type=float,
-                        help="Relative classification weight of the no-object class")
+                        help='Relative classification weight of the no-object class')
+
+    # * MRMPFormer v1 分类/定位损失参数
+    parser.add_argument('--classification_loss', default='focal', type=str,
+                        choices=('focal', 'ce'),
+                        help='MRMPFormer v1: 分类损失（focal=Softmax Focal / ce=基线交叉熵）')
+    parser.add_argument('--focal_alpha', default=0.25, type=float,
+                        help='MRMPFormer v1: Focal Loss alpha（前景=alpha，背景=1-alpha）')
+    parser.add_argument('--focal_gamma', default=2.0, type=float,
+                        help='MRMPFormer v1: Focal Loss gamma（聚焦参数，论文 β=2 按 γ 统一）')
+    parser.add_argument('--cls_loss_coef', default=1.0, type=float,
+                        help='MRMPFormer v1: 主分类损失权重 λ_cls')
+    parser.add_argument('--aux_class_loss', default=True, type=lambda x: str(x).lower() in ('1', 'true', 'yes'),
+                        help='MRMPFormer v1: 中间层（1/2 层）辅助分类损失开关')
+    parser.add_argument('--aux_class_loss_coef', default=1.0, type=float,
+                        help='MRMPFormer v1: 中间层辅助分类损失权重')
+    parser.add_argument('--dynamic_l1_enabled', default=True, type=lambda x: str(x).lower() in ('1', 'true', 'yes'),
+                        help='MRMPFormer v1: 动态加权 L1（λ_c=1/(w_gt+eps)）开关')
+    parser.add_argument('--dynamic_l1_eps', default=1e-6, type=float,
+                        help='MRMPFormer v1: 动态 L1 eps（防除零）')
+    parser.add_argument('--dynamic_l1_lambda_w', default=1.0, type=float,
+                        help='MRMPFormer v1: 动态 L1 宽度项权重 λ_w')
+    parser.add_argument('--dynamic_l1_lambda_h', default=1.0, type=float,
+                        help='MRMPFormer v1: 动态 L1 高度项权重 λ_h')
+    parser.add_argument('--center_weight_clip', default=None, type=float,
+                        help='MRMPFormer v1: 动态中心权重上限（null=不裁剪，忠实复现公式）')
+    parser.add_argument('--normalize_dynamic_weights', default=False, type=lambda x: str(x).lower() in ('1', 'true', 'yes'),
+                        help='MRMPFormer v1: 动态权重按均值归一（默认 false 忠实复现公式）')
+    parser.add_argument('--pw_ciou_enabled', default=True, type=lambda x: str(x).lower() in ('1', 'true', 'yes'),
+                        help='MRMPFormer v1: PW-CIoU 开关（false 回退原 CIoU 基线）')
+    parser.add_argument('--pw_ciou_weight_mode', default='ratio', type=str,
+                        choices=('ratio', 'one_plus_ratio'),
+                        help='MRMPFormer v1: PW-CIoU 中心项权重模式 ratio=bar_w/(w_gt+eps)')
+    parser.add_argument('--pw_ciou_eps', default=1e-6, type=float,
+                        help='MRMPFormer v1: PW-CIoU eps')
+    parser.add_argument('--pw_ciou_weight_clip', default=None, type=float,
+                        help='MRMPFormer v1: PW-CIoU 权重上限（null=不裁剪）')
+    parser.add_argument('--pw_ciou_mean_width', default=None, type=float,
+                        help='MRMPFormer v1: bar_w 训练集 GT 平均峰宽（归一化）。'
+                             'merged/train 实测=0.2297；null 回退权重 1（等价原 CIoU）')
+    parser.add_argument('--recall_loss_enabled', default=False, type=lambda x: str(x).lower() in ('1', 'true', 'yes'),
+                        help='MRMPFormer v1: Recall Loss 实验开关（默认关闭；论文定义未确认，'
+                             '启用将报错提示，防止编造公式）')
 
     # dataset parameters
     parser.add_argument('--dataset_file', default='coco')
@@ -133,7 +175,7 @@ def main(args):
         _dev_name = f"CUDA ({torch.cuda.get_device_name(0)})"
     _mode = "微调" if (args.resume and args.reset_optimizer) else ("续训" if args.resume else "从零训练")
     print("=" * 64)
-    print(f"QuanFormer 训练 | {_mode} | {utils.get_sha()}")
+    print(f"{args.model} 训练 | {_mode} | {utils.get_sha()}")
     print("-" * 64)
     print(f"模型   : {args.model} ({args.backbone}, queries={args.num_queries}, "
           f"enc/dec={args.enc_layers}/{args.dec_layers})")
@@ -227,7 +269,21 @@ def main(args):
             print(f"[WARN] resume: 维度不匹配，跳过 {len(_skip_keys)} 个权重: {_skip_keys}")
             for _k in _skip_keys:
                 checkpoint['model'].pop(_k, None)
-        model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
+        if args.model == 'mrmpformer_v1':
+            # 旧 QuanFormer 单层 checkpoint → v1 迁移：L1 参数复制初始化到 L2/L3，
+            # FDR/边界反馈模块保持新初始化；迁移报告分类打印，禁止静默 strict=False
+            _is_legacy = any(k.startswith("transformer.decoder.layers.") for k in checkpoint['model']) \
+                and not any(k.startswith("fdr_heads.") for k in checkpoint['model'])
+            if _is_legacy:
+                from models.mrmpformer.v1.detr import load_legacy_quanformer_state
+                load_legacy_quanformer_state(model_without_ddp, checkpoint['model'], verbose=True)
+            else:
+                _report = model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
+                if _report.missing_keys or _report.unexpected_keys:
+                    print(f"[WARN] resume: missing={list(_report.missing_keys)[:10]} "
+                          f"unexpected={list(_report.unexpected_keys)[:10]}")
+        else:
+            model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             if args.reset_optimizer:
                 # 微调：不延续旧 lr/动量，start_epoch 归零，用当前 config/CLI 的 lr 从头训练
