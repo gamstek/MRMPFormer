@@ -92,4 +92,6 @@ class HungarianMatcher(nn.Module):
 
 
 def build_matcher(args):
-    return HungarianMatcher(cost_class=args.set_cost_class, cost_bbox=args.set_cost_bbox, cost_iou=args.set_cost_iou)
+    # 透传 iou_type：与训练损失口径保持一致（此前未传导致匹配恒用 GIoU，与 PW-CIoU 损失错位）
+    return HungarianMatcher(cost_class=args.set_cost_class, cost_bbox=args.set_cost_bbox,
+                            cost_iou=args.set_cost_iou, iou_type=args.iou_type)
