@@ -136,6 +136,14 @@ def get_args_parser():
                         help='device to use for training / testing ("auto", "cuda", "cpu", "mps")')
     parser.add_argument('--seed', default=42, type=int)
 
+    # 训练加速
+    parser.add_argument('--amp', action='store_true',
+                        help='启用混合精度训练（FP16 autocast + GradScaler，需 CUDA GPU）')
+    parser.add_argument('--tf32', action='store_true',
+                        help='允许 TF32 矩阵乘/卷积（Ampere+ GPU，速度优先、精度损失极小）')
+    parser.add_argument('--cudnn_benchmark', action='store_true',
+                        help='启用 cudnn.benchmark 自动选优卷积算法（输入尺寸固定时收益明显）')
+
     parser.add_argument('--resume', default='checkpoint.pth',
                         help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
@@ -169,6 +177,17 @@ def main(args):
     else:
         device = torch.device(args.device)
 
+    # ---- 训练加速开关（AMP / TF32 / cudnn.benchmark）----
+    _amp = args.amp and device.type == 'cuda'
+    if args.amp and not _amp:
+        print(f"[WARN] --amp 仅在 CUDA 上生效，当前设备 {device}，已忽略")
+    if args.tf32 and device.type == 'cuda':
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+    if args.cudnn_benchmark and device.type == 'cuda':
+        torch.backends.cudnn.benchmark = True
+    scaler = torch.amp.GradScaler('cuda') if _amp else None
+
     # ---- 简明启动信息（完整参数存档至 output_dir/config_used.txt）----
     _dev_name = device.type.upper()
     if device.type == 'cuda':
@@ -187,6 +206,11 @@ def main(args):
     else:
         print("权重   : 随机初始化")
     print(f"设备   : {_dev_name} | 输出: {args.output_dir}/")
+    _acc = [x for x in ("AMP" if _amp else None,
+                        "TF32" if (args.tf32 and device.type == 'cuda') else None,
+                        "cudnn.benchmark" if (args.cudnn_benchmark and device.type == 'cuda') else None) if x]
+    if _acc:
+        print(f"加速   : {' + '.join(_acc)}")
     print("=" * 64)
     if args.output_dir:
         _out_dir = Path(args.output_dir)
@@ -309,7 +333,7 @@ def main(args):
         _t_epoch = time.time()
         train_stats = train_one_epoch(
             model, criterion, data_loader_train, optimizer, device, epoch,
-            args.clip_max_norm)
+            args.clip_max_norm, use_amp=_amp, scaler=scaler)
         lr_scheduler.step()
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']

@@ -151,3 +151,78 @@ def write_qc_table(qc_rows, out_path):
     p.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(qc_rows).to_csv(p, index=False, encoding="utf-8-sig")
     return len(qc_rows)
+
+
+# ---------------------------------------------------------------------------
+# 人工预警报告（qc_alert.md）
+# ---------------------------------------------------------------------------
+# 设计：把「未通过 QC 的标注」以人工可读的形式沉淀为预警报告，随每次 QC 执行
+# （训练构建 / 推理管线 / 评估）写入统一文件名 qc_alert.md，命中剔除时同时
+# 在终端打出 [ALERT] 行。人工只需读 qc_alert.md 即可完成复核，无需翻 CSV。
+_GUIDANCE = {
+    "ion_pair": (
+        "双离子 RT 极差超阈值：定量/定性离子同化合物应共流出；极差大说明通道归属错误"
+        "或标注到干扰峰。两通道均已剔除（不生成 ROI、不进训练、不参与评估指标）。"
+        "请人工核实：检查方法表 ert、确认通道归属，修正后重建数据。"
+    ),
+    "cross_sample": (
+        "跨样品 RT 极差超阈值：同化合物同通道跨样品 RT 漂移异常。组内样品数>=3 时仅剔"
+        "偏离组中位数的样品行（多数派可信）；n=2 时双方都剔。请人工复核是否标注错误或"
+        "仪器漂移。"
+    ),
+}
+
+
+def build_qc_alert_markdown(qc_rows, source="", tol=None) -> str:
+    """生成人工预警报告 Markdown 文本。
+
+    内容：头部摘要（来源/时间/阈值/检查项/剔除/复核数）+ 结论 + 预警清单表
+    （仅 action=excluded）+ 处置指引。无告警时给出明确"未发现异常"结论。
+    """
+    import datetime
+
+    excluded = [r for r in qc_rows if r.get("action") == "excluded"]
+    review = [r for r in qc_rows if r.get("suggest_review")]
+    lines = [
+        "# QC 人工预警报告（标注 RT 一致性）",
+        "",
+        "- 来源: %s" % (source or "未指定"),
+        "- 生成时间: %s" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "- QC 阈值: %s" % ("%s min" % tol if tol else "关闭"),
+        "- 检查项: %d 项 | 剔除标注: %d 行 | 需人工复核: %d 项"
+        % (len(qc_rows), len(excluded), len(review)),
+        "",
+    ]
+    if not excluded and not review:
+        lines += ["**结论: 未发现异常，无需人工干预。**", ""]
+        return "\n".join(lines) + "\n"
+
+    lines.append("**结论: 发现 %d 项剔除告警，请人工核实标注后修正。**" % len(excluded))
+    lines += ["", "## 一、预警清单（action=excluded）",
+              "| 检查类型 | 样品 | 化合物 | 通道 | RT(min) | 组中位 | 极差(min) | 处置 |",
+              "|---|---|---|---|---|---|---|---|"]
+    for r in excluded:
+        lines.append("| %s | %s | %s | %s | %s | %s | %s | %s |" % (
+            r.get("check_type", ""), r.get("sample_id", ""), r.get("compound", ""),
+            r.get("channel", ""),
+            ("%.3f" % float(r["rt"])) if r.get("rt") is not None else "",
+            ("%.3f" % float(r["group_median"])) if r.get("group_median") is not None else "",
+            ("%.3f" % float(r["rt_range"])) if r.get("rt_range") is not None else "",
+            r.get("action", "")))
+    lines += ["", "## 二、处置指引"]
+    for ct, guide in _GUIDANCE.items():
+        lines += ["- **%s**：%s" % (ct, guide)]
+    lines += ["", "## 三、说明",
+              "- 剔除行已生效于本轮：不生成 ROI / 不进训练 bbox / 不参与评估指标计算；",
+              "- 复核修正标注文件后需重新构建数据与重跑相关环节。", ""]
+    return "\n".join(lines) + "\n"
+
+
+def write_qc_alert(qc_rows, out_path, source="", tol=None) -> int:
+    """写人工预警报告 qc_alert.md（utf-8）。返回告警条数（剔除行数）。"""
+    from pathlib import Path
+    p = Path(out_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(build_qc_alert_markdown(qc_rows, source=source, tol=tol),
+                 encoding="utf-8")
+    return sum(1 for r in qc_rows if r.get("action") == "excluded")

@@ -5,6 +5,136 @@
 
 ---
 
+## 实验日志 002：test1 标准试卷、四模型横评与 mrmpformerv2 的诞生（多源联合训练）
+
+- **日期**：2026-08-22
+- **涉及模型**：quanformer.pth（基线）、quanformerv2.pth（v2）、quanformerv3.pth（v3）、mrmpformerv1.pth（v1，traindata3 训练）、mrmpformerv2.pth（v2，多源联合训练，本次新增）
+- **状态**：全部完成；四模型权重已入库 `model/checkpoint/`；联合评估报告见 `docs/joint_evaluation_4models.md`
+
+### 1. 背景与动机
+
+此前（日志 001 与后续评测）反复出现"同一模型换数据集排名反转"的现象，各模型能力缺乏统一、公平的度量。本次引入 **test1 标准试卷**（`data/mzml/test1/`，11 mzML：8 农残混标 + 3 空白，96 个 GT 峰，`data/label/test1.xlsx`）——该数据此前从未参与任何模型训练，作为外域基准；同时把多源联合训练作为根治跨域不稳定的主要手段。
+
+### 2. 过程与关键事件
+
+#### 2.1 test1 数据准备与评估链路修复
+
+- mzML 按内部 `<sample name>` 重命名（81~91 保留：空白1/-2/-3 + 农残混标/-2~-8，其余 80 个删除）；
+- 评估链路两处修复（不修则结果全错）：
+  - `evaluate_baseline._parse_gt_peaks`：跳过 `peak_label=0`（空白负样本），避免 `"0"` 被解析成 RT=0 的伪 GT 峰；
+  - `evaluate_baseline` GT 匹配：兼容 compound 列已带通道后缀的标注（test1 的「6-涕灭威-1」），否则 `label_key` 二次拼接后缀导致 GT 全空；
+  - `visualize_compare`：多峰格式（peak_start1-3）解析修复，修复前 GT 全 None（TP/FN/FP 全 0 假象）。
+
+#### 2.2 四模型在 test1 标准试卷的首轮横评（score≥0.5，±0.1 min）
+
+| 模型 | TP/FP/FN | F1 | 空白样 FP |
+|---|---|---|---|
+| baseline | 1/111/95 | 0.010 | 17 |
+| v2（shiyaoyuan 微调） | 0/0/96（零检出，max score 0.01~0.06） | 0.000 | 0 |
+| v3（merged 微调） | 4/105/92 | 0.039 | 14 |
+| mrmpformerv1 | 86/4/10 | **0.925** | 2 |
+
+放宽容差到 ±0.3 后 baseline/v3 跳升至 0.914/0.927——证明它们"检得到峰"但边界系统性偏差 ~0.11 min（恰好卡在 ±0.1 之外）；±0.1 口径的 F1 实质度量**边界约定匹配度**。
+
+#### 2.3 对照实验：test1 微调基线能否追平 v1？
+
+用 test1 的 7 个样品微调基线（留出 4 个：农残混标-7/8 + 空白1-2/3，24 峰），留出集对比：
+
+| 模型 | F1@0.1 | RT 起/止 | 空白 FP |
+|---|---|---|---|
+| 微调基线 | 0.836 | 0.009/0.019 | 7 |
+| mrmpformerv1 | **0.894** | 0.016/0.032 | 1 |
+
+**结论**：边界约定可被数据学到（偏差 0.11→0.009），但空白样臆造（7 FP）未被解决；v1 仍领先 0.06 F1——架构优势（空白抑制）真实存在，非纯约定巧合。
+
+#### 2.4 架构审查发现与优化执行（P0-1/P0-2/P0-4/P2-8）
+
+架构审查（含训练日志诊断）发现：FDR 三层精化 IoU 增益仅 +0.005、FDR 损失有效权重 ≈8.8 过度主导、右边界 MAE 系统性偏大 23%、以及一个真实 bug——**`build_matcher` 未透传 `iou_type`，匈牙利匹配恒用 GIoU，与 PW-CIoU 损失口径错位**。已执行：
+
+| 项 | 内容 | 状态 |
+|---|---|---|
+| P0-1 | matcher 透传 `iou_type=ciou`（`models/shared/matcher.py`，22 个单测通过） | ✅ 已提交 git（a14c438） |
+| P0-2 | `fdr_loss_coef` 2.0→1.0（有效 8.8→4.4） | ✅ 载于 `configs/mrmpformer_v1_multisrc.json` |
+| P0-4 | 阈值校准扫描：0.4~0.7 平台 F1≥0.92，推荐 0.5 | ✅ |
+| P2-8 | 多源数据集 **multisrc**：traindata3×98 + shiyaoyuan_1 + traindata2×5 + test1×7 = 17796 图/13929 框；留出 QC/QC5 + shiyaoyuan_2 + 农残混标-7/8 + 空白1-2/3 作 val | ✅ |
+
+**mrmpformerv2** = v1 热启动 + 上述全部改动，AMP 混合精度训练 30 epochs（61 分钟）。训练加速三项（--amp/--tf32/--cudnn_benchmark，engine.py + train.py）亦在本次加入。
+
+### 3. 最终四模型联合评估（holdout4 公平口径，24 峰，四模型均未训练）
+
+| 模型 | F1@0.1 | F1@0.3 | RT 起/止@0.1 | R²@0.3 | RSD | 空白 FP |
+|---|---|---|---|---|---|---|
+| baseline | 0.000 | 0.800 | — | 0.98004 | 1.27% | 12 |
+| quanformerv3 | 0.035 | 0.842 | 0.019/0.085 | 0.98108 | 1.09% | 9 |
+| mrmpformerv1 | 0.894 | 0.936 | 0.016/0.032 | 0.98968 | 1.31% | 1 |
+| **mrmpformerv2** | **0.913** | **0.957** | **0.007/0.012** | **0.99052** | 1.33% | **0** |
+
+跨域（shiyaoyuan）稳定性：v2 F1@0.1 0.442 > v1 0.380，RT 偏差（0.016/0.035）反超两个域内模型；±0.5 下四模型 0.98~1.00。定量 R² 全员 ≥0.98，瓶颈在检测配对而非积分。
+
+### 4. 结论
+
+1. **mrmpformerv2 综合最优**：边界偏差较 v1 减半（止边界 -63%）、空白样零臆造、跨域边界一致性最佳、置信度平台宽（0.4~0.7 稳定）；
+2. v1→v2 增量归因：matcher 修复 + 损失再平衡 → 边界精度；多源空白负样本 → 假阳性抑制；召回未变（剩余 3 个 FN 为同一批难例，需 P1 级架构改动）；
+3. **±0.1 严格 F1 ≈ 边界约定匹配度**：跨数据集排名反转（test1 上 v 系碾压 / shiyaoyuan 上 baseline 主场 0.59）是约定差异所致；根治靠多源联合训练，架构优化不能替代数据多样性；
+4. 空白负样本的数量与多样性是假阳性抑制的第一要素（baseline 每张空白图臆造 6 峰，会直接导致质控违规）。
+
+### 5. 产物与位置
+
+| 产物 | 路径 |
+|---|---|
+| 四模型权重 | `model/checkpoint/{quanformer,quanformerv2,quanformerv3,mrmpformerv1,mrmpformerv2}.pth` |
+| 多源数据集 | `data/coco/multisrc/`（train 17796 图 / val 429 图） |
+| 训练配置 | `model/configs/mrmpformer_v1_multisrc.json`（含 P0-1/P0-2 统一设定） |
+| 联合评估原始数据 | `output/evaluation/joint4_results.json`、`test1_*`、`holdout4_*`、`shiyaoyuan_*` |
+| 四模型完整评估报告 | `docs/joint_evaluation_4models.md` |
+| 代码修复 | `models/shared/matcher.py`（已提交）、`tools/evaluation/evaluate_baseline.py`、`tools/evaluation/visualize_compare.py`、`train.py`+`framework/engine.py`（AMP，未提交） |
+
+---
+
+## 实验日志 003：quanformer「基线」真实出身考据 —— 外部下载权重与 v2 域坍缩根因（仅分析）
+
+- **日期**：2026-08-22
+- **涉及模型**：quanformer.pth（下载权重）、quanformerv2.pth（在其上单样品微调）
+- **状态**：分析完成；无代码/训练改动（应用户要求仅分析）
+- **更正声明**：日志 001/002 及 `docs/joint_evaluation_4models.md` 中将 quanformer.pth 称为"基线（本项目从零训练）"不准确——其为本节考据的外部下载权重，相关表述以本节为准。
+
+### 1. 关键证据：checkpoint 内嵌的原始训练参数
+
+读取 `checkpoint/quanformer.pth` 的 `args` 字段（外部训练遗留，铁证）：
+
+```
+resume='D:\workspace\autopeakV3\detr-r50-e632da11.pth'   ← DETR 官方 COCO 预训练起点
+coco_path='D:\workspace\train-dataset\peak-all'          ← 外部色谱峰数据集 peak-all
+output_dir='D:\workspace\autopeakV3\output\peakdetr\peak-ciou-all113-res'  ← 外部项目 autopeakV3（"all113"≈113 样品）
+epochs=50（保存于 epoch 29），lr=1e-4
+```
+
+真实训练链：**DETR COCO 预训练 →（外部 autopeakV3 项目）peak-all 数据集微调 30+ epochs → 下载为本项目"quanformer 基线"**。`configs/quanformer_baseline.json` 从未实际训练过（`coco_path: data/test/coco` 为文档遗留）。架构参数（resnet50/1+1 层/3 query）与本项目 QuanFormer 恰好一致，故可直接加载。
+
+### 2. baseline 表现差的根因（test1 F1@0.1=0.010，空白臆造 17 峰）
+
+**"数据饥饿从零训练"论不成立**（推翻 002 前的旧分析）——基线见过大规模外部峰数据。真实原因是**外来约定与本项目评估协议的系统性错位**：
+
+1. **框约定错位（主因）**：peak-all 的标注约定为紧贴 apex 的窄框（~0.23 min），与 shiyaoyuan/test1 人工宽积分边界（~0.47 min）系统性差 ~0.11 min——恰好卡在 ±0.1 之外、±0.3 之内。这解释了 F1@0.1=0.010 → F1@0.3=0.914 的跳变：**不是检不到，是口径不对**（在 shiyaoyuan 域内同样只有 0.59@0.1，宽容差 0.95~0.98，四模型中除 v3 外最好）。
+2. **空白盲区**：peak-all 为"peak"数据集，大概率不含空白进样负样本。模型带着"每图必有峰"先验，在 test1 的 3 张空白图上照常 0.99 触发（36 通道臆造 17 峰，质控场景致命）。
+3. **域外高置信触发（0.967~0.999）恰是成熟检测器的正常泛化**：检测头对"apex 状亮斑"概念稳定，跨域照常工作——模型本体能力在线。
+
+### 3. v2 零检出的根因（test1 全 132 图无一过 0.5，max score 0.01~0.06）
+
+v2 = 上述外部权重 + shiyaoyuan test_1 **单样品 61 图**微调（lr 1e-5 × 10 epochs）。双重病理：
+
+1. **灾难性遗忘**：在成熟宽域检测器上做窄域微调，分类头决策边界从"peak-all 宽峰形态"被拉向"shiyaoyuan 宽积分形态"——旧泛化能力被部分覆写。基线域外 0.99 触发 → v2 域外 0.06 以下：微调磨掉的不只是"不认识 test1"，连 peak-all 赋予的宽泛触发也一并丢失。
+2. **窄域概念重定义**：正样本从 apex 斑块换成人工宽积分边界，概念精确化必然绑定训练域（域内 F1 0.008→0.455 的代价）。
+3. **对照封死归因**：v3 = 同一基线 + 同样 10 epochs，唯一区别是数据多样性（merged 多样品 + 负样本）→ test1 正常触发 105 框。**"窄数据微调宽模型"= 遗忘快于学习**；v2 的崩溃不是微调原罪，而是数据多样性低于基线原有知识广度时的必然结果。
+
+### 4. 对项目的启示
+
+1. `quanformer.pth` 不宜再当作"本项目基线"参与模型对比——它是"外部约定的探测器"，公平的 quanformer 对照应是用 multisrc 多源数据微调该权重（即 `quanformer_test1_ft` 实验思路，F1 已达 0.836/0.935）；
+2. 任何下载/外部权重的第一步：读取 `checkpoint['args']` 考据出身，再决定其在实验矩阵中的定位；
+3. 窄域微调成熟模型的正确姿势：小学习率 + 少 epoch + 保留多样本（或直接混入通用数据回放），否则等于用 61 张图覆写上万图的知识。
+
+---
+
 ## 实验日志 001：v1「先成功后失败」之谜 —— 推理取类 bug 与 shadow query 假象
 
 - **日期**：2026-08-17
@@ -138,6 +268,8 @@ top_box = boxes[top_idx:top_idx + 1]
 | 2026-08-17 | tIoU>0.95 口径评测：v1 F1=0、v2 F1=0.017（阈值过严，v2 tIoU 中位 0.72） |
 | 2026-08-17 | 评测协议改「起止偏差容差」口径（检测 ±0.1 min / 定量宽松 ±0.2 min），删除 tIoU 判据 |
 | 2026-08-17 | v1 F1=0.008 vs v2 F1=0.455；本报告根因分析完成 |
+| 2026-08-22 | test1 标准试卷导入（11 mzML 重命名）；四模型首轮横评 + 评估链路三处修复；test1 微调基线对照实验；架构审查定位 matcher iou_type bug；执行 P0-1/P0-2/P0-4/P2-8 → **mrmpformerv2**（multisrc 多源联合训练）；四模型联合评估完成，v2 holdout F1@0.1=0.913 全面最优（详见实验日志 002） |
+| 2026-08-22 | 考据 `checkpoint/quanformer.pth` 内嵌 args：基线实为外部下载权重（DETR COCO → autopeakV3/peak-all 微调），非本项目自训；v2 零检出根因确认为窄域微调引发的灾难性遗忘 + 域坍缩（详见实验日志 003） |
 
 ### 附录 B：涉及文件
 
@@ -420,3 +552,67 @@ peak_label 缺失 → 按正样本（兼容无该列的文件）
 - 真实文件解析：120 行通过；`peak_label` 分布 118 正 + 2 负；RT QC 240 项中 20 项需人工复核（标注质量待修）
 - 训练侧重建数据集**必须 `--force`**（旧缓存为旧格式生成）
 - ⚠️ 训练数据不再有「未标注通道负样本」——负样本仅来自 `peak_label=0`，当前只有 2 个，正负不平衡需关注（后续可补充负样本标注）
+
+---
+
+## 附录 I：训练期 COCO 评估输出解读（2026-08-22）
+
+> 每次 epoch 结束 `evaluate()` 会打印 12 行标准 COCO 检测指标（pycocotools，`framework/datasets/coco_eval.py`）。本文档说明每一行是什么、为什么设计成这 12 行、以及本项目应如何解读。
+
+### I.1 一次真实输出（epoch 末 bbox 评测）
+
+```
+IoU metric: bbox
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.262
+ Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.537
+ Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.226
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = -1.000
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.124
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.274
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.382
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.589
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.589
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = -1.000
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.407
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.604
+```
+
+### I.2 12 行指标的构成逻辑
+
+12 行 = **AP 6 行 + AR 6 行**，由 3 个维度组合：
+
+| 维度 | 取值 | 含义 |
+|---|---|---|
+| IoU 阈值 | 0.50 / 0.75 / **0.50:0.95** | 判定"框算对"的严格程度；0.50:0.95 为 0.05 步长 10 档的平均 |
+| 目标面积 | all / small / medium / large | 按 GT 框面积分档（small ≤ 1024 px²，medium ≤ 9216 px²，large > 9216 px²） |
+| 检测预算 | maxDets = 1 / 10 / 100 | 每张图最多保留的候选框数（仅 AR 有） |
+
+### I.3 逐行解读（结合真实数值）
+
+| 行 | 数值 | 解读 |
+|---|---|---|
+| AP @0.50:0.95 all | 0.262 | **COCO 官方主指标**，10 个 IoU 阈值上的平均精度，唯一横向可比数字 |
+| AP @0.50 all | 0.537 | 宽松 IoU（PASCAL VOC 口径），"框大概对上"即算对 |
+| AP @0.75 all | 0.226 | 严格 IoU，**对边界贴合极度敏感** |
+| AP @0.50:0.95 small | -1.000 | 无 small 档 GT → 无法计算（见 I.5） |
+| AP @0.50:0.95 medium | 0.124 | 中等面积目标精度明显低于 large → 中等宽度峰边界更难学准 |
+| AP @0.50:0.95 large | 0.274 | 大目标精度最高 |
+| AR @maxDets=1 | 0.382 | 每图只允许 1 个框时的召回——**贴近本项目部署口径**（每通道最终只保留面积最大框） |
+| AR @maxDets=10 | 0.589 | 放宽到 10 个框的召回上限 |
+| AR @maxDets=100 | 0.589 | 与 @10 相同 → 每图候选数有硬上限，加预算无收益 |
+| AR small / medium / large | -1 / 0.407 / 0.604 | 同面积分档的召回 |
+
+### I.4 为什么需要这些指标（设计动机）
+
+1. **IoU 分档**：单一 IoU 阈值只测一种严格程度，容易被标注噪声带偏。0.50:0.95 平均兼顾"有没有检测到"与"框得准不准"，跨数据集可比；0.5 保留与 PASCAL 时代结果的衔接；0.75 单独暴露定位质量。
+   - 本项目特殊性：bbox 就是人工积分边界（`peak_start/peak_end`），**AP50 与 AP75 的差距 ≈ 边界贴合度 ≈ 定量口径的 RT 起止偏差来源**。
+2. **面积分档**：防止"只检测到大目标"被平均掩盖。小/中/大三档阈值来自 COCO 原始设计；分档数值可指导按峰宽调参（如 medium 更差 → 窄峰/中等宽度峰需要更强的边界精化）。
+3. **AR + maxDets 分档**：AP 衡量的是"按分数排序后的最终输出"精度；AR 衡量**不考虑精度时的召回上限**（模型到底能找回多少 GT）。maxDets 回答"给多少候选预算才能吃满召回"。
+4. **-1 的约定**：pycocotools 对"该格无 GT 样本"返回 -1 表示**未定义**（不是 0——0 意味着"一个没找对"），读表时应跳过。
+
+### I.5 本项目特别注意点
+
+- **small 恒为 -1**：已实测 val 标注 1410 个 GT 框中 small 档为 0（全部为 medium 112 + large 1298），属常态而非异常；
+- **AR@10 = AR@100**：`num_queries=3` 使每张 ROI 图最多输出 3 个框，检测预算上限不生效；
+- **AR@1 是部署口径**：推理端每 (mz,q3) 通道最终只保留面积最大的一行，AR@1 与生产指标的相关性高于 AP；
+- **AP75 低 ≠ 检测失败**：若定量（面积 R²、RT 偏差）优秀而 AP75 低，说明框宽约定与人工边界存在系统性偏差（参见实验日志 001 的教训：口径不同结果天差地别）。

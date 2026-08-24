@@ -74,17 +74,20 @@ def _parse_gt_peaks(rec):
 
     多峰格式 peak_start1-3/peak_end1-3（真实标注文件，与 coco_annotation 同一规则），
     回退旧单数 peak_start/peak_end；面积按峰对应取 area1-3（回退 area）。
+    peak_label=0（负样本/空白）或区间全为 0 的行不产生 GT 峰（避免 RT=0 伪峰）。
     """
+    if str(rec.get("peak_label") or "").strip() == "0":
+        return []
     gt_peaks = []
     for k in (1, 2, 3):
         s = parse_rt_field(rec.get("peak_start%d" % k))
         e = parse_rt_field(rec.get("peak_end%d" % k))
-        if s is not None and e is not None:
+        if s is not None and e is not None and (s > 0 or e > 0):
             gt_peaks.append((min(s, e), max(s, e), _parse_area(rec.get("area%d" % k))))
     if not gt_peaks:
         s = parse_rt_field(rec.get("peak_start"))
         e = parse_rt_field(rec.get("peak_end"))
-        if s is not None and e is not None:
+        if s is not None and e is not None and (s > 0 or e > 0):
             gt_peaks.append((min(s, e), max(s, e), _parse_area(rec.get("area"))))
     return gt_peaks
 
@@ -242,14 +245,38 @@ def _build_pred_by_img(pred_rows, min_score):
 
 # ---------- 评测主流程 ----------
 
-def evaluate(pred_feat_map, labels_path, tol, min_score, quant_tol=0.2):
+def evaluate(pred_feat_map, labels_path, tol, min_score, quant_tol=0.2,
+             qc_label_rt_tol=1.0):
     """pred_feat_map: {stem: {"pred": path, "feat": path}}。返回 (metrics, details_df, area_df)。
 
     tol: 检测口径命中容差（min）——预测起止与人工起止偏差均 <= tol 判 TP。
     quant_tol: 定量口径（面积R²/RSD/RT偏差）宽松配对容差（min）——未达严格 TP 但
     起止偏差均 <= quant_tol 的预测-标注对参与定量指标；检测口径（P/R/F1）不受影响。
+    qc_label_rt_tol: 标注 RT 一致性 QC 阈值（min，与训练数据生成/推理一致，0=关闭）。
+    命中剔除的 (sample, compound, channel) 不参与指标计算：GT 不计 FN，
+    该通道上的预测也不计 FP（整通道退出本次评测）。
     """
     labels = parse_labels_xlsx(labels_path)
+
+    # QC1：极差超阈值 → 剔除行不进 GT；被剔通道的预测也整体不计（保持口径：不参与指标计算）
+    excl_by_sample = {}
+    _n_excl_gt = 0
+    _qc_rows = []
+    if qc_label_rt_tol and qc_label_rt_tol > 0:
+        from preprocessing.label_qc import check_label_rt_consistency, mark_excluded_labels
+        _qc_rows, _keys = check_label_rt_consistency(labels, tol=qc_label_rt_tol)
+        _n_excl = mark_excluded_labels(labels, _keys)
+        _n_excl_gt = _n_excl
+        for _sid, _comp, _ch in _keys:
+            _kid = label_key(_comp, _ch)
+            if _kid:
+                excl_by_sample.setdefault(_sid, set()).add(_kid)
+        if _n_excl:
+            _n_ch = sum(len(v) for v in excl_by_sample.values())
+            print(f"[INFO] 标注 QC1: 剔除 {_n_excl} 行（涉及 {_n_ch} 个样品-通道组合，"
+                  f"其 GT 与预测均不参与指标计算）")
+        labels = [r for r in labels if not r.get("_qc_excluded")]
+
     sample_order, groups = group_labels_by_sample(labels)
     stem2sample = map_samples_to_mzmls(list(pred_feat_map), sample_order, None)
 
@@ -268,14 +295,24 @@ def evaluate(pred_feat_map, labels_path, tol, min_score, quant_tol=0.2):
             k = label_key(rec.get("compound"), rec.get("channel"))
             if k:
                 by_key.setdefault(k, rec)
+            # 兼容 compound 已含通道后缀的标注（如 test1「6-涕灭威-1」）：
+            # mzML native_id 即 compound 名时可直接命中，避免 label_key 二次拼接 "-1/-2"
+            _raw = str(rec.get("compound") or "").strip()
+            if _raw:
+                by_key.setdefault(_raw, rec)
 
         feat = pd.read_csv(paths["feat"])
         if "native_id" not in feat.columns or "Compound Name" not in feat.columns:
             raise ValueError(f"{paths['feat']}: 缺 native_id/Compound Name 列")
 
+        # 本样品被 QC1 剔除的通道：整通道退出指标计算（GT 不计 FN、预测不计 FP）
+        _excl_nids = excl_by_sample.get(stem2sample[stem], set())
+
         for i, frow in feat.iterrows():
             n = i + 1  # image 前缀 N_mz...（1-based，与 roi_safe_name_base 一致）
             native_id = str(frow["native_id"]).strip()
+            if native_id in _excl_nids:
+                continue
             img_name = next((im for im in pred_by_img if im.startswith(f"{n}_mz")), None)
             rows = pred_by_img.get(img_name, []) if img_name else []
 
@@ -359,8 +396,10 @@ def evaluate(pred_feat_map, labels_path, tol, min_score, quant_tol=0.2):
         "rsd_mean": _mean(rsds),
         "rsd_median": _med(rsds),
         "n_rsd_compounds": len(rsds),
+        "qc_label_rt_tol": qc_label_rt_tol,
+        "qc_excluded_label_rows": _n_excl_gt,
     }
-    return metrics, pd.DataFrame(details), area_df
+    return metrics, pd.DataFrame(details), area_df, _qc_rows
 
 
 def _fmt(v, fmt="{:.4f}"):
@@ -437,9 +476,10 @@ def main():
                 ap.error(f"--feature_csvs 缺少 {stem}（image↔native_id 对齐必需）")
             pred_feat_map[stem] = {"pred": path, "feat": feats[stem]}
 
-    metrics, details_df, area_df = evaluate(
+    metrics, details_df, area_df, qc_rows = evaluate(
         pred_feat_map, args.labels, args.tolerance, args.threshold,
-        quant_tol=args.quant_tolerance)
+        quant_tol=args.quant_tolerance,
+        qc_label_rt_tol=args.qc_label_rt_tol if args.qc_label_rt_tol is not None else 1.0)
 
     report = {
         "model": str(args.model),
@@ -454,6 +494,15 @@ def main():
     details_df.to_csv(out_dir / "match_details.csv", index=False, encoding="utf-8-sig")
     if not area_df.empty:
         area_df.to_csv(out_dir / "area_pairs.csv", index=False, encoding="utf-8-sig")
+
+    # 人工预警报告：未通过 QC 的标注以 qc_alert.md 沉淀（GT 与预测均已剔除出指标）
+    from preprocessing.label_qc import write_qc_alert
+    _qc_tol = args.qc_label_rt_tol if args.qc_label_rt_tol is not None else 1.0
+    n_alert = write_qc_alert(qc_rows, out_dir / "qc_alert.md",
+                             source=f"评估 {Path(args.labels).name}", tol=_qc_tol)
+    if n_alert:
+        print(f"[ALERT] QC 预警: {n_alert} 行标注未通过 RT 一致性检查"
+              f"（GT 与预测均未参与指标计算），请人工复核 → {out_dir / 'qc_alert.md'}")
 
     m = metrics
     n_gt_peaks = m['TP'] + m['FN']

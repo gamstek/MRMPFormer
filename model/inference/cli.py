@@ -981,8 +981,14 @@ def main_cli():
         )
         if label_qc_rows:
             qc_root.mkdir(parents=True, exist_ok=True)
-            from preprocessing.label_qc import write_qc_table
+            from preprocessing.label_qc import write_qc_table, write_qc_alert
             write_qc_table(label_qc_rows, qc_root / "qc_label_rt.csv")
+            _n_alert = write_qc_alert(label_qc_rows, qc_root / "qc_alert.md",
+                                      source=f"推理管线 {args.mode}",
+                                      tol=args.qc_label_rt_tol)
+            if _n_alert:
+                print(f"[ALERT] QC 预警: {_n_alert} 行标注未通过 RT 一致性检查（已剔除，"
+                      f"不生成 ROI），请人工复核 → {qc_root / 'qc_alert.md'}")
 
         labels_by_sample = _group_labels_by_sample(labels)
 

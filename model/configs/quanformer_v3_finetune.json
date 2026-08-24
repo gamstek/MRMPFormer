@@ -50,6 +50,10 @@
   "clip_max_norm": 0.1,
   "seed": 42,
   "num_workers": 4,
+  "_comment_accel": "=== 训练加速：AMP(FP16混合精度)+TF32+cudnn.benchmark（如需严格 FP32 复现可全部置 false）===",
+  "amp": true,
+  "tf32": true,
+  "cudnn_benchmark": true,
   "world_size": 1,
   "dist_url": "env://"
 }

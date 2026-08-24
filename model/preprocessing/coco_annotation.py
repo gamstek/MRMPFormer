@@ -205,6 +205,16 @@ def parse_labels_xlsx(xlsx_path):
         if not any(rec.values()):
             continue
         rows.append(rec)
+
+    # 标注规范（2026-08-24）：化合物列写裸名，不带 -1/-2 通道后缀；
+    # 定量/定性由 channel 列区分。带后缀会使 label_qc 双离子检查按
+    # (sample_id, compound) 分组时把两通道当作不同化合物 → B 检查静默失效。
+    from collections import Counter
+    _suffixed = Counter(r["compound"] for r in rows
+                        if str(r.get("compound", "")).strip().endswith(("-1", "-2")))
+    if _suffixed:
+        print(f"[WARN][QC] 标注化合物列含 -1/-2 后缀（违反标注规范，双离子 RT 一致性检查将失效）: "
+              f"{dict(_suffixed)} — 请改为裸名，通道由 channel 列（定量离子/定性离子）区分")
     return rows
 
 
@@ -688,6 +698,14 @@ def main():
             lines.append("| （无） | | | | | | | |")
         (qc_dir / "qc_summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
         print(f"[INFO] QC 阶段表: {qc_dir}（qc_label_rt.csv / qc_roi_channels.csv / qc_summary.md）")
+
+        # 人工预警报告：未通过 QC 的标注以 qc_alert.md 沉淀，命中剔除时终端打出 [ALERT]
+        from preprocessing.label_qc import write_qc_alert
+        n_alert = write_qc_alert(qc_rows, qc_dir / "qc_alert.md",
+                                 source=f"数据集构建 {output_dir.name}", tol=args.qc_label_rt_tol)
+        if n_alert:
+            print(f"[ALERT] QC 预警: {n_alert} 行标注未通过 RT 一致性检查（已剔除，不生成 ROI）"
+                  f"，请人工复核 → {qc_dir / 'qc_alert.md'}")
 
     # pipeline_qc_excluded.csv 仅为聚合 qc_roi_channels.csv 的样品级中间台账，消费后不再保留
     _pexcl = sorted(work_dir.glob("*/pipeline_qc_excluded.csv"))

@@ -144,11 +144,22 @@ def main():
             if native_id:
                 rec = by_key.get(native_id)
                 if rec is not None:
-                    s, e = parse_rt_field(rec.get("peak_start")), parse_rt_field(rec.get("peak_end"))
-                    if s is not None and e is not None:
-                        gt = (min(s, e), max(s, e))
+                    # 多峰格式 peak_start1-3/peak_end1-3，回退旧单数 peak_start/peak_end（与 evaluate_baseline 同规则）
+                    for _k in (1, 2, 3):
+                        _s = parse_rt_field(rec.get("peak_start%d" % _k))
+                        _e = parse_rt_field(rec.get("peak_end%d" % _k))
+                        if _s is not None and _e is not None:
+                            gt = (min(_s, _e), max(_s, _e))
+                            gt_area = rec.get("area%d" % _k)
+                            break
+                    if gt is None:
+                        _s = parse_rt_field(rec.get("peak_start"))
+                        _e = parse_rt_field(rec.get("peak_end"))
+                        if _s is not None and _e is not None:
+                            gt = (min(_s, _e), max(_s, _e))
+                            gt_area = rec.get("area")
                     try:
-                        gt_area = float(rec.get("area")) if rec.get("area") else None
+                        gt_area = float(gt_area) if gt_area not in (None, "") else None
                     except (TypeError, ValueError):
                         gt_area = None
 
