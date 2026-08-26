@@ -153,6 +153,8 @@ def main():
     ap = argparse.ArgumentParser(description="人工标注 vs 预测框 对照可视化（TP/FP/FN 分类输出）")
     ap.add_argument("--pipeline_dir", required=True,
                     help="evaluate_baseline _pipeline/<stem> 目录（含 xic-roi-batch/ 与 batch_predictions/）")
+    ap.add_argument("--pred_root", default=None,
+                    help="预测根目录（缺省= <pipeline_dir>/batch_predictions；可用于 pred_v2 等目录）")
     ap.add_argument("--labels", required=True, help="人工标注 xlsx")
     ap.add_argument("--output_dir", required=True, help="输出目录")
     ap.add_argument("--threshold", type=float, default=0.9, help="预测框纳入的最低置信度")
@@ -165,7 +167,7 @@ def main():
 
     pipeline_dir = Path(args.pipeline_dir)
     roi_root = pipeline_dir / "xic-roi-batch"
-    pred_root = pipeline_dir / "batch_predictions"
+    pred_root = Path(args.pred_root) if args.pred_root else pipeline_dir / "batch_predictions"
     if not roi_root.is_dir():
         print("[ERROR] 未找到 %s（需为 _pipeline/<stem> 或含 xic-roi-batch 的目录）" % roi_root)
         sys.exit(1)
@@ -289,7 +291,11 @@ def main():
             xic_xy = _load_xic(xic_dir, i, args.smooth_sigma)
             title = "[%s] %s | TP %d / FP %d / FN %d / loose %d" % (
                 result, native_id, n_tp, n_fp, n_fn, len(loose))
-            plot_one(img_path, out_root / result / ("%s.png" % Path(img_name).stem),
+            # 单 stem（如 test_1）保持原图名；多 stem 时各样品图名相同（1_mz…12_mz），
+            # 前缀样品名避免互相覆盖
+            img_stem = Path(img_name).stem
+            out_name = "%s.png" % img_stem if len(stems) == 1 else "%s_%s.png" % (stem, img_stem)
+            plot_one(img_path, out_root / result / out_name,
                      title, xic_xy, (rt_lo, rt_hi), gts_px, preds_px, devs)
 
     pd.DataFrame(idx_rows).to_csv(out_root / "index.csv", index=False, encoding="utf-8-sig")

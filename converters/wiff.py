@@ -8,8 +8,12 @@ import subprocess
 import os
 import re
 import argparse
+import logging
 import sys
 from pathlib import Path
+
+
+logger = logging.getLogger(__name__)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -21,21 +25,24 @@ BIN_DIR = WIFF_BIN_DIR if WIFF_BIN_DIR.exists() else LEGACY_BIN_DIR
 MSCONVERT_EXE = BIN_DIR / "msconvert.exe"
 
 
-def convert_file(input_file: Path, no_peak_picking: bool = False):
-    """转换单个 .wiff 为 .mzML，输出到 data/mzml/<basename>/ 子目录中。
+def convert_file(input_file: Path, output_dir: Path | None = None,
+                 no_peak_picking: bool = False, timeout: int = 600):
+    """转换单个 .wiff / .wiff2 为 .mzML，输出到 <output_dir or 输入目录>/<basename>/ 子目录中。
     返回 (成功标志, 信息字符串)"""
-    output_dir = OUTPUT_DIR / input_file.stem
-    output_dir.mkdir(parents=True, exist_ok=True)
+    target_dir = (input_file.parent if output_dir is None else output_dir) / input_file.stem
+    target_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("转换开始: %s (exe=%s, 输出目录=%s)", input_file, MSCONVERT_EXE, target_dir)
 
     cmd = [
         str(MSCONVERT_EXE),
         str(input_file),
         "--mzML",
         "--continueOnError",
-        "-o", str(output_dir),
+        "-o", str(target_dir),
     ]
     if not no_peak_picking:
         cmd += ["--filter", "peakPicking true 1-"]
+    logger.info("执行命令: %s", " ".join(cmd))
 
     print(f"[msconvert] {input_file.name} ... ", end="", flush=True)
 
@@ -43,27 +50,41 @@ def convert_file(input_file: Path, no_peak_picking: bool = False):
         result = subprocess.run(
             cmd, capture_output=True, text=True,
             encoding="utf-8", errors="replace",
+            timeout=timeout,
         )
+    except subprocess.TimeoutExpired:
+        logger.error("转换超时: %s (> %ss)", input_file, timeout)
+        print("TIMEOUT")
+        return False, f"转换超时 (> {timeout}s)"
     except Exception as e:
+        logger.error("进程异常退出: %s, 异常=%r", input_file, e)
         print("CRASH")
         return False, f"进程异常退出: {e}"
 
-    mzml_files = list(output_dir.glob("*.mzML"))
+    logger.info("进程退出码: %s (stdout=%d 字符, stderr=%d 字符)",
+                result.returncode, len(result.stdout or ""), len(result.stderr or ""))
+
+    mzml_files = list(target_dir.glob("*.mzML"))
     if mzml_files:
         total_bytes = sum(f.stat().st_size for f in mzml_files)
         stderr = result.stderr.strip() if result.stderr else ""
         if "Conversion failed" in stderr:
             match = re.search(r"Conversion failed for (\d+) runs?", stderr)
             failed_runs = match.group(1) if match else "?"
+            logger.warning("部分失败: %s → %d 个 mzML, %d bytes, %s runs 失败",
+                           input_file.name, len(mzml_files), total_bytes, failed_runs)
             print(f"PARTIAL ({len(mzml_files)} 个 mzML, {total_bytes} bytes, {failed_runs} runs 失败)")
         else:
             print(f"OK ({len(mzml_files)} 个 mzML, {total_bytes} bytes)")
-        return True, ""
+        logger.info("转换成功: %s → %d 个 mzML, %d bytes, 输出目录=%s",
+                    input_file.name, len(mzml_files), total_bytes, target_dir)
+        return True, f"{len(mzml_files)} 个 .mzML, {total_bytes / (1024 * 1024):.1f} MB"
     else:
         print("FAILED")
         stderr = result.stderr.strip() if result.stderr else ""
         stdout = result.stdout.strip() if result.stdout else ""
         reason = stderr or stdout or f"退码 {result.returncode}，未生成 mzML 文件"
+        logger.error("转换失败: %s, 退码=%s, 原因: %s", input_file.name, result.returncode, reason)
         if result.stdout:
             print(result.stdout.strip())
         if result.stderr:
@@ -72,6 +93,7 @@ def convert_file(input_file: Path, no_peak_picking: bool = False):
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="[%(asctime)s %(levelname)s %(name)s] %(message)s")
     parser = argparse.ArgumentParser(description="批量转换 .wiff / .wiff2 为 .mzML")
     parser.add_argument("--input", type=str, default=None,
                         help="指定单个文件路径，不传则处理 data/wiff/*.wiff 和 data/wiff/*.wiff2")
@@ -109,7 +131,7 @@ def main():
     fail_list = []
 
     for f in files:
-        ok, info = convert_file(f, no_peak_picking=args.no_peak_picking)
+        ok, info = convert_file(f, output_dir=OUTPUT_DIR, no_peak_picking=args.no_peak_picking)
         if ok:
             success_list.append(f.name)
         else:

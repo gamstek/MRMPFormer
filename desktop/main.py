@@ -12,6 +12,7 @@ main.py — GAMSTEKPEAKing 应用入口
 
 import sys
 import traceback
+import logging
 from pathlib import Path
 from datetime import datetime
 from PySide6.QtWidgets import QApplication, QMessageBox, QLabel
@@ -61,6 +62,8 @@ def setup_exception_handler():
 
 def main():
     """应用主入口：创建 QApplication → 加载主题 → 构建窗口 → 注册页面 → 启动事件循环。"""
+    # 统一日志配置：workers/pages/converters 的 logger 输出到控制台，便于排查转换等运行时问题
+    logging.basicConfig(level=logging.INFO, format="[%(asctime)s %(levelname)s %(name)s] %(message)s")
     setup_exception_handler()
 
     debug = "--debug" in sys.argv

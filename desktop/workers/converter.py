@@ -1,39 +1,43 @@
 """
-converter.py — msdata → mzML 格式转换后台线程
-==============================================
-封装 MsdataConverter(QThread)，异步调用内嵌的 bin/msdata2mzml.exe，
-逐文件将 .msdata 转换为 .mzML。通过 Signal 驱动 UI 实时更新文件级状态。
+converter.py — msdata / wiff → mzML 格式转换后台线程（Qt 薄包装）
+==================================================================
+封装 FormatConverter(QThread)，异步调用 converters/ 下的纯转换函数
+（converters/msdata.py 与 converters/wiff.py），通过 Signal 驱动 UI 实时更新文件级状态。
+本文件只负责 Qt 线程适配与信号转发，不包含任何转换逻辑
+（bin 定位 / OPENMS_DATA_PATH / subprocess 均在 converters/ 中）。
 
 核心流程:
-  1. 设置 OPENMS_DATA_PATH → bin/share/OpenMS
-  2. subprocess.run([msdata2mzml.exe, input_file])
-  3. 检测输出目录是否有 .mzML 文件判定成功/失败
-  4. 逐文件发出 progress + file_done 信号
+  1. 在 run() 中确保仓库根目录在 sys.path，延迟导入 converters 模块
+  2. 逐文件调用 convert_file()（按格式路由 msdata / wiff）
+  3. 逐文件发出 progress + file_done 信号
 
-依赖: subprocess, os, pathlib, PySide6.QtCore
+依赖: sys, pathlib, PySide6.QtCore
 """
 
-import os
-import subprocess
+import logging
+import sys
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 
 
-# 定位 bin/ 目录：优先使用 desktop/bin，其次回退到 converters/msdata_bin（项目根）
+logger = logging.getLogger(__name__)
+
+
+# 仓库根目录（desktop/workers/../..），converters/ 位于其中
 ROOT = Path(__file__).resolve().parents[2]
-_LOCAL_BIN = Path(__file__).resolve().parent.parent / "bin"
-_CONVERTERS_MS_DATA_BIN = ROOT / "converters" / "msdata_bin"
-# 选择存在的 bin 目录（优先本地 desktop/bin，否则使用 converters/msdata_bin）
-_BIN_DIR = _LOCAL_BIN if _LOCAL_BIN.exists() else _CONVERTERS_MS_DATA_BIN
-_EXE_PATH = _BIN_DIR / "msdata2mzml.exe"
-_SHARE_PATH = _BIN_DIR / "share" / "OpenMS"
+
+# 各格式 → (转换模块, 可执行文件名)，exe 存在性由模块内 BIN_DIR 解析
+_FORMAT_MODULES = {
+    "msdata": ("converters.msdata", "msdata2mzml.exe"),
+    "wiff": ("converters.wiff", "msconvert.exe"),
+}
 
 
-class MsdataConverter(QThread):
+class FormatConverter(QThread):
     """
-    格式转换后台线程。
+    格式转换后台线程（msdata / wiff → mzML）。
 
-    逐文件调用 msdata2mzml.exe 进行 msdata→mzML 转换。
+    逐文件调用 converters/ 中对应模块的 convert_file()。
     每个文件完成后发出 file_done 信号，整体完毕后发出 progress(total, total)。
     """
 
@@ -41,82 +45,73 @@ class MsdataConverter(QThread):
     progress = Signal(int, int)
     # (index: int, success: bool, info: str) — 文件级结果，info 为文件大小或错误消息
     file_done = Signal(int, bool, str)
-    # (message: str) — 全局致命错误（如 exe 不存在）
+    # (message: str) — 全局致命错误（如转换工具不存在）
     error = Signal(str)
 
-    def __init__(self, files: list[str], output_dir: str | None = None, parent=None):
+    def __init__(self, files: list[str], fmt: str = "msdata",
+                 output_dir: str | None = None, parent=None):
         """
         Args:
-            files: .msdata 文件绝对路径列表
+            files: 待转换文件绝对路径列表
+            fmt: 源格式 ("msdata" | "wiff")
             output_dir: 自定义输出目录，None=默认同输入目录
             parent: Qt parent object
         """
         super().__init__(parent)
         self._files = [Path(f) for f in files]
+        self._fmt = fmt
         self._output_dir = Path(output_dir) if output_dir else None
 
     def run(self):
         """在线程中执行批量转换。"""
-        # 前置检查：exe 是否存在
-        if not _EXE_PATH.exists():
-            self.error.emit(f"未找到转换工具: {_EXE_PATH}\n请检查 bin/ 目录")
+        logger.info("格式转换线程启动: fmt=%s, 文件数=%d, output_dir=%s",
+                    self._fmt, len(self._files), self._output_dir)
+
+        # 延迟导入：避免 desktop 启动时强依赖仓库根目录
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+
+        module_name, exe_name = _FORMAT_MODULES.get(self._fmt, _FORMAT_MODULES["msdata"])
+        try:
+            mod = __import__(module_name, fromlist=["convert_file"])
+        except ImportError as e:
+            logger.error("无法加载转换模块 %s: %s", module_name, e)
+            self.error.emit(f"无法加载转换模块 {module_name}: {e}")
             return
 
+        # 前置检查：exe 是否存在
+        exe_path = Path(mod.BIN_DIR) / exe_name
+        if not exe_path.exists():
+            logger.error("未找到转换工具: %s", exe_path)
+            self.error.emit(f"未找到转换工具: {exe_path}\n请检查 {exe_path.parent} 目录")
+            return
+        logger.info("使用转换工具: %s", exe_path)
+
+        convert_file = mod.convert_file
         total = len(self._files)
-        env = os.environ.copy()
-        env["OPENMS_DATA_PATH"] = str(_SHARE_PATH)
 
         for i, file_path in enumerate(self._files):
             # 发出进度信号
             self.progress.emit(i, total)
-
-            # 构建命令：以 bin/ 为工作目录，传相对路径
-            try:
-                rel_input = os.path.relpath(str(file_path), str(_BIN_DIR))
-            except ValueError:
-                # 不同盘符时 relpath 会抛异常，此时用绝对路径
-                rel_input = str(file_path)
-
-            cmd = [str(_EXE_PATH), rel_input]
+            logger.info("[%d/%d] 开始转换: %s", i + 1, total, file_path)
 
             try:
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    env=env,
-                    cwd=str(_BIN_DIR),
+                ok, info = convert_file(
+                    file_path,
+                    output_dir=self._output_dir,
                     timeout=600,  # 单文件最多 10 分钟
                 )
-            except subprocess.TimeoutExpired:
-                self.file_done.emit(i, False, "转换超时 (>10分钟)")
-                continue
             except Exception as e:
+                logger.error("[%d/%d] 转换异常: %s, 异常=%r", i + 1, total, file_path, e)
                 self.file_done.emit(i, False, f"进程异常: {e}")
                 continue
 
-            # 检查输出：预期在输入文件同级目录下的 <stem>/ 中生成 .mzML
-            expected_dir = file_path.parent / file_path.stem
-            if self._output_dir:
-                expected_dir = self._output_dir / file_path.stem
-
-            mzml_files = list(expected_dir.glob("*.mzML")) if expected_dir.exists() else []
-
-            if mzml_files:
-                total_bytes = sum(f.stat().st_size for f in mzml_files)
-                size_mb = total_bytes / (1024 * 1024)
-                info = f"{len(mzml_files)} 个 .mzML, {size_mb:.1f} MB"
-                self.file_done.emit(i, True, info)
-            else:
-                stderr = result.stderr.strip() if result.stderr else ""
-                stdout = result.stdout.strip() if result.stdout else ""
-                reason = stderr or stdout or f"退码 {result.returncode}，未生成 mzML"
-                # 检测中文路径问题
-                if "path" in reason.lower() or "不存在" in reason or "not exist" in reason.lower():
-                    reason += " (路径含中文字符可能导致 OpenMS 失败)"
-                self.file_done.emit(i, False, reason)
+            # 中文路径可能导致底层 C++ 转换失败，补充提示
+            if not ok and any(k in info.lower() for k in ("path", "not exist", "不存在")):
+                info += " (路径含中文字符可能导致转换失败)"
+            logger.info("[%d/%d] 转换结果: success=%s, %s", i + 1, total, ok, info)
+            self.file_done.emit(i, ok, info)
 
         # 最终进度 (total, total) — 通知 UI 全部完成
+        logger.info("格式转换线程完成: 共 %d 个文件", total)
         self.progress.emit(total, total)

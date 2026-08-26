@@ -27,6 +27,12 @@ MRMPFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 
 ## 开发时间线
 
+### 2026-08-25
+
+- 重构(converters/msdata.py+wiff.py+desktop/workers/converter.py+desktop/pages/preprocessing.py): desktop 格式转换复用 converters/ 纯算法 —— 删除 MsdataConverter 内重复实现（bin 定位/OPENMS_DATA_PATH/subprocess/输出检测），改写为 Qt 薄包装 FormatConverter（与 IonZenithWorker 同模式），run() 内延迟导入按格式路由 converters/msdata.py 或 converters/wiff.py 的 convert_file；converters 侧 convert_file 新增 output_dir（None=留输入目录同级）/timeout 参数并返回成功信息字符串（CLI 行为不变，main 显式传 OUTPUT_DIR）；新增 wiff/wiff2 → mzML 格式对（FORMAT_PAIRS + 拖拽后缀映射 + 运行前按当前格式过滤文件列表防混跑）；exe 存在性检查由 UI 前置移至 worker error 信号统一反馈；desktop/bin/README_bin.md 标注为打包自包含副本；py_compile + converters 模块导入验证通过
+- 重构(desktop/bin): 删除 desktop/bin/ 工具链副本（62 个文件，与 converters/msdata_bin 逐字节一致，desktop 运行已改走 converters/msdata_bin）—— desktop/README.md 目录表同步移除 bin/ 行
+- 代码生成(converters/msdata.py+wiff.py+desktop/workers/converter.py+desktop/pages/preprocessing.py+desktop/main.py): 核心转换分支补全 logging 详细打印 —— converters 两个 convert_file 记录转换开始/执行命令/退出码/成功输出与失败原因（失败走 error、部分失败走 warning）；FormatConverter.run 记录格式路由/所用 exe/逐文件开始与结果/全局错误；ConversionCard 记录开始参数（fmt/参与文件数/output_dir）与每文件完成回调；CLI main() 与 desktop/main.py 各加 logging.basicConfig(INFO) 使日志在控制台可见；py_compile 通过
+
 ### 2026-08-21
 
 - 需求分析(修复后首轮 v1 训练日志诊断): eos 修复生效确认 —— train class_error 100→29.7→25.1→23.1，Focal 分类头已正常学习；"分类误差跳变"定性为小分母统计噪声（每 batch 仅 ~13 个正匹配 query，错 1 个即跳 7.7%，epoch 级 7.3↔9.7 仅约 30 样本差）；数量误差 0.99→1.30 缓涨系背景降权+召回优先策略的已知副作用（负样本图多报 1 峰即贡献 1.0，推理阈值可滤），暂不干预；健康证据：val_loss 9.82→8.19、L3 IoU 0.75→0.80、epoch2 AP 0.269→0.377 / AP50 0.766 / AR100 0.658 大幅跃升；另发现 log.txt 首行混有崩溃前旧 run 遗留记录（读日志需按 run 边界区分）

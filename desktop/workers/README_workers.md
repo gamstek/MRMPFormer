@@ -6,21 +6,26 @@
 
 | 文件 | 导出类 | 作用 | 核心 Signal |
 |------|--------|------|------------|
-| `converter.py` | `MsdataConverter` | msdata→mzML 格式转换（调用内嵌的 `bin/msdata2mzml.exe`） | `progress(current, total)`, `file_done(index, ok, info)`, `error(msg)` |
+| `converter.py` | `FormatConverter` | msdata/wiff→mzML 格式转换 Qt 线程包装（**纯转换逻辑在 `converters/msdata.py` / `converters/wiff.py`**，本文件仅线程适配 + 信号转发） | `progress(current, total)`, `file_done(index, ok, info)`, `error(msg)` |
 | `ion_zenith.py` | `IonZenithWorker` | 离子天顶算法 Qt 线程包装（**纯算法在 `model/preprocessing/ion_zenith.py`**：遍历 mzML MS1 → 按 m/z 聚合 → 输出 CSV） | `progress(scanned, total)`, `stats(ms1, peaks)`, `finished(ions, elapsed, path)`, `error(msg)` |
 
-## MsdataConverter 接口
+## FormatConverter 接口
+
+> 💡 本文件只负责 Qt 线程适配（QThread + Signal 转发进度/结果）。
+> **纯转换逻辑**位于 [`converters/msdata.py`](../../converters/msdata.py) 与 [`converters/wiff.py`](../../converters/wiff.py)（bin 定位 / OPENMS_DATA_PATH / subprocess 均在 converters/ 中），
+> 也可用 `python converters/msdata.py --input ...` / `python converters/wiff.py --input ...` 直接调用，无需 Qt 依赖。
 
 ```python
-class MsdataConverter(QThread):
+class FormatConverter(QThread):
     progress  = Signal(int, int)           # (当前文件索引, 文件总数)
     file_done = Signal(int, bool, str)     # (索引, 是否成功, 信息)
     error     = Signal(str)                # 全局错误消息
 
-    def __init__(self, files: list[str], output_dir: str | None = None):
+    def __init__(self, files: list[str], fmt: str = "msdata", output_dir: str | None = None):
         """
         Args:
-            files: .msdata 文件的绝对路径列表
+            files: 待转换文件的绝对路径列表
+            fmt: 源格式 ("msdata" | "wiff")
             output_dir: 自定义输出目录，None=使用默认（同输入目录）
         """
 ```

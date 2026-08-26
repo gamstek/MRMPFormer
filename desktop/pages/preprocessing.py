@@ -11,6 +11,7 @@ PreprocessingPage 作为这两个卡片的容器，被 app.py 的侧边栏路由
 依赖: PySide6, workers.converter, workers.ion_zenith, theme
 """
 
+import logging
 import os
 from pathlib import Path
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
@@ -22,8 +23,11 @@ from PySide6.QtWidgets import (
     QSpinBox, QCheckBox,
 )
 from theme import Colors, Fonts
-from workers.converter import MsdataConverter
+from workers.converter import FormatConverter
 from workers.ion_zenith import IonZenithWorker
+
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -251,14 +255,22 @@ class ConversionCard(QFrame):
     # 支持的格式对: (源后缀, 目标后缀, 显示名)
     FORMAT_PAIRS = [
         ("msdata", "mzML", "msdata → mzML"),
+        ("wiff", "mzML", "wiff / wiff2 → mzML"),
         # 未来扩展: (".raw", "mzML", "Thermo RAW → mzML"),
         # 未来扩展: (".d", "mzML", "Bruker .d → mzML"),
     ]
 
+    # 源格式 → 允许拖拽/选择的文件后缀
+    _EXT_MAP = {
+        "msdata": [".msdata"],
+        "wiff": [".wiff", ".wiff2"],
+    }
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._files: dict[str, _FileListItem] = {}  # {file_path: list_item_widget}
-        self._converter: MsdataConverter | None = None
+        self._run_files: list[str] = []  # 本次运行实际参与转换的文件（按当前格式过滤）
+        self._converter: FormatConverter | None = None
         self._is_running = False
 
         self._build_ui()
@@ -359,7 +371,7 @@ class ConversionCard(QFrame):
     def _on_format_changed(self, index: int):
         """格式对切换时更新拖拽区允许的后缀。"""
         src_ext, dst_ext = self.format_combo.currentData()
-        self.drop_zone._allowed_exts = [f".{src_ext}"]
+        self.drop_zone._allowed_exts = self._EXT_MAP.get(src_ext, [f".{src_ext}"])
 
     def _on_files_added(self, files: list[str]):
         """拖拽或选择文件后，追加到文件列表（自动去重）。"""
@@ -399,15 +411,8 @@ class ConversionCard(QFrame):
                 self.output_combo.blockSignals(False)
 
     def _on_run(self):
-        """开始批量转换。校验后启动 MsdataConverter 后台线程。"""
+        """开始批量转换。校验后启动 FormatConverter 后台线程。"""
         if self._is_running or not self._files:
-            return
-
-        # 检查 exe 是否存在
-        bin_dir = Path(__file__).resolve().parent.parent / "bin"
-        exe_path = bin_dir / "msdata2mzml.exe"
-        if not exe_path.exists():
-            self._show_error(f"未找到转换工具:\n{exe_path}\n请检查 bin/ 目录")
             return
 
         self._is_running = True
@@ -424,9 +429,20 @@ class ConversionCard(QFrame):
         if self.output_combo.currentData() not in ("default", "custom"):
             output_dir = self.output_combo.currentData()
 
-        # 启动后台线程
-        file_paths = list(self._files.keys())
-        self._converter = MsdataConverter(file_paths, output_dir)
+        # 仅转换当前格式对应的文件（切换格式后列表可能残留旧格式文件）
+        src_ext, _ = self.format_combo.currentData()
+        allowed = {e.lower() for e in self._EXT_MAP.get(src_ext, [f".{src_ext}"])}
+        self._run_files = [p for p in self._files if Path(p).suffix.lower() in allowed]
+        if not self._run_files:
+            logger.warning("文件列表中不存在 %s 格式的文件", src_ext)
+            self._show_error(f"文件列表中不存在 {src_ext} 格式的文件")
+            self._reset_ui()
+            return
+        logger.info("开始批量转换: fmt=%s, 列表文件=%d, 实际参与=%d, output_dir=%s",
+                    src_ext, len(self._files), len(self._run_files), output_dir)
+
+        # 启动后台线程（exe 存在性由 worker 前置检查，通过 error 信号反馈）
+        self._converter = FormatConverter(self._run_files, fmt=src_ext, output_dir=output_dir)
         self._converter.progress.connect(self._on_progress)
         self._converter.file_done.connect(self._on_file_done)
         self._converter.error.connect(self._on_converter_error)
@@ -439,19 +455,22 @@ class ConversionCard(QFrame):
 
     def _on_file_done(self, index: int, success: bool, info: str):
         """单文件转换完成，更新列表项状态。"""
-        file_path = list(self._files.keys())[index]
+        file_path = self._run_files[index]
         item = self._files[file_path]
         if success:
             item.set_status("success", info)
         else:
             item.set_status("failed", info)
+        logger.info("文件转换完成: [%d/%d] success=%s, %s, 文件=%s",
+                    index + 1, len(self._run_files), success, info, file_path)
 
         # 检查是否全部完成（最后一个文件的回调）
-        if index == len(self._files) - 1:
+        if index == len(self._run_files) - 1:
             self._on_all_done()
 
     def _on_converter_error(self, message: str):
         """后台线程致命错误（如 exe 不存在）。"""
+        logger.error("转换线程全局错误: %s", message)
         self._show_error(message)
         self._reset_ui()
 
@@ -462,6 +481,7 @@ class ConversionCard(QFrame):
     def _reset_ui(self):
         """恢复 UI 到可操作状态。"""
         self._is_running = False
+        self._run_files = []
         self.run_btn.setEnabled(True)
         self.drop_zone.setEnabled(True)
         self.progress_bar.setValue(0)

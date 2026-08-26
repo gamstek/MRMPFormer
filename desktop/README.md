@@ -23,7 +23,6 @@ python main.py
 | `pages/` | 功能页面模块 | [README_pages.md](pages/README_pages.md) |
 | `workers/` | 后台工作线程 | [README_workers.md](workers/README_workers.md) |
 | `engine/` | 模型推理引擎（预留） | [README_engine.md](engine/README_engine.md) |
-| `bin/` | msdata2mzml 运行时 | [README_bin.md](bin/README_bin.md) |
 | `assets/` | 静态资源 | [README_assets.md](assets/README_assets.md) |
 
 ## 技术栈
