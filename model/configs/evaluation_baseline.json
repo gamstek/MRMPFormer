@@ -26,5 +26,7 @@
   "_comment_quant_tolerance": "定量口径宽松配对容差（min）：起止偏差均 <= 此值的对子参与面积R2/RSD/RT偏差，不影响 P/R/F1",
   "quant_tolerance": 0.2,
   "_comment_smooth_sigma": "推理平滑参数（run_inference=1 时与管线一致）",
-  "smooth_sigma": 0.8
+  "smooth_sigma": 0.8,
+  "_comment_qc_label_rt_tol": "run_inference=1 时透传推理管线的标注 RT 一致性 QC 阈值（min）；0=关闭；缺省 1.0（与训练数据生成一致）",
+  "qc_label_rt_tol": 1.0
 }

@@ -324,14 +324,24 @@ def _resolve_xic_matrix_row(
     return None
 
 
+def _peak_lo(r) -> float:
+    """prediction 表行的左边界：新列 peak_start 优先，兼容旧列 rt_min。"""
+    return _safe_float(r.get("peak_start", r.get("rt_min")), np.nan)
+
+
+def _peak_hi(r) -> float:
+    """prediction 表行的右边界：新列 peak_end 优先，兼容旧列 rt_max。"""
+    return _safe_float(r.get("peak_end", r.get("rt_max")), np.nan)
+
+
 def _peer_intervals_from_group(g: pd.DataFrame, skip_row_index: Optional[int] = None) -> Optional[List[Tuple[float, float]]]:
     """同图其他预测行的 (rt_min, rt_max)，用于边界外推时避免吃进相邻预测峰。"""
     out: List[Tuple[float, float]] = []
     for j, rr in g.iterrows():
         if skip_row_index is not None and int(j) == int(skip_row_index):
             continue
-        lo = _safe_float(rr.get("rt_min"), np.nan)
-        hi = _safe_float(rr.get("rt_max"), np.nan)
+        lo = _peak_lo(rr)
+        hi = _peak_hi(rr)
         if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
             out.append((float(lo), float(hi)))
     return out if out else None
@@ -2027,10 +2037,7 @@ def _plot_refined_predictions(
             continue
         y = intensity_mat[idx, :].astype(np.float64)
         y = np.maximum(y, 0.0)
-        y_metric = y.copy()
-        if sigma > 0 and y.size >= 10:
-            y = gaussian_filter1d(y, sigma=min(float(sigma), y.size / 25.0), mode="nearest")
-            y = np.maximum(y, 0.0)
+        y_metric = y.copy()  # 原始非负强度；共享核心内部按 sigma 平滑
 
         rt_lo, rt_hi = _resolve_roi_rt_window(
             roi_map, image_name, float(np.min(rt)), float(np.max(rt))
@@ -2044,39 +2051,77 @@ def _plot_refined_predictions(
         else:
             win_lo, win_hi = float(rt_lo), float(rt_hi)
         mask = (rt >= win_lo) & (rt <= win_hi)
-        x_plot = rt[mask]
-        y_plot = y[mask]
-        if x_plot.size < 2:
+        if rt[mask].size < 2:
             continue
 
         fig, ax = plt.subplots(figsize=(7, 4))
-        ax.plot(x_plot, y_plot, color="blue", linewidth=1.5)
+        # Step 7：共享绘图核心（XIC 曲线 + 各 query 阴影 + 置信度信息框）
+        from utils.plot_xic_peaks import plot_xic_with_queries
 
-        mlo = _safe_float(r.get("main_rt_min"), np.nan)
-        mhi = _safe_float(r.get("main_rt_max"), np.nan)
-        if np.isfinite(mlo) and np.isfinite(mhi) and mhi > mlo:
-            ax.axvspan(mlo, mhi, color="#2ecc71", alpha=0.24, label="Main interval")
-
-        slo = _safe_float(r.get("small_rt_min"), np.nan)
-        shi = _safe_float(r.get("small_rt_max"), np.nan)
-        if np.isfinite(slo) and np.isfinite(shi) and shi > slo:
-            ax.axvspan(slo, shi, color="#f39c12", alpha=0.22, label="Small interval")
-        s2lo = _safe_float(r.get("small2_rt_min"), np.nan)
-        s2hi = _safe_float(r.get("small2_rt_max"), np.nan)
-        if np.isfinite(s2lo) and np.isfinite(s2hi) and s2hi > s2lo:
-            ax.axvspan(s2lo, s2hi, color="#8e44ad", alpha=0.18, label="Small interval #2")
-        s3lo = _safe_float(r.get("small3_rt_min"), np.nan)
-        s3hi = _safe_float(r.get("small3_rt_max"), np.nan)
-        if np.isfinite(s3lo) and np.isfinite(s3hi) and s3hi > s3lo:
-            ax.axvspan(s3lo, s3hi, color="#16a085", alpha=0.16, label="Small interval #3")
-
-        ax.set_xlim(float(win_lo), float(win_hi))
-        ax.set_xlabel("Retention Time (min)")
-        ax.set_ylabel("Intensity")
-        ax.set_title(f"Refined prediction (sigma={sigma}) - {image_name}")
-        ax.grid(True, alpha=0.25)
+        q1 = _safe_float(r.get("mz"), None)
+        queries = []
+        # 置信度候选链：prediction_refined.csv 无 smallN_conf_final（仅 sample 模式内部有），
+        # 实际次峰置信度列为 smallN_score_ai_discounted / smallN_score_ai_raw
+        _tmp = [
+            ("main_rt_min", "main_rt_max", "main_rt_peak", "main_height",
+             "main_snr", ["main_conf_final", "main_score_ai"]),
+            ("small_rt_min", "small_rt_max", "small_rt_peak", "small_height",
+             None, ["small_conf_final", "small_score_ai_discounted", "small_score_ai_raw"]),
+            ("small2_rt_min", "small2_rt_max", "small2_rt_peak", "small2_height",
+             None, ["small2_score_ai_discounted", "small2_score_ai_raw"]),
+            ("small3_rt_min", "small3_rt_max", "small3_rt_peak", "small3_height",
+             None, ["small3_score_ai_discounted", "small3_score_ai_raw"]),
+        ]
+        for (clo, chi, cpk, ch, csnr, conf_cands) in _tmp:
+            lo = _safe_float(r.get(clo), np.nan)
+            hi = _safe_float(r.get(chi), np.nan)
+            if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+                continue
+            sc = np.nan
+            for _cc in conf_cands:
+                _v = _safe_float(r.get(_cc), np.nan)
+                if np.isfinite(_v):
+                    sc = _v
+                    break
+            if not np.isfinite(sc):
+                sc = None
+            snr = _safe_float(r.get(csnr), np.nan) if csnr else None
+            queries.append({
+                "rt_lo": lo,
+                "rt_hi": hi,
+                "rt_peak": _safe_float(r.get(cpk), np.nan),
+                "height": _safe_float(r.get(ch), np.nan),
+                "snr": snr if (snr is not None and np.isfinite(snr)) else None,
+                "n_points": None,  # 共享核心按区间内强度>0 最长连续点数计算
+                "score": sc,
+            })
+        plot_xic_with_queries(
+            ax, rt, y_metric, queries, q1=q1, sigma=sigma,
+            title="Refined prediction (sigma=%s) - %s" % (sigma, image_name),
+            roi_window=(float(win_lo), float(win_hi)),
+        )
+        # 标称RT / 主峰RT 竖线（与 _annotate_refined_plot_axes 一致）
         pr = _prediction_row_for_image(pred_df, image_name)
-        _annotate_refined_plot_axes(ax, r, rt, y_metric, pr, ft_df)
+        nom_rt = _feature_nominal_rt_label(
+            ft_df, r.get("mz"), r.get("q3"), image_name, r.get("compound_name")
+        )[0]
+        rt_line = nom_rt
+        if not np.isfinite(rt_line) and pr is not None:
+            rt_line = _safe_float(pr.get("retention_time"), np.nan)
+            if not np.isfinite(rt_line):
+                rt_line = _safe_float(pr.get("old_rt"), np.nan)
+        xlo, xhi = ax.get_xlim()
+        if np.isfinite(rt_line) and xlo <= rt_line <= xhi:
+            ax.axvline(float(rt_line), color="#c0392b", linestyle="--",
+                       linewidth=1.8, zorder=5, label="标称RT")
+        main_rt = _safe_float(r.get("main_rt_peak"), np.nan)
+        if np.isfinite(main_rt) and xlo <= main_rt <= xhi:
+            if not np.isfinite(rt_line) or abs(main_rt - rt_line) > 1e-4:
+                ax.axvline(float(main_rt), color="#27ae60", linestyle=":",
+                           linewidth=1.2, zorder=4, alpha=0.9, label="主峰RT")
+        handles, labels = ax.get_legend_handles_labels()
+        if handles:
+            ax.legend(loc="upper right", fontsize=8)
 
         out_name = Path(image_name).stem if image_name else f"compound_{idx+1}"
         pfx = (plot_file_prefix or "").strip()
@@ -2176,8 +2221,8 @@ def run_post_newtest(args):
         # true signal in interval (peak height), then area, then score.
         candidates = []
         for irow, rr in g.iterrows():
-            lo = _safe_float(rr.get("rt_min"), np.nan)
-            hi = _safe_float(rr.get("rt_max"), np.nan)
+            lo = _peak_lo(rr)
+            hi = _peak_hi(rr)
             if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
                 continue
             pk_rt_i, pk_h_i = _peak_rt_height(rt, y, lo, hi)
@@ -2204,8 +2249,8 @@ def run_post_newtest(args):
                 b2 = int(bests[np.argmax(scs[bests])])
                 main_idx = int(candidates[b2][0])
         r_main = g.iloc[main_idx].copy()
-        rt_min = _safe_float(r_main.get("rt_min"), np.nan)
-        rt_max = _safe_float(r_main.get("rt_max"), np.nan)
+        rt_min = _peak_lo(r_main)
+        rt_max = _peak_hi(r_main)
 
         main_score = _safe_float(r_main.get("score"), 0.0)
 
@@ -2227,8 +2272,8 @@ def run_post_newtest(args):
             # Build refined peaks for every valid predicted box row in this image group.
             refined: List[Dict] = []
             for irow, rr in g.iterrows():
-                rt_min0 = _safe_float(rr.get("rt_min"), np.nan)
-                rt_max0 = _safe_float(rr.get("rt_max"), np.nan)
+                rt_min0 = _peak_lo(rr)
+                rt_max0 = _peak_hi(rr)
                 sc0 = _safe_float(rr.get("score"), 0.0)
                 if not np.isfinite(rt_min0) or not np.isfinite(rt_max0) or rt_max0 <= rt_min0:
                     continue
@@ -2519,8 +2564,8 @@ def run_post_newtest(args):
         for j, rr in g.iterrows():
             if j == main_idx:
                 continue
-            lo2 = _safe_float(rr.get("rt_min"), np.nan)
-            hi2 = _safe_float(rr.get("rt_max"), np.nan)
+            lo2 = _peak_lo(rr)
+            hi2 = _peak_hi(rr)
             if not np.isfinite(lo2) or not np.isfinite(hi2) or lo2 >= hi2:
                 continue
             if not _rt_offset_gate_with_width(

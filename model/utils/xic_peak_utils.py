@@ -266,3 +266,113 @@ def has_secondary_peak_in_roi(rt_array, intensity_row, rt_min, rt_max, rt_lo, rt
             if secondary_height >= min_height:
                 return True, main_height, secondary_height
     return False, main_height, None
+
+
+def compute_local_snr(rt_array, intensity_row, rt_min, rt_max,
+                      neighbor_intervals=None, min_noise_pts=3,
+                      baseline_percentile=25.0, low_noise_frac=0.4,
+                      max_flank_span_min=2.0):
+    """
+    本地 SNR（整谱场景专用）：噪声参考取"本峰边界到最近相邻峰边界之间"的安静区段，
+    避免把相邻峰计入噪声导致 SNR 低估。
+
+    neighbor_intervals: 其他峰的 (rt_min, rt_max) 区间列表。左/右侧分别找最近的相邻峰：
+      - 左侧：rt_max 最接近（且 < rt_min）的相邻峰，噪声区 = (邻居.rt_max, rt_min)
+      - 右侧：rt_min 最接近（且 > rt_max）的相邻峰，噪声区 = (rt_max, 邻居.rt_min)
+    某侧无邻居或点数不足时，回退到该侧框外扇区内的"低强度安静点"
+    （强度 <= 该扇区分位 low_noise_frac 的点），再不足则用整扇区。
+
+    SNR = 2 * (apex - baseline) / max(noise_pp_left, noise_pp_right)
+    """
+    rt = np.asarray(rt_array, dtype=np.float64)
+    intensity = np.asarray(intensity_row, dtype=np.float64)
+    if rt.size != intensity.size or rt.size < 5:
+        return np.nan
+    rt_min = float(rt_min)
+    rt_max = float(rt_max)
+    if not (np.isfinite(rt_min) and np.isfinite(rt_max) and rt_max > rt_min):
+        return np.nan
+
+    mask_box = (rt >= rt_min) & (rt <= rt_max)
+    int_box = np.maximum(intensity[mask_box].astype(np.float64), 0.0)
+    if int_box.size < 5 or float(np.max(int_box)) <= 0:
+        return np.nan
+    apex = float(np.max(int_box))
+
+    peers = []
+    if neighbor_intervals:
+        for plo, phi in neighbor_intervals:
+            plo, phi = float(plo), float(phi)
+            if np.isfinite(plo) and np.isfinite(phi) and phi > plo:
+                peers.append((plo, phi))
+
+    def _quiet_points(side_rt, side_int):
+        """从单侧扇区筛出低强度安静点；点数不足回退整扇区。"""
+        if side_int.size < 1:
+            return side_int
+        thr = float(np.percentile(side_int, 100.0 * low_noise_frac))
+        quiet = side_int[side_int <= thr]
+        return quiet if quiet.size >= min_noise_pts else side_int
+
+    all_noise = []
+    noise_pp_left = np.nan
+    noise_pp_right = np.nan
+
+    # ---- 左侧 ----
+    left_mask = rt < rt_min
+    left_neighbors = [p for p in peers if p[1] < rt_min]
+    left_region = None
+    if left_neighbors:
+        nearest = max(left_neighbors, key=lambda p: p[1])  # rt_max 最大（最接近本峰）
+        n_mask = (rt > nearest[1]) & (rt < rt_min)
+        if int(np.count_nonzero(n_mask)) >= min_noise_pts:
+            left_region = intensity[n_mask]
+    if left_region is None:
+        flank = intensity[left_mask]
+        if flank.size >= 2:
+            span = float(rt_min) - float(rt[left_mask][0]) if np.any(left_mask) else 0.0
+            if span > max_flank_span_min and np.any(left_mask):
+                # 限制扇区跨度，避免远处的基线漂移计入
+                sub = rt < (rt_min - max_flank_span_min)
+                flank = intensity[left_mask & ~sub]
+            left_region = _quiet_points(rt[left_mask], flank)
+    if left_region is not None and left_region.size >= 2:
+        lv = np.maximum(left_region.astype(np.float64), 0.0)
+        all_noise.extend(lv.tolist())
+        noise_pp_left = float(np.max(lv) - np.min(lv))
+
+    # ---- 右侧 ----
+    right_mask = rt > rt_max
+    right_neighbors = [p for p in peers if p[0] > rt_max]
+    right_region = None
+    if right_neighbors:
+        nearest = min(right_neighbors, key=lambda p: p[0])  # rt_min 最小（最接近本峰）
+        n_mask = (rt > rt_max) & (rt < nearest[0])
+        if int(np.count_nonzero(n_mask)) >= min_noise_pts:
+            right_region = intensity[n_mask]
+    if right_region is None:
+        flank = intensity[right_mask]
+        if flank.size >= 2:
+            span = float(rt[right_mask][-1]) - float(rt_max) if np.any(right_mask) else 0.0
+            if span > max_flank_span_min and np.any(right_mask):
+                sub = rt > (rt_max + max_flank_span_min)
+                flank = intensity[right_mask & ~sub]
+            right_region = _quiet_points(rt[right_mask], flank)
+    if right_region is not None and right_region.size >= 2:
+        rv = np.maximum(right_region.astype(np.float64), 0.0)
+        all_noise.extend(rv.tolist())
+        noise_pp_right = float(np.max(rv) - np.min(rv))
+
+    if np.isnan(noise_pp_left) and np.isnan(noise_pp_right):
+        return np.nan
+    noise_pp = np.nanmax([x for x in (noise_pp_left, noise_pp_right) if not np.isnan(x)])
+    if noise_pp <= 0:
+        noise_pp = 1e-10
+    if all_noise:
+        baseline = float(np.median(all_noise))
+    else:
+        baseline = float(np.percentile(np.maximum(intensity, 0.0), baseline_percentile))
+    signal = apex - baseline
+    if signal <= 0:
+        return np.nan
+    return 2.0 * signal / noise_pp

@@ -62,8 +62,8 @@ def verdict_of(rows, gt, tol):
         return None, None, None, "FN(漏检)"
     best = rows[0]
     try:
-        ds = abs(float(best["rt_min"]) - gt[0])
-        de = abs(float(best["rt_max"]) - gt[1])
+        ds = abs(float(best.get("peak_start", best.get("rt_min"))) - gt[0])
+        de = abs(float(best.get("peak_end", best.get("rt_max"))) - gt[1])
     except (TypeError, ValueError, KeyError):
         return best, None, None, "FP(区间无效)"
     ok = ds <= tol + 1e-9 and de <= tol + 1e-9
@@ -202,7 +202,8 @@ def main():
                 if row is None:
                     return
                 try:
-                    s, e = float(row["rt_min"]), float(row["rt_max"])
+                    s = float(row.get("peak_start", row.get("rt_min")))
+                    e = float(row.get("peak_end", row.get("rt_max")))
                 except (TypeError, ValueError, KeyError):
                     return
                 _span_px(s, e, color, "--", 1.6, 0.10)
@@ -224,7 +225,7 @@ def main():
                 if row is None:
                     return f"{verdict}", color
                 try:
-                    rng = f"[{float(row['rt_min']):.3f}, {float(row['rt_max']):.3f}]"
+                    rng = f"[{float(row.get('peak_start', row.get('rt_min'))):.3f}, {float(row.get('peak_end', row.get('rt_max'))):.3f}]"
                     sc = float(row.get("score") or 0)
                 except (TypeError, ValueError, KeyError):
                     rng, sc = "?", float("nan")
@@ -255,12 +256,12 @@ def main():
                 "sample": stem, "native_id": native_id,
                 "gt_start": gt[0] if gt else None, "gt_end": gt[1] if gt else None,
                 "gt_area": gt_area,
-                f"{args.name1}_start": float(r1["rt_min"]) if r1 else None,
-                f"{args.name1}_end": float(r1["rt_max"]) if r1 else None,
+                f"{args.name1}_start": float(r1.get("peak_start", r1.get("rt_min"))) if r1 else None,
+                f"{args.name1}_end": float(r1.get("peak_end", r1.get("rt_max"))) if r1 else None,
                 f"{args.name1}_score": float(r1.get("score") or 0) if r1 else None,
                 f"{args.name1}_verdict": v1,
-                f"{args.name2}_start": float(r2["rt_min"]) if r2 else None,
-                f"{args.name2}_end": float(r2["rt_max"]) if r2 else None,
+                f"{args.name2}_start": float(r2.get("peak_start", r2.get("rt_min"))) if r2 else None,
+                f"{args.name2}_end": float(r2.get("peak_end", r2.get("rt_max"))) if r2 else None,
                 f"{args.name2}_score": float(r2.get("score") or 0) if r2 else None,
                 f"{args.name2}_verdict": v2,
             })

@@ -85,8 +85,10 @@ def main():
 
     print("[INFO] 加载 %d 条 chrom" % len(records))
 
-    # 加载 batch xic_matrix
-    xic_dir = result_root / "xic-roi-batch" / args.sample
+    # 加载 batch xic_matrix（新目录 xic_roi 优先，回退旧 xic-roi-batch）
+    from tools._shared.artifacts import resolve_roi_root
+
+    xic_dir = resolve_roi_root(result_root) / args.sample
     xic_npy = xic_dir / "xic_matrix.npy"
     if xic_npy.is_file():
         x = np.load(str(xic_npy))
@@ -99,10 +101,12 @@ def main():
         print("[ERROR] 无 batch xic_matrix: %s" % xic_npy)
         sys.exit(1)
 
-    # 加载 SNR xic_matrix
-    snr_sub = "SNR_box_%d" % int(args.snr_min) if args.snr_min == int(args.snr_min) else "SNR_box_%.10g" % args.snr_min
-    snr_dir = result_root / "snr_filtered" / args.sample / snr_sub
+    # 加载 SNR xic_matrix（Step 2：结果直写 prediction_refined/<样本>/；旧布局 SNR_box_<thr>/ 作回退）
+    snr_dir = result_root / "prediction_refined" / args.sample
     snr_npy = snr_dir / "xic_matrix.npy"
+    if not snr_npy.is_file():
+        snr_sub = "SNR_box_%d" % int(args.snr_min) if args.snr_min == int(args.snr_min) else "SNR_box_%.10g" % args.snr_min
+        snr_npy = result_root / "snr_filtered" / args.sample / snr_sub / "xic_matrix.npy"
     if snr_npy.is_file():
         x = np.load(str(snr_npy))
         rt_snr = x[0, :].astype(np.float64)

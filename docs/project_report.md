@@ -252,7 +252,7 @@ v2 = v1 热启动 + 三项关键优化：
 |---|---|---|
 | `pipeline` | 完整管线：ROI 提取 → 预测 → SNR 筛选 → 精修（单文件或目录递归） | ⭐ 生产环境（推荐） |
 | `roi` | 仅 EIC/ROI 提取（无需 `--model`，无预测 CSV） | 检查 XIC/ROI 质量 |
-| `batch_dir` | 对已有 XIC/ROI 中间结果目录批量预测+积分 | 续跑 / 断点恢复 / ROI 复用 |
+| `roi2inference` | 对已有 XIC/ROI 中间结果目录批量预测+积分 | 续跑 / 断点恢复 / ROI 复用 |
 
 `roi`/`pipeline` 均支持 `--mzml` 单文件或 `--batch_dir` 目录递归扫描（含子目录）；不同子目录同名 stem 自动路径展平防覆盖。
 
@@ -619,7 +619,7 @@ thr    TP   FP   FN      P       R      F1
 - **prediction.csv「一名三义」修复**（plan_products §1）：`prediction.csv` = 阶段②原始预测（唯一含义）、`prediction_snr.csv` = 阶段③SNR 后、`prediction_refined.csv` = 阶段④精修；SNR 阶段改名 + 读方 5 处带旧名回退兼容；
 - **中文目录名 ASCII 化**：`筛选保留/筛选剔除/` → `snr_kept/snr_dropped/`；
 - **QC 参数双阶段重复下发修复**：QC 仅在阶段①生效，阶段③只做 SNR；
-- **batch_dir 模式 integration_method 透传**：修复手搓 Namespace 硬编码；
+- **roi2inference 模式 integration_method 透传**：修复手搓 Namespace 硬编码；
 - **模式重构（7→3）**：消除文件收集重复、每图重载模型、双代码路径分叉等 6 项 bug；
 - **训练终端输出优化**：中英对照 → 紧凑英文短码 + 中文汇总，逐步行/汇总块/图例分层，22 项单测回归；
 - **终端输出方案文档**（plan_terminal）：术语去 legacy、设备横幅去重、日志分级语义修正、风格统一、噪音清理等（部分实施）。

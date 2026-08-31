@@ -616,8 +616,8 @@ def build_masked_subdir_for_candidates(
             row, xic_idx, rt_min, rt_max = item[0], item[1], item[2], item[3]
         else:
             row, xic_idx = item[0], item[1]
-            rt_min = float(row["rt_min"])
-            rt_max = float(row["rt_max"])
+            rt_min = float(row.get("peak_start", row.get("rt_min", 0.0)))
+            rt_max = float(row.get("peak_end", row.get("rt_max", 0.0)))
         image_name = str(row.get("image", "")).strip()
         compound_name = row.get("compound_name", xic_idx + 1)
 
@@ -839,8 +839,8 @@ def plot_newprediction_on_xic(
 
 def main():
     parser = argparse.ArgumentParser(description="两轮识别：筛选→掩蔽→第二轮→合并→可视化")
-    parser.add_argument("--batch_predictions", type=str, default="../output/inference/batch_predictions")
-    parser.add_argument("--images_root", type=str, default="../output/inference/xic-roi-batch")
+    parser.add_argument("--batch_predictions", type=str, default="../output/inference/predictions_model")
+    parser.add_argument("--images_root", type=str, default="../output/inference/xic_roi")
     parser.add_argument("--model", type=str, required=True, help="模型 checkpoint 路径")
     parser.add_argument("--output_base", type=str, default="../output/inference/two_round",
                         help="输出根目录：masked/ round2/ newprediction/ plots/")
@@ -919,7 +919,9 @@ def main():
             if isinstance(rt_lo, (list, tuple)):
                 rt_lo, rt_hi = rt_lo[0], rt_hi[1]
             rt_min_adj, rt_max_adj = adjust_first_round_interval(
-                rt_array, intensity_matrix[idx, :], float(row["rt_min"]), float(row["rt_max"]),
+                rt_array, intensity_matrix[idx, :],
+                float(row.get("peak_start", row.get("rt_min", 0.0))),
+                float(row.get("peak_end", row.get("rt_max", 0.0))),
                 float(rt_lo), float(rt_hi), min_secondary_ratio=args.min_secondary_ratio,
             )
             adapted_candidates.append((row, idx, rt_min_adj, rt_max_adj))

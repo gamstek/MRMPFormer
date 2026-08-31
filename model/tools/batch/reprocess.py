@@ -103,14 +103,16 @@ def run_snr(
     """运行 SNR 重跑（可选链式 post_newtest）。"""
     from postprocessing.snr_filter import run as snr_run
 
-    batch_root = result_root / "batch_predictions"
-    xic_root = result_root / "xic-roi-batch"
+    from tools._shared.artifacts import resolve_pred_root, resolve_roi_root
+
+    batch_root = resolve_pred_root(result_root)
+    xic_root = resolve_roi_root(result_root)
 
     if not batch_root.is_dir():
-        print("[ERROR] 未找到 batch_predictions: %s" % batch_root)
+        print("[ERROR] 未找到 predictions_model（或旧 batch_predictions）: %s" % batch_root)
         return 1
     if not xic_root.is_dir():
-        print("[ERROR] 未找到 xic-roi-batch: %s" % xic_root)
+        print("[ERROR] 未找到 xic_roi（或旧 xic-roi-batch）: %s" % xic_root)
         return 1
     if not mzml_dir.is_dir():
         print("[ERROR] mzML 目录不存在: %s" % mzml_dir)
@@ -186,7 +188,7 @@ def run_snr(
         if not run_post:
             continue
 
-        snr_run_dir = out_parent / snr_sub
+        snr_run_dir = out_parent  # Step 2：snr_filter 结果直写样本目录，不再有 SNR_box_<thr>/ 子层
         pred_in = snr_run_dir / "prediction_snr.csv"
         if not pred_in.is_file():
             pred_in = snr_run_dir / "prediction.csv"  # 兼容旧版 SNR 输出名
@@ -269,9 +271,11 @@ def run_post_only(
     stop_on_error: bool,
 ) -> int:
     """仅运行 post_newtest（不重跑 SNR）。"""
-    xic_root = result_root / "xic-roi-batch"
+    from tools._shared.artifacts import resolve_roi_root
+
+    xic_root = resolve_roi_root(result_root)
     if not xic_root.is_dir():
-        print("[ERROR] 未找到 xic-roi-batch: %s" % xic_root)
+        print("[ERROR] 未找到 xic_roi（或旧 xic-roi-batch）: %s" % xic_root)
         return 1
 
     samples = _discover_samples(snr_root)
@@ -287,7 +291,8 @@ def run_post_only(
     n_ok, n_skip = 0, 0
     for samp in samples:
         stem = samp.name
-        results_dir = samp / snr_subdir
+        # Step 2：新布局结果直写样本目录；旧布局由 --snr_subdir（如 SNR_box_3）指定子层
+        results_dir = samp / snr_subdir if snr_subdir else samp
         pred = results_dir / "prediction.csv"
         xic_dir = xic_root / stem
         xic_npy = xic_dir / "xic_matrix.npy"
@@ -398,7 +403,8 @@ def main():
     ap.add_argument("--min_chrom_max_intensity", type=float, default=SNR_DEFAULTS["min_chrom_max_intensity"])
 
     # Post 参数
-    ap.add_argument("--snr_subdir", default="SNR_box_3", help="post 阶段各样品下的 SNR 子目录名")
+    ap.add_argument("--snr_subdir", default=None,
+                    help="post 阶段 SNR 子目录名；新布局（结果直写样本目录）不传；旧布局（SNR_box_3 等）重跑历史数据时传")
     ap.add_argument("--output_name", default=POST_DEFAULTS["output_name"])
     ap.add_argument("--small_peak_rt_tol", type=float, default=POST_DEFAULTS["small_peak_rt_tol"])
     ap.add_argument("--min_confidence", type=float, default=POST_DEFAULTS["min_confidence"])

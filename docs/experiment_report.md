@@ -305,7 +305,7 @@ D:\Anaconda3\envs\gamstekpeaking\python.exe -m tools.evaluation.dump_queries --m
 | 模式 | 用途 | 输入 | 输出 |
 |---|---|---|---|
 | `roi` | mzML → ROI（仅阶段①） | `--mzml` 文件/目录 或 `--batch_dir` 目录（递归） | `<out>/<key>/` ROI 目录 |
-| `batch_dir` | 已有 ROI 目录批量预测 | `--batch_dir`（每子目录一套 ROI） | `<out>/<子目录>/prediction.csv` |
+| `roi2inference` | 已有 ROI 目录批量预测 | `--batch_dir`（每子目录一套 ROI） | `<out>/<子目录>/prediction.csv` |
 | `pipeline`（默认） | 完整管线①~④（单文件或批量） | 同 `roi` | `base_out/` 四阶段产物 |
 
 > `<key>` = mzML 文件名 stem；目录递归下不同子目录同名 stem 自动改为路径展平（如 `子目录A__样品1`）避免覆盖。
@@ -316,9 +316,9 @@ D:\Anaconda3\envs\gamstekpeaking\python.exe -m tools.evaluation.dump_queries --m
 - 每通道 ROI jpeg（命名 `N_mz{母离子}_q3{子离子}.jpeg`）
 - `feature.csv`、`roi_windows.csv`、`xic_matrix.npy`
 - 被 QC 剔除的通道记录 `pipeline_qc_excluded.csv`
-- 想看预测框标注：`roi` 生成 ROI 后，再对该目录跑 `batch_dir --plot`（模型仅加载一次）
+- 想看预测框标注：`roi` 生成 ROI 后，再对该目录跑 `roi2inference --plot`（模型仅加载一次）
 
-**② `batch_dir`**：复用 `predictor.main()` 批量模式，逐子目录：
+**② `roi2inference`**：复用 `predictor.main()` 批量模式，逐子目录：
 - `<out>/<子目录>/prediction.csv`（积分方式非 linear 时为 `prediction_{method}.csv`）
 - `<out>/<子目录>/predicted_plots/`（`--plot`）
 

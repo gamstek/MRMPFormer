@@ -60,7 +60,7 @@ MRMPFormer 是一个基于 **DETR（ResNet-50 + 1 层 Transformer 编解码器�
 - **默认输出目录**（`configs/inference_pipeline.json` 的 `output_dir` 默认值，及 cli.py 各模式兜底）：
   - `pipeline` → `../output/inference/full_pipeline`
   - `roi` → `../output/inference/xic-roi-batch`
-  - `batch_dir` → `../output/inference/batch_predictions`
+  - `roi2inference` → `../output/inference/batch_predictions`
 - **测试/试跑输出**：显式指定 `--output_dir ../output/test/<名称>` 单独存放，**禁止**与正式产物混放
 - 训练产物：`model/output_v2/`（微调 checkpoint）、`model/output_baseline/`（基线），`.pth` 不入 git（.gitignore 已覆盖 `output/`）
 

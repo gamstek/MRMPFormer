@@ -82,27 +82,27 @@ def check_label_rt_consistency(labels, tol=1.0):
             for _, r in g.iterrows():
                 _row("cross_sample", r, None, None, n, "kept", False)
             continue
-        rt_range = float(g["rt"].max() - g["rt"].min())
+        range_val = float(g["rt"].max() - g["rt"].min())
         median = float(g["rt"].median())
-        exceed = rt_range > tol
+        exceed = range_val > tol
         if exceed:
             print(
-                f"[WARN][QC] 跨样品 RT 极差 {rt_range:.3f} min > {tol} min，疑似实验有误，请人工复核: "
+                f"[WARN][QC] 跨样品 RT 极差 {range_val:.3f} min > {tol} min，疑似标注有误，请人工复核: "
                 f"化合物「{compound}」通道「{channel}」"
                 + "".join(f" | {r['sample_id']}@{r['rt']:.3f}" for _, r in g.iterrows())
             )
         for _, r in g.iterrows():
             if not exceed:
-                _row("cross_sample", r, median, rt_range, n, "kept", False)
+                _row("cross_sample", r, median, range_val, n, "kept", False)
             elif n >= 3:
                 dev = abs(r["rt"] - median)
                 excl = dev > tol
-                _row("cross_sample", r, median, rt_range, n,
+                _row("cross_sample", r, median, range_val, n,
                      "excluded" if excl else "kept", excl)
                 if excl:
                     exclude_keys.add((r["sample_id"], r["compound"], r["channel"]))
             else:  # n == 2，无法仲裁，两行都剔
-                _row("cross_sample", r, median, rt_range, n, "excluded", True)
+                _row("cross_sample", r, median, range_val, n, "excluded", True)
                 exclude_keys.add((r["sample_id"], r["compound"], r["channel"]))
 
     # ===== B. 样品内双离子极差：groupby (sample_id, compound) =====
@@ -112,20 +112,20 @@ def check_label_rt_consistency(labels, tol=1.0):
             for _, r in g.iterrows():
                 _row("ion_pair", r, None, None, n, "kept", False)
             continue
-        rt_range = float(g["rt"].max() - g["rt"].min())
+        range_val = float(g["rt"].max() - g["rt"].min())
         median = float(g["rt"].median())
-        exceed = rt_range > tol
+        exceed = range_val > tol
         if exceed:
             print(
-                f"[WARN][QC] 双离子 RT 极差 {rt_range:.3f} min > {tol} min，疑似实验有误，请人工复核: "
+                f"[WARN][QC] 双离子 RT 极差 {range_val:.3f} min > {tol} min，疑似标注有误，请人工复核: "
                 f"样品「{sample_id}」化合物「{compound}」"
                 + "".join(f" | {r['channel']}@{r['rt']:.3f}" for _, r in g.iterrows())
             )
         for _, r in g.iterrows():
             if not exceed:
-                _row("ion_pair", r, median, rt_range, n, "kept", False)
+                _row("ion_pair", r, median, range_val, n, "kept", False)
             else:  # 两通道都剔
-                _row("ion_pair", r, median, rt_range, n, "excluded", True)
+                _row("ion_pair", r, median, range_val, n, "excluded", True)
                 exclude_keys.add((r["sample_id"], r["compound"], r["channel"]))
 
     return qc_rows, exclude_keys
@@ -163,7 +163,7 @@ _GUIDANCE = {
     "ion_pair": (
         "双离子 RT 极差超阈值：定量/定性离子同化合物应共流出；极差大说明通道归属错误"
         "或标注到干扰峰。两通道均已剔除（不生成 ROI、不进训练、不参与评估指标）。"
-        "请人工核实：检查方法表 ert、确认通道归属，修正后重建数据。"
+        "请人工核实：检查标注 rt、确认通道归属，修正后重建数据。"
     ),
     "cross_sample": (
         "跨样品 RT 极差超阈值：同化合物同通道跨样品 RT 漂移异常。组内样品数>=3 时仅剔"

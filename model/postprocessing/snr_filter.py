@@ -6,8 +6,8 @@
   - **框外**所有数据点视为噪声区，估计均值与 RMS；
   - **框内**信号取 max(强度) − 噪声区均值，SNR = 信号 / RMS_noise（均基于平滑后的强度）。
 
-输出（均写在 --output_dir 下自动创建的 SNR_box_<阈值>/ 内）：
-  - box_outside_snr_report.csv：每条 prediction 行的原始 SNR 计算结果；
+输出（均写在 --output_dir 下；pipeline 中即样本目录，默认不建 SNR_box_<阈值>/ 子层）：
+  - qc4_snr_<样本名>.csv：每条 prediction 行的原始 SNR 计算结果（防线4 样本级 QC）；
   - prediction_snr.csv：仅保留 SNR ≥ 阈值 的行（列与输入 prediction 对齐，并追加 snr_outside_box 等）；
   - feature.csv、roi_windows.csv、xic_matrix.npy：仅针对保留行，与项目惯例一致；
   - snr_kept/、snr_dropped/：带红色预测框的 ROI jpeg（文件名含 SNR）。
@@ -452,6 +452,12 @@ def _match_chrom(
     )
     if k in by_mz:
         return by_mz[k]
+    # Step 3：prediction 表已删除 q3 列；q3 缺失时退回仅按 mz 匹配（取首个同 mz 通道）
+    if mz_f is not None and q3_f is None:
+        mz_r = round(mz_f, 4)
+        for (km, _kq), ch in by_mz.items():
+            if km == mz_r:
+                return ch
     cname = row.get("compound_name")
     if cname is not None and not (isinstance(cname, float) and np.isnan(cname)):
         try:
@@ -475,10 +481,12 @@ def run(
     min_chrom_points: int = 0,
     min_chrom_max_intensity: float = 0.0,
     save_jpeg: bool = True,
+    nested_run_dir: bool = False,
 ) -> int:
     parent = Path(output_dir).resolve()
     parent.mkdir(parents=True, exist_ok=True)
-    run_dir = parent / _snr_box_run_dir_name(min_snr_cli)
+    # Step 2 起默认结果直写 output_dir（即样本目录）；nested_run_dir=True 时保留旧 SNR_box_<阈值>/ 子层
+    run_dir = parent / _snr_box_run_dir_name(min_snr_cli) if nested_run_dir else parent
     run_dir.mkdir(parents=True, exist_ok=True)
     print("[INFO] 输出根目录: %s" % run_dir)
 
@@ -594,7 +602,8 @@ def run(
         report_rows.append(rec)
 
     df_report = pd.DataFrame(report_rows)
-    rep_path = _df_to_csv_safe(df_report, run_dir / "box_outside_snr_report.csv")
+    # Step 5：防线4 样本级 QC 命名 qc4_snr_<样本名>.csv
+    rep_path = _df_to_csv_safe(df_report, run_dir / ("qc4_snr_%s.csv" % run_dir.name))
     print("[INFO] SNR 报告: %s （%d 行）" % (rep_path, len(df_report)))
 
     if not passed_records:
@@ -699,7 +708,10 @@ def main():
     ap.add_argument("--mzml", required=True)
     ap.add_argument("--prediction_csv", required=True)
     ap.add_argument("--roi_windows_csv", default="", help="可选；需含 image, rt_lo, rt_hi")
-    ap.add_argument("--output_dir", required=True, help="父目录；其下创建 SNR_box_<阈值>/")
+    ap.add_argument("--output_dir", required=True,
+                    help="输出目录（默认直写该目录=样本目录；加 --nested_run_dir 则其下创建旧版 SNR_box_<阈值>/ 子层）")
+    ap.add_argument("--nested_run_dir", action="store_true",
+                    help="兼容旧行为：在 output_dir 下再建 SNR_box_<阈值>/ 子层")
     ap.add_argument("--min_snr", "--snr_threshold", dest="min_snr", type=float, default=3.0)
     ap.add_argument(
         "--gaussian_sigma",
@@ -744,6 +756,7 @@ def main():
             int(args.min_chrom_points),
             float(args.min_chrom_max_intensity),
             save_jpeg=not bool(args.no_save_jpeg),
+            nested_run_dir=bool(args.nested_run_dir),
         )
     )
 

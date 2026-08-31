@@ -1,7 +1,7 @@
 # Bug 复核与修复建议（任务 2）
 
 > 复核日期：2026-08-18 ｜ 基线：commit `8717e4c`（模式 7→3 重构）+ 工作区未提交改动
-> 背景：模式精简改名（`roi` / `batch_dir` / `pipeline`）后，对任务 2 原列 6 项 bug 重新审阅，确认存留状态并给出修复建议。
+> 背景：模式精简改名（`roi` / `roi2inference` / `pipeline`）后，对任务 2 原列 6 项 bug 重新审阅，确认存留状态并给出修复建议。
 
 ---
 
@@ -29,10 +29,10 @@
 **现状证据（修复前）：**
 
 - pipeline 分支（[cli.py:802-816](file:///d:/work/MRMPFormer/model/inference/cli.py#L802-L816)）：手工构造 15 个字段的 Namespace 传 `newtest_main(a)`；
-- batch_dir 分支（[cli.py:1012-1015](file:///d:/work/MRMPFormer/model/inference/cli.py#L1012-L1015)）：手工构造 14 个字段。
+- roi2inference 分支（[cli.py:1012-1015](file:///d:/work/MRMPFormer/model/inference/cli.py#L1012-L1015)）：手工构造 14 个字段。
 
-**(a) 新问题：batch_dir 模式硬编码 `integration_method="linear"`**
-cli 定义了 `--integration_method`（choices: linear/raw/external_baseline，[cli.py:533-535](file:///d:/work/MRMPFormer/model/inference/cli.py#L533-L535)），pipeline 分支正确使用 `args.integration_method`，但 batch_dir 分支 Namespace 里写死 `"linear"`——**用户在 batch_dir 模式下传该参数被静默忽略**。
+**(a) 新问题：roi2inference 模式硬编码 `integration_method="linear"`**
+cli 定义了 `--integration_method`（choices: linear/raw/external_baseline，[cli.py:533-535](file:///d:/work/MRMPFormer/model/inference/cli.py#L533-L535)），pipeline 分支正确使用 `args.integration_method`，但 roi2inference 分支 Namespace 里写死 `"linear"`——**用户在 roi2inference 模式下传该参数被静默忽略**。
 
 **(b) 既有问题：字段清单与 predictor 支持的参数不同步**
 predictor 实际支持 `predict_smooth_sigma`、`keep_smoothed_inputs`（[predictor.py:856-866](file:///d:/work/MRMPFormer/model/inference/predictor.py#L856-L866)），两个 Namespace 均未传，靠 predictor 内 `getattr(args, "predict_smooth_sigma", 0.0)` 兜底——功能默认关闭且 CLI 无从开启（pipeline 模式下想启用预测输入平滑目前做不到）。
@@ -47,11 +47,11 @@ predictor 实际支持 `predict_smooth_sigma`、`keep_smoothed_inputs`（[predic
 
 | 方案 | 做法 | 侵入度 | 风险 |
 |---|---|---|---|
-| **最小修**（推荐先行） | 仅改 batch_dir 分支：`integration_method=args.integration_method`（或 `getattr(args,...)`），删除死 `prediction_output` 默认值 | 2 行 | 近零 |
-| 中修 | 给 `predictor.main()` 增加一个 `build_namespace(**overrides)` 工厂（predictor 内自持字段默认值），cli 两处改调工厂 | ~40 行 | 低，需回归 pipeline/batch_dir 各跑一次 |
+| **最小修**（推荐先行） | 仅改 roi2inference 分支：`integration_method=args.integration_method`（或 `getattr(args,...)`），删除死 `prediction_output` 默认值 | 2 行 | 近零 |
+| 中修 | 给 `predictor.main()` 增加一个 `build_namespace(**overrides)` 工厂（predictor 内自持字段默认值），cli 两处改调工厂 | ~40 行 | 低，需回归 pipeline/roi2inference 各跑一次 |
 | 大修 | predictor.main 改纯函数签名（显式 kwargs），argparse 仅做薄壳 | ~150 行 | 中，peak_refinement/area_integration 对 predictor 的既有 import 需同步核对 |
 
-**验证方法（修复后）**：`--mode batch_dir --integration_method raw` 后检查输出文件名为 `prediction_raw.csv`（修复前恒为 `prediction.csv`）。
+**验证方法（修复后）**：`--mode roi2inference --integration_method raw` 后检查输出文件名为 `prediction_raw.csv`（修复前恒为 `prediction.csv`）。
 
 ### 2.2 QC 参数双阶段重复下发（原 #5）
 

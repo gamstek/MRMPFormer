@@ -182,14 +182,14 @@ def main():
     parser.add_argument(
         "--batch_predictions",
         type=str,
-        default="../output/inference/batch_predictions",
-        help="batch_predictions 根目录",
+        default="../output/inference/predictions_model",
+        help="预测输出根目录（新命名；旧 batch_predictions 目录仍可由 --batch_predictions 显式指定）",
     )
     parser.add_argument(
         "--images_root",
         type=str,
-        default="../output/inference/xic-roi-batch",
-        help="ROI 图像所在根目录（子目录名与 batch_predictions 子目录对应）",
+        default="../output/inference/xic_roi",
+        help="ROI 图像所在根目录（新命名；旧 xic-roi-batch 目录仍可显式指定；子目录名与预测输出子目录对应）",
     )
     parser.add_argument(
         "--output_dir",

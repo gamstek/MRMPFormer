@@ -681,12 +681,12 @@ def main_cli():
     parser.add_argument("--feature", type=str, default=None, help="feature.csv 路径，默认 <images_path>/feature.csv")
     parser.add_argument("--images_path", type=str, default=None, help="单样本：ROI/XIC 目录；--from_refined 时为含修正 CSV 的目录")
     parser.add_argument("--batch_dir", type=str, default=None, help="批量：子目录各跑一遍")
-    parser.add_argument("--batch_output", type=str, default="../output/inference/batch_predictions_snr", help="批量输出根目录")
+    parser.add_argument("--batch_output", type=str, default="../output/inference/predictions_model_snr", help="批量输出根目录")
     parser.add_argument(
         "--input_root",
         type=str,
         default=None,
-        help="--from_refined 批量时 XIC 根目录（如 xic-roi-batch），子目录名与 batch_dir 一致",
+        help="--from_refined 批量时 XIC 根目录（如 xic_roi），子目录名与 batch_dir 一致",
     )
     parser.add_argument("--model", type=str, default=None, help="模型 .pth（--from_refined 时不需要）")
     parser.add_argument(

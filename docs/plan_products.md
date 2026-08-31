@@ -99,7 +99,7 @@ D:\Anaconda3\envs\gamstekpeaking\python.exe -m inference.cli --mode pipeline --c
 
 ### 2.4 死默认值清理
 
-- **现状**：cli.py batch_dir 分支 Namespace 的 `prediction_output="../output/inference/prediction.csv"`（[cli.py:1007](file:///d:/work/MRMPFormer/model/inference/cli.py#L1007)）在批量分支永不写入；pipeline 分支同字段（[cli.py:802](file:///d:/work/MRMPFormer/model/inference/cli.py#L802)）同样只在单目录路径生效。
+- **现状**：cli.py roi2inference 分支 Namespace 的 `prediction_output="../output/inference/prediction.csv"`（[cli.py:1007](file:///d:/work/MRMPFormer/model/inference/cli.py#L1007)）在批量分支永不写入；pipeline 分支同字段（[cli.py:802](file:///d:/work/MRMPFormer/model/inference/cli.py#L802)）同样只在单目录路径生效。
 - **建议**：与 plan_debug.md §2.1（Namespace 工厂化）合并处理——中修方案落地时统一清理；此处仅记录。
 
 ### 2.5 pipeline_timing.log 无限追加
@@ -109,7 +109,7 @@ D:\Anaconda3\envs\gamstekpeaking\python.exe -m inference.cli --mode pipeline --c
 
 ### 2.6 `--output_dir` 默认值体系统一说明（文档项）✅ 已实施
 
-- **现状**：roi→`xic-roi-batch`、batch_dir→`../output/inference/batch_predictions`、pipeline→`../output/inference/full_pipeline`，各有道理但散落各分支。
+- **现状**：roi→`xic-roi-batch`、roi2inference→`../output/inference/batch_predictions`、pipeline→`../output/inference/full_pipeline`，各有道理但散落各分支。
 - **实施**（2026-08-20）：README「轻量模式」末尾输出目录约定改为三模式默认值表格；§1.5 的 README 目录树更新已含新名标注。
 
 ---

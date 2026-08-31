@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from .._shared.artifacts import read_csv_safe
+from .._shared.artifacts import read_csv_safe, resolve_roi_root
 from .._shared.chrom_json import load_chrom_json_directory
 
 
@@ -111,9 +111,11 @@ def check_sample(
     if result_dir is None:
         return issues
 
-    roi_csv = result_dir / "xic-roi-batch" / stem / "roi_windows.csv"
+    roi_csv = resolve_roi_root(result_dir) / stem / "roi_windows.csv"
     pred_name = "prediction.csv" if integration == "linear" else "prediction_%s.csv" % integration
-    pred_csv = result_dir / "batch_predictions" / stem / pred_name
+    _pred_new = result_dir / "predictions_model"
+    pred_root = _pred_new if _pred_new.is_dir() else result_dir / "batch_predictions"
+    pred_csv = pred_root / stem / pred_name
 
     if not roi_csv.is_file():
         print("[SKIP] 无 ROI 表: %s" % roi_csv)

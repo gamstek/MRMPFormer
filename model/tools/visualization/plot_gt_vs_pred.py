@@ -152,9 +152,9 @@ def plot_one(img_path: Path, out_path: Path, title: str, xic_xy, rt_window,
 def main():
     ap = argparse.ArgumentParser(description="人工标注 vs 预测框 对照可视化（TP/FP/FN 分类输出）")
     ap.add_argument("--pipeline_dir", required=True,
-                    help="evaluate_baseline _pipeline/<stem> 目录（含 xic-roi-batch/ 与 batch_predictions/）")
+                    help="evaluate_baseline _pipeline/<stem> 目录（含 xic_roi/ 与 predictions_model/）")
     ap.add_argument("--pred_root", default=None,
-                    help="预测根目录（缺省= <pipeline_dir>/batch_predictions；可用于 pred_v2 等目录）")
+                    help="预测根目录（缺省= <pipeline_dir>/predictions_model，回退旧 batch_predictions；可用于 pred_v2 等目录）")
     ap.add_argument("--labels", required=True, help="人工标注 xlsx")
     ap.add_argument("--output_dir", required=True, help="输出目录")
     ap.add_argument("--threshold", type=float, default=0.9, help="预测框纳入的最低置信度")
@@ -166,10 +166,15 @@ def main():
     args = ap.parse_args()
 
     pipeline_dir = Path(args.pipeline_dir)
-    roi_root = pipeline_dir / "xic-roi-batch"
-    pred_root = Path(args.pred_root) if args.pred_root else pipeline_dir / "batch_predictions"
+    from tools._shared.artifacts import resolve_roi_root, resolve_pred_root
+
+    roi_root = resolve_roi_root(pipeline_dir)
+    if args.pred_root:
+        pred_root = Path(args.pred_root)
+    else:
+        pred_root = resolve_pred_root(pipeline_dir)
     if not roi_root.is_dir():
-        print("[ERROR] 未找到 %s（需为 _pipeline/<stem> 或含 xic-roi-batch 的目录）" % roi_root)
+        print("[ERROR] 未找到 %s（需为 _pipeline/<stem> 或含 xic_roi/xic-roi-batch 的目录）" % roi_root)
         sys.exit(1)
 
     stems = args.stems or sorted(p.name for p in roi_root.iterdir() if p.is_dir())
@@ -236,7 +241,8 @@ def main():
                 x1 = rt_to_pixel_x(g[0], rt_lo, rt_hi)
                 x2 = rt_to_pixel_x(g[1], rt_lo, rt_hi)
                 pr = matched_gt.get(id(g))
-                dv = (pr["rt_min"] - g[0], pr["rt_max"] - g[1]) if pr else None
+                dv = (pr.get("peak_start", pr.get("rt_min")) - g[0],
+                      pr.get("peak_end", pr.get("rt_max")) - g[1]) if pr else None
                 gts_px.append((min(x1, x2), max(x1, x2), "GT %s-%s" % (_fmt(g[0], 2), _fmt(g[1], 2))))
                 devs.append(dv)
             for g in fns + [(gl[0], gl[1], float("nan")) for _pr, gl in loose]:
@@ -245,7 +251,8 @@ def main():
 
             preds_px = []
             for pr in rows:
-                lo, hi = float(pr["rt_min"]), float(pr["rt_max"])
+                lo = float(pr.get("peak_start", pr.get("rt_min")))
+                hi = float(pr.get("peak_end", pr.get("rt_max")))
                 x1 = rt_to_pixel_x(lo, rt_lo, rt_hi)
                 x2 = rt_to_pixel_x(hi, rt_lo, rt_hi)
                 tag = "loose" if id(pr) in loose_pred_ids else "P"
@@ -260,17 +267,19 @@ def main():
                 idx_rows.append({"stem": stem, "image": img_name, "native_id": native_id,
                                  "compound": compound, "result": "TP",
                                  "gt_start": g[0], "gt_end": g[1],
-                                 "pred_start": pr["rt_min"], "pred_end": pr["rt_max"],
-                                 "dev_start_min": round(pr["rt_min"] - g[0], 3),
-                                 "dev_end_min": round(pr["rt_max"] - g[1], 3),
+                                 "pred_start": pr.get("peak_start", pr.get("rt_min")),
+                                 "pred_end": pr.get("peak_end", pr.get("rt_max")),
+                                 "dev_start_min": round(pr.get("peak_start", pr.get("rt_min")) - g[0], 3),
+                                 "dev_end_min": round(pr.get("peak_end", pr.get("rt_max")) - g[1], 3),
                                  "score": round(float(pr.get("score") or 0), 4)})
             for pr, g in loose:
                 idx_rows.append({"stem": stem, "image": img_name, "native_id": native_id,
                                  "compound": compound, "result": "loose",
                                  "gt_start": g[0], "gt_end": g[1],
-                                 "pred_start": pr["rt_min"], "pred_end": pr["rt_max"],
-                                 "dev_start_min": round(pr["rt_min"] - g[0], 3),
-                                 "dev_end_min": round(pr["rt_max"] - g[1], 3),
+                                 "pred_start": pr.get("peak_start", pr.get("rt_min")),
+                                 "pred_end": pr.get("peak_end", pr.get("rt_max")),
+                                 "dev_start_min": round(pr.get("peak_start", pr.get("rt_min")) - g[0], 3),
+                                 "dev_end_min": round(pr.get("peak_end", pr.get("rt_max")) - g[1], 3),
                                  "score": round(float(pr.get("score") or 0), 4)})
             for pr in fps:
                 if id(pr) in loose_pred_ids:
@@ -278,7 +287,8 @@ def main():
                 idx_rows.append({"stem": stem, "image": img_name, "native_id": native_id,
                                  "compound": compound, "result": "FP",
                                  "gt_start": None, "gt_end": None,
-                                 "pred_start": pr["rt_min"], "pred_end": pr["rt_max"],
+                                 "pred_start": pr.get("peak_start", pr.get("rt_min")),
+                                 "pred_end": pr.get("peak_end", pr.get("rt_max")),
                                  "dev_start_min": None, "dev_end_min": None,
                                  "score": round(float(pr.get("score") or 0), 4)})
             for g in fns:

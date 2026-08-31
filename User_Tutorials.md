@@ -111,7 +111,7 @@ python -m inference.cli --mode pipeline \
 
 3. **模型预测**：对 ROI 目录运行批量预测：
    ```bash
-   python -m inference.cli --mode batch_dir \
+   python -m inference.cli --mode roi2inference \
      --model checkpoint/quanformer.pth \
      --batch_dir ../output/untargeted_roi \
      --output_dir ../output/untargeted_pred
@@ -242,7 +242,7 @@ cd model
 #   --smooth_sigma 0.0
 
 # 步骤 3：批量预测
-python -m inference.cli --mode batch_dir \
+python -m inference.cli --mode roi2inference \
   --model checkpoint/quanformer.pth \
   --batch_dir ../output/u3_roi \
   --output_dir ../output/u3_pred \

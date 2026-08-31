@@ -80,7 +80,6 @@ _LABEL_COLS = {
     "component": "compound",
     "channel": "channel",
     "rt": "rt",
-    "ert": "ert",
     "peak_label": "peak_label",
     "peak_count": "peak_count",
     "peak_start": "peak_start",
@@ -168,7 +167,7 @@ def _col_letter(ref: str) -> str:
 def parse_labels_xlsx(xlsx_path):
     """纯标准库解析标注 xlsx sheet1（按列字母定位，天然免疫稀疏空单元格错位）。
 
-    返回 list[dict]，键：roi_id/compound/channel/rt/ert/peak_start/peak_end/sample_id。
+    返回 list[dict]，键：roi_id/compound/channel/rt/peak_start/peak_end/sample_id。
     """
     z = zipfile.ZipFile(xlsx_path)
     shared = [
@@ -547,7 +546,7 @@ def main():
         if qc_rows:
             # 目录名固定为 coco_<数据集名>（同数据集多次构建汇总/覆盖到同一处，便于对照）
             qc_dir = qc_root / f"coco_{output_dir.name}"
-            qc_path = qc_dir / "qc_label_rt.csv"
+            qc_path = qc_dir / "qc1_label_rt.csv"
             n_written = write_qc_table(qc_rows, qc_path)
             print(f"[INFO] QC 结果表: {qc_path}（{n_written} 行）")
 
@@ -648,7 +647,7 @@ def main():
     elif not args.val_stems:
         print("[WARN] 未指定 --val_stems / --val_ratio：全部图像进入 train，val 集为空")
 
-    # ===== 训练侧 QC 阶段表（与推理侧 output/QC 同构）：qc_label_rt + qc_roi_channels + qc_summary =====
+    # ===== 训练侧 QC 阶段表（与推理侧 output/QC 同构）：qc1_label_rt + qc2_roi + qc_summary =====
     if qc_dir is not None:
         qc_dir.mkdir(parents=True, exist_ok=True)
         n_review = sum(1 for r in qc_rows if r.get("suggest_review"))
@@ -665,7 +664,7 @@ def main():
             qc_frames.append(df)
         if qc_frames:
             merged = pd.concat(qc_frames, ignore_index=True)
-            merged.to_csv(qc_dir / "qc_roi_channels.csv", index=False, encoding="utf-8-sig")
+            merged.to_csv(qc_dir / "qc2_roi.csv", index=False, encoding="utf-8-sig")
             n_roi_excl = len(merged)
             reason_counts = merged["reason"].value_counts().to_dict()
         # qc_summary.md：各环节统计 + 人工复核清单（实验报告要求：需人工复核的必须成表）
@@ -675,12 +674,12 @@ def main():
             "- 生成时间: %s" % datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "- 标注文件: %s" % ", ".join(t for t, _ in per_file),
             "",
-            "## 1. 标注 RT 一致性（qc_label_rt.csv）",
+            "## 1. 标注 RT 一致性（qc1_label_rt.csv）",
             "- 检查项: %d" % len(qc_rows),
             "- 剔除标注行: %d（不生成 ROI）" % n_excl,
             "- 需人工复核: %d" % n_review,
             "",
-            "## 2. ROI 通道级剔除（qc_roi_channels.csv）",
+            "## 2. ROI 通道级剔除（qc2_roi.csv）",
             "- 剔除条目: %d 行" % n_roi_excl,
         ]
         if reason_counts:
@@ -697,7 +696,7 @@ def main():
         if not review_rows:
             lines.append("| （无） | | | | | | | |")
         (qc_dir / "qc_summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-        print(f"[INFO] QC 阶段表: {qc_dir}（qc_label_rt.csv / qc_roi_channels.csv / qc_summary.md）")
+        print(f"[INFO] QC 阶段表: {qc_dir}（qc1_label_rt.csv / qc2_roi.csv / qc_summary.md）")
 
         # 人工预警报告：未通过 QC 的标注以 qc_alert.md 沉淀，命中剔除时终端打出 [ALERT]
         from preprocessing.label_qc import write_qc_alert
@@ -712,7 +711,7 @@ def main():
     for _p in _pexcl:
         _p.unlink(missing_ok=True)
     if _pexcl:
-        print(f"[INFO] 已清理 {len(_pexcl)} 个样品级 pipeline_qc_excluded.csv（剔除明细已并入 QC 阶段表 qc_roi_channels.csv）")
+        print(f"[INFO] 已清理 {len(_pexcl)} 个样品级 pipeline_qc_excluded.csv（剔除明细已并入 QC 阶段表 qc2_roi.csv）")
 
     for split, json_name in (("train", "train_coco.json"), ("val", "val_coco.json")):
         entries = [(img, anns) for s, img, anns in all_entries if s == split]

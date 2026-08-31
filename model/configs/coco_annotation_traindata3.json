@@ -134,7 +134,7 @@
   "smooth_sigma": 0.0,
   "_comment_work_dir": "XIC 中间输出目录（缺省=<output_dir>/_xic；重跑需 --force 才会用新逻辑重新提取）",
   "work_dir": null,
-  "_comment_force": "首次构建为 false；若复用旧缓存需改 true 强制重新提取（窗口中心已改用 ert）",
+  "_comment_force": "首次构建为 false；若复用旧缓存需改 true 强制重新提取（窗口中心改用标注 rt）",
   "force": false,
   "_comment_sample_map": "sample_id 为 mzML 文件名式，自动精确匹配，无需显式映射",
   "sample_map": null,

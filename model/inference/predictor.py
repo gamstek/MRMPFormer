@@ -152,13 +152,11 @@ def _adapt_prediction_for_quantify(results, xic_count, xic_info=None):
         if xic_idx < 0 or xic_idx >= xic_count:
             continue
 
-        top_idx = int(np.argmax(scores[:, 0]))
-        top_score = scores[top_idx:top_idx + 1]
-        top_box = boxes[top_idx:top_idx + 1]
-
-        prev_path, prev_score, _ = aligned[xic_idx]
-        if len(prev_score) == 0 or float(top_score[0][0]) > float(prev_score[0][0]):
-            aligned[xic_idx] = (img_path, top_score, top_box)
+        # Step 3/6：保留该图全部已过阈值的检测框（多 query/多峰），不再只留最高置信度框；
+        # 同一 XIC 出现多张图时仍按最高置信度图为准（保留原优先级语义）
+        prev_path, prev_scores, prev_boxes = aligned[xic_idx]
+        if len(prev_scores) == 0 or float(np.max(scores[:, 0])) > float(np.max(prev_scores[:, 0])):
+            aligned[xic_idx] = (img_path, scores, boxes)
 
     return aligned
 
@@ -267,18 +265,16 @@ def _integrate_each_predicted_box(xic_list, prediction, xic_info, baseline_corre
             )
             rows.append({
                 'image': image_name,
-                'image_path': img_path if img_path else "",
                 'compound_name': compound_name,
                 'mz': float(mz),
-                'q3': float(q3_val) if pd.notna(q3_val) else np.nan,
                 'old_rt': float(true_rt),
                 'box_x1': np.nan,
                 'box_y1': np.nan,
                 'box_x2': np.nan,
                 'box_y2': np.nan,
                 'score': 0.0,
-                'rt_min': 0.0,
-                'rt_max': 0.0,
+                'peak_start': 0.0,
+                'peak_end': 0.0,
                 'retention_time': 0.0,
                 'intensity_max': 0.0,
                 'area': 0.0,
@@ -304,7 +300,6 @@ def _integrate_each_predicted_box(xic_list, prediction, xic_info, baseline_corre
             if filter_x.size == 0 or filter_y.size == 0:
                 rows.append({
                     'image': os.path.basename(img_path),
-                    'image_path': img_path,
                     'compound_name': compound_name,
                     'mz': float(mz),
                     'old_rt': float(true_rt),
@@ -313,8 +308,8 @@ def _integrate_each_predicted_box(xic_list, prediction, xic_info, baseline_corre
                     'box_x2': float(x2),
                     'box_y2': float(y2),
                     'score': score,
-                    'rt_min': left,
-                    'rt_max': right,
+                    'peak_start': left,
+                    'peak_end': right,
                     'retention_time': 0.0,
                     'intensity_max': 0.0,
                     'area': 0.0,
@@ -357,18 +352,16 @@ def _integrate_each_predicted_box(xic_list, prediction, xic_info, baseline_corre
 
             rows.append({
                 'image': os.path.basename(img_path),
-                'image_path': img_path,
                 'compound_name': compound_name,
                 'mz': float(mz),
-                'q3': float(q3_val) if pd.notna(q3_val) else np.nan,
                 'old_rt': float(true_rt),
                 'box_x1': float(x1),
                 'box_y1': float(y1),
                 'box_x2': float(x2),
                 'box_y2': float(y2),
                 'score': score,
-                'rt_min': left,
-                'rt_max': right,
+                'peak_start': left,
+                'peak_end': right,
                 'retention_time': max_x,
                 'intensity_max': max_intensity,
                 'area': area_val,
@@ -421,8 +414,8 @@ def _plot_predictions_with_baseline(results, df_prediction, xic_list, xic_info, 
         draw_baseline = baseline_correction or (integration_method == "external_baseline" and external_baselines)
         if draw_baseline and row is not None:
             method_used = row.get("integration_method_used", integration_method)
-            rt_min = float(row["rt_min"])
-            rt_max = float(row["rt_max"])
+            rt_min = float(row["peak_start"])
+            rt_max = float(row["peak_end"])
             m = n_mz_pattern.match(os.path.splitext(image_name)[0])
             xic_idx = int(m.group(1)) - 1 if m else 0
             if 0 <= xic_idx < len(xic_list):
@@ -481,6 +474,82 @@ def _plot_predictions_with_baseline(results, df_prediction, xic_list, xic_info, 
         with open(out_path, "wb") as f:
             f.write(buf.read())
         print(f"[INFO] Saved prediction plot: {out_path}")
+
+
+def _plot_model_xic(results, df_prediction, xic_list, roi_windows, plot_dir, sigma=1.0):
+    """Step 6：model_plots（--plot_style xic 默认）——XIC 曲线 + 多 query 阴影 + 置信度信息框。
+
+    每张 ROI 图 → 对应 XIC 通道曲线，该图上所有检测行（多 query/多峰）用共享绘图核心标注。
+    输出 <plot_dir>/<image_stem>_model.png。
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from utils.plot_xic_peaks import plot_xic_with_queries
+
+    os.makedirs(plot_dir, exist_ok=True)
+    n_mz_pattern = re.compile(r"^(\d+)_mz", re.IGNORECASE)
+    if df_prediction.empty or "image" not in df_prediction.columns:
+        pred_by_image = pd.DataFrame()
+    else:
+        pred_by_image = df_prediction.set_index("image", drop=False)
+
+    for res in results:
+        image_name = os.path.basename(res["image_path"])
+        m = n_mz_pattern.match(os.path.splitext(image_name)[0])
+        xic_idx = int(m.group(1)) - 1 if m else 0
+        if not (0 <= xic_idx < len(xic_list)):
+            continue
+        rt = np.asarray(xic_list[xic_idx][0], dtype=np.float64)
+        intensity = np.asarray(xic_list[xic_idx][1], dtype=np.float64)
+        rows = None
+        if len(pred_by_image) > 0 and image_name in pred_by_image.index:
+            rows = pred_by_image.loc[image_name]
+            if isinstance(rows, pd.DataFrame):
+                rows = rows.reset_index(drop=True)
+            else:
+                rows = rows.to_frame().T.reset_index(drop=True)
+        if rows is None or rows.empty:
+            continue
+        queries = []
+        q1 = None
+        for _, r in rows.iterrows():
+            try:
+                lo = float(r.get("peak_start", r.get("rt_min", np.nan)))
+                hi = float(r.get("peak_end", r.get("rt_max", np.nan)))
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+                continue
+            if q1 is None:
+                try:
+                    q1 = float(r["mz"])
+                except (TypeError, ValueError):
+                    q1 = None
+            queries.append({
+                "rt_lo": lo,
+                "rt_hi": hi,
+                "rt_peak": r.get("retention_time"),
+                "height": r.get("intensity_max"),
+                "snr": r.get("snr"),
+                "n_points": r.get("point_counts"),
+                "score": r.get("score"),
+            })
+        if not queries:
+            continue
+        roi_win = roi_windows.get(image_name) if roi_windows else None
+        fig, ax = plt.subplots(figsize=(9, 5), dpi=120)
+        plot_xic_with_queries(
+            ax, rt, intensity, queries, q1=q1, sigma=sigma,
+            title="Model prediction - %s" % image_name,
+            roi_window=roi_win,
+        )
+        stem = os.path.splitext(image_name)[0]
+        out_path = os.path.join(plot_dir, "%s_model.png" % stem)
+        fig.savefig(out_path, bbox_inches="tight", dpi=150)
+        plt.close(fig)
+        print(f"[INFO] Saved model plot: {out_path}")
 
 
 def _feature_csv_has_compounds(feature_path):
@@ -573,13 +642,16 @@ def run_single(args, images_path, prediction_output, plot_dir):
     # QC：每 ROI 图低于 threshold 被丢弃的框数统计（写 prediction_output 同目录，cli 汇总到 output/QC）
     if qc_pred_stats:
         try:
-            qc_pred_path = os.path.join(os.path.dirname(prediction_output), "qc_prediction_threshold.csv")
+            # Step 4：样本内 QC 命名 qc3_threshold_<样本名>.csv（防线3）
+            _sample_name = os.path.basename(os.path.dirname(prediction_output)) or "sample"
+            qc_pred_path = os.path.join(
+                os.path.dirname(prediction_output), "qc3_threshold_%s.csv" % _sample_name)
             Path(qc_pred_path).parent.mkdir(parents=True, exist_ok=True)
             pd.DataFrame(qc_pred_stats).to_csv(qc_pred_path, index=False, encoding="utf-8-sig")
             n_drop = int(sum(r["n_dropped"] for r in qc_pred_stats))
             print(f"[INFO] QC 预测阈值: {qc_pred_path}（{len(qc_pred_stats)} 图，阈值 {args.threshold} 丢弃 {n_drop} 框）")
         except OSError as e:
-            print(f"[WARN] 无法写入 qc_prediction_threshold.csv: {e}")
+            print(f"[WARN] 无法写入 qc3_threshold_{_sample_name}.csv: {e}")
 
     # 定量积分
     print("[INFO] Performing quantification...")
@@ -673,6 +745,19 @@ def run_single(args, images_path, prediction_output, plot_dir):
         ].reset_index(drop=True)
         if len(df_prediction) < before:
             print(f"[INFO] 按 (mz, q3) 去重: {before} -> {len(df_prediction)} 行（一母离子仅保留至多两条子离子）")
+    else:
+        print("[INFO] q3 列已移除，跳过按 (mz, q3) 去重；同一张 ROI 图检出的多个峰将全部保留（peak_index 区分）")
+
+    # Step 3：peak_index = 同一张 ROI 图/XIC 内按 retention_time 升序编号 1..n（一张图可检出多个峰）
+    if "image" in df_prediction.columns and len(df_prediction) > 0:
+        df_prediction["peak_index"] = (
+            df_prediction.groupby("image")["retention_time"]
+            .rank(method="first").astype(int)
+        )
+    # 落盘前删除 image_path（绝对路径，换机即失效）与 q3（与 feature 表重复；mz 即 Q1）
+    for _col in ("image_path", "q3"):
+        if _col in df_prediction.columns:
+            df_prediction.drop(columns=[_col], inplace=True)
 
     # 统计 area=0 的行（对应「该 m/z 的 ROI 未检出峰」或「图像名未匹配 N_mz」）
     zero_area = (df_prediction["area"] == 0) | (df_prediction["area"].isna())
@@ -681,15 +766,23 @@ def run_single(args, images_path, prediction_output, plot_dir):
         print(f"[INFO] prediction.csv 中 area=0 的行数: {n_zero}（共 {len(df_prediction)} 行）")
         print("[INFO] 原因: 该化合物对应 ROI 图像上模型未检出置信度 > threshold 的峰，或图像名不符合 N_mz*.jpeg 导致未匹配。")
 
-    # 绘图：若启用基线积分或外部基线，在图上叠加基线
+    # 绘图：--plot_style xic（默认）→ model_plots（XIC 曲线+多 query+信息框）；roi → 原 predicted_plots 红框图
     if args.plot and len(results) > 0:
-        _plot_predictions_with_baseline(
-            results, df_prediction, xic_list, xic_info, roi_windows,
-            plot_dir,
-            baseline_correction=getattr(args, "baseline_correction", False),
-            integration_method=getattr(args, "integration_method", "linear"),
-            external_baselines=external_baselines if external_baselines else None,
-        )
+        plot_style = getattr(args, "plot_style", "xic") or "xic"
+        if plot_style == "xic":
+            _plot_model_xic(
+                results, df_prediction, xic_list, roi_windows,
+                plot_dir,
+                sigma=float(getattr(args, "plot_smooth_sigma", 1.0) or 1.0),
+            )
+        else:
+            _plot_predictions_with_baseline(
+                results, df_prediction, xic_list, xic_info, roi_windows,
+                plot_dir,
+                baseline_correction=getattr(args, "baseline_correction", False),
+                integration_method=getattr(args, "integration_method", "linear"),
+                external_baselines=external_baselines if external_baselines else None,
+            )
 
     out_path = prediction_output
     saved = False
@@ -757,13 +850,18 @@ def main(args):
 
         print(f"[INFO] Batch mode: {len(subdirs)} subdir(s) in {batch_path}")
         integration_method = getattr(args, "integration_method", "linear")
-        pred_basename = f"prediction_{integration_method}.csv" if integration_method != "linear" else "prediction.csv"
+        method_suffix = "" if integration_method == "linear" else "_%s" % integration_method
         for i, subdir in enumerate(subdirs):
             print("=" * 60)
             print(f"[BATCH {i+1}/{len(subdirs)}] {subdir.name}")
             print("=" * 60)
+            # Step 3：样本内 prediction 表改名 model_prediction_<样本名>.csv
+            pred_basename = f"model_prediction_{subdir.name}{method_suffix}.csv"
             pred_out = output_base / subdir.name / pred_basename
-            plot_dir = output_base / subdir.name / "predicted_plots"
+            # Step 6：--plot_style xic（默认）→ model_plots/；roi → 原 predicted_plots/
+            _plot_style = getattr(args, "plot_style", "xic") or "xic"
+            _plot_dir_name = "model_plots" if _plot_style == "xic" else "predicted_plots"
+            plot_dir = output_base / subdir.name / _plot_dir_name
             pred_out.parent.mkdir(parents=True, exist_ok=True)
             feature_csv = subdir / "feature.csv"
             if not _feature_csv_has_compounds(str(feature_csv)):
@@ -821,12 +919,12 @@ if __name__ == "__main__":
         "--batch_dir",
         type=str,
         default=None,
-        help="Batch mode: directory containing subdirs (e.g. xic-roi-batch); each subdir = one input set, output to batch_output/<subdir_name>/"
+        help="Batch mode: directory containing subdirs (e.g. xic_roi); each subdir = one input set, output to batch_output/<subdir_name>/"
     )
     parser.add_argument(
         "--batch_output",
         type=str,
-        default="../output/inference/batch_predictions",
+        default="../output/inference/predictions_model",
         help="Base output dir for batch mode; each subdir's results -> batch_output/<subdir_name>/prediction.csv and predicted_plots/"
     )
     parser.add_argument(
@@ -859,6 +957,14 @@ if __name__ == "__main__":
         "--plot",
         action="store_true",
         help="Generate prediction visualization plots"
+    )
+    parser.add_argument(
+        "--plot_style",
+        type=str,
+        default="xic",
+        choices=["xic", "roi"],
+        help="--plot 的图型：xic=XIC 曲线+多 query 阴影+信息框（默认，输出 model_plots/）；"
+             "roi=ROI 原图叠红框（原 predicted_plots/，功能保留）"
     )
     parser.add_argument(
         "--plot_dir",

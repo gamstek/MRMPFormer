@@ -152,7 +152,7 @@ def _label_key_from_channel(compound, channel):
 
 
 def _parse_label_rt(s):
-    """解析标注 rt/ert 字段 '16.428(0.000)' / '16.428' → 分钟；空/非法 → None（与 label_qc 一致）。"""
+    """解析标注 rt 字段 '16.428(0.000)' / '16.428' → 分钟；空/非法 → None（与 label_qc 一致）。"""
     s = (s or "").strip()
     if not s:
         return None
@@ -203,6 +203,37 @@ def _extract_q1_q3(chrom, native_id_text):
     return q1, q3
 
 
+def render_roi_jpeg(rt_min, intensity, rt_lo, rt_hi, out_path, color="blue", linewidth=1.5):
+    """
+    将一段 XIC 渲染为 400x300 无坐标轴 JPEG（与训练 ROI 图像素级同款）。
+
+    Parameters:
+        rt_min (array): RT 数组（分钟）
+        intensity (array): 强度数组（与 rt_min 等长）
+        rt_lo / rt_hi (float): x 轴窗口（分钟），set_xlim 与 roi_rt_mapping 线性映射一致
+        out_path (str): 输出 JPEG 路径
+        color / linewidth: 线条样式
+
+    供 extract_xic_with_pyopenms 与 fullscan 验证窗口复用，保证模型输入分布一致。
+    """
+    fig = Figure(figsize=(4, 3), dpi=100)  # 400x300
+    canvas = FigureCanvas(fig)
+    ax = fig.add_subplot(111)
+    ax.plot(np.asarray(rt_min, dtype=np.float64), np.asarray(intensity, dtype=np.float64),
+            color=color, linewidth=linewidth)
+    # 固定 x 轴为裁剪窗口（分钟），使 400px 与 roi_rt_mapping 线性映射一致
+    if float(rt_hi) > float(rt_lo) and len(rt_min) > 0:
+        ax.set_xlim(float(rt_lo), float(rt_hi))
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['bottom'].set_visible(False)
+    ax.spines['left'].set_visible(False)
+    fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    canvas.print_jpeg(out_path)
+
+
 def extract_xic_with_pyopenms(
     mzml_path,
     output_dir,
@@ -231,10 +262,10 @@ def extract_xic_with_pyopenms(
         exclude_native_ids (dict/set): 标注 RT 一致性 QC 命中剔除的 native_id 集合；dict 时 value 为剔除原因
             （label_rt_cross_sample / label_rt_ion_pair），set 时原因记为 label_rt。命中通道不生成 ROI、
             不进 feature/xic_matrix，剔除记录写入 pipeline_qc_excluded.csv（reason 区分检查类型）。
-        labels (list[dict]): 标注行列表（键含 compound/channel/rt/ert）。提供时 ROI 由标注驱动（B 范式）：
-            仅标注命中（native_id == label_key(compound, channel)）的通道生成 ROI，窗口中心 = 标注 ert
-            （缺省回退 rt；替代最高强度点）；标注了但 mzML 无对应通道的行记 pipeline_qc_excluded.csv（reason=label_no_channel）；
-            标注 rt/ert 均无法解析的行 reason=label_rt_missing；未标注的 mzML 通道不生成 ROI。
+        labels (list[dict]): 标注行列表（键含 compound/channel/rt）。提供时 ROI 由标注驱动（B 范式）：
+            仅标注命中（native_id == label_key(compound, channel)）的通道生成 ROI，窗口中心 = 标注 rt
+            （替代最高强度点）；标注了但 mzML 无对应通道的行记 pipeline_qc_excluded.csv（reason=label_no_channel）；
+            标注 rt 无法解析的行 reason=label_rt_missing；未标注的 mzML 通道不生成 ROI。
             不提供时维持通道驱动（默认最高强度点居中，rt_center_overrides 可覆盖）。
 
     TIC 等无 (Q1,Q3) 数值的通道永远剔除（不提供保留开关）：不生成 ROI、不进 feature/xic_matrix，
@@ -258,9 +289,8 @@ def extract_xic_with_pyopenms(
         mzml_path, chromatograms, _native_id_to_str
     )
 
-    # === label 驱动模式（B 范式）：ROI 由标注行决定，窗口中心 = 标注 ert（预期 RT）===
-    # ert 为同化合物统一的预期/标准品 RT，避免各样品实测 rt 抖动导致窗口漂移；
-    # ert 缺失/非法时回退 rt（兼容旧标注格式）。
+    # === label 驱动模式（B 范式）：ROI 由标注行决定，窗口中心 = 标注 rt ===
+    # 标注 rt 即各样品的实测保留时间（fullscan 模式中则由信号搜索检出的峰位置充当 rt）。
     label_rt_map = None  # {native_id: rt_min|None}
     matched_nids = set()
     if labels:
@@ -271,9 +301,7 @@ def extract_xic_with_pyopenms(
             kid = _label_key_from_channel(rec.get("compound"), rec.get("channel"))
             if not kid:
                 continue
-            _center = _parse_label_rt(rec.get("ert"))
-            if _center is None:
-                _center = _parse_label_rt(rec.get("rt"))
+            _center = _parse_label_rt(rec.get("rt"))
             label_rt_map.setdefault(kid, _center)
 
     features = []
@@ -430,7 +458,7 @@ def extract_xic_with_pyopenms(
         max_idx = np.argmax(intensity)
         rt_apex_min = rt_sec[max_idx] / 60.0  # 转为分钟
         rt_apex_sec = rt_sec[max_idx]
-        # ROI 窗口中心：label 驱动（B 范式）时以标注 ert（缺省回退 rt）为源头（标注即正确答案，无需与 apex 对比报差异）；
+        # ROI 窗口中心：label 驱动（B 范式）时以标注 rt 为源头（标注即正确答案，无需与 apex 对比报差异）；
         # 否则外部覆盖表（rt_center_overrides）；再否则以（平滑后）强度最高点对应 RT 为中心
         rt_center_min = rt_apex_min
         if label_rt_center is not None:
@@ -489,22 +517,9 @@ def extract_xic_with_pyopenms(
         safe_name_base = roi_safe_name_base(n, q1, q3, compound_name=native_id)
 
         # === 只保存 CNN 输入图像 (与原项目一致：固定 400x300, 无坐标轴) ===
-        fig = Figure(figsize=(4, 3), dpi=100)  # 400x300
-        canvas = FigureCanvas(fig)
-        ax = fig.add_subplot(111)
-        ax.plot(plot_rt_sec / 60.0, plot_intensity, color='blue', linewidth=1.5)
-        # 固定 x 轴为裁剪窗口（分钟），使 400px 与 roi_rt_mapping 线性映射一致
-        if rt_end_sec > rt_start_sec and len(plot_rt_sec) > 0:
-            ax.set_xlim(rt_start_sec / 60.0, rt_end_sec / 60.0)
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['bottom'].set_visible(False)
-        ax.spines['left'].set_visible(False)
-        fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
         roi_path = os.path.join(output_dir, f"{safe_name_base}.jpeg")  # 原项目默认 jpeg
-        canvas.print_jpeg(roi_path)
+        render_roi_jpeg(plot_rt_sec / 60.0, plot_intensity,
+                        rt_start_sec / 60.0, rt_end_sec / 60.0, roi_path)
         # 记录该 ROI 实际 x 轴窗口（与 set_xlim 一致），积分时用此窗口做像素→RT 映射，避免与 common_rt 裁剪不一致导致偏移
         rt_lo_actual = rt_start_sec / 60.0
         rt_hi_actual = rt_end_sec / 60.0
@@ -910,8 +925,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--output_dir", type=str,
-        default=str(ROOT_DIR.parent.parent / "output" / "inference" / "xic-roi-batch"),
-        help="Base output directory (default: <repo>/output/inference/xic-roi-batch). Single mzML: results go under output_dir/<stem>/ unless --flat_output. Batch: one subfolder per mzML (stem = filename without extension)."
+        default=str(ROOT_DIR.parent.parent / "output" / "inference" / "xic_roi"),
+        help="Base output directory (default: <repo>/output/inference/xic_roi). Single mzML: results go under output_dir/<stem>/ unless --flat_output. Batch: one subfolder per mzML (stem = filename without extension)."
     )
     parser.add_argument(
         "--flat_output",

@@ -8,7 +8,7 @@
 
 ## 1. 背景与动机
 
-现有推理管线（`inference.cli` 的 `roi / batch_dir / pipeline` 三种模式）是**标注驱动的 ±1min 小窗口范式**：
+现有推理管线（`inference.cli` 的 `roi / roi2inference / pipeline` 三种模式）是**标注驱动的 ±1min 小窗口范式**：
 
 1. 读取 mzML → 仅标注命中通道生成 ROI（窗口中心 = 标注 ert，±1min 裁剪）
 2. 400x300 ROI 图送模型，在窗口内检测峰
@@ -153,7 +153,8 @@ find_peaks(intensity[body_mask],
 
 - 每峰初始框：apex ± `init_half_width_min`（默认 0.05 min，或 ≥3 个采样点）
 - **apex 重锚**：以枚举 apex 为中心在初始框内重新取 argmax 作锚点（`adjust_first_round_interval` 内置，避免枚举尖刺偏离真峰顶，D8）
-- 阈值：`roi_full_low_decile_mean_intensity`（全通道低 10% 强度均值，`edge_noise_stop_mode="roi_bottom_decile_mean"` 语义）
+- 阈值：**峰侧局部稳定尾噪声**（`edge_noise_stop_mode="stable_tail_mean"`，即 `one_sided_edge_stop_threshold_stable_tail_mean`，单侧跨度 `edge_max_span_min` 默认 1.0 min）。
+  > 冒烟实测修正：原方案用全通道低十分位均值（`roi_bottom_decile_mean`）在整谱场景会因基线漂移/持续信号而阈值过低，把峰一路扩到数据尽头（两个峰区间全谱重叠）。局部稳定尾噪声只取峰顶两侧有限跨度内的低波动区，贴近该峰真实基线。
 - 调 `adjust_first_round_interval`，关键传参：
   - `peer_rt_intervals` = 该通道其余候选峰区间 → 后验防撞（`boundary_peer_thr_scale=2.0`）
   - `boundary_posterior_lookahead=5`、`boundary_posterior_mean_scale=1.25`
@@ -279,6 +280,8 @@ def render_roi_jpeg(rt_win, int_win, rt_lo, rt_hi, out_path):
 | init_half_width_min | 0.05 | 精修初始半宽 |
 | boundary_posterior_lookahead | 5 | 边界后验窗点数 |
 | boundary_posterior_mean_scale | 1.25 | 后验均值倍数 |
+| edge_noise_stop_mode | stable_tail_mean | 边界截停阈值：stable_tail_mean（默认，整谱稳健）/ roi_bottom_decile_mean / low_percentile |
+| edge_max_span_min | 1.0 | 边界截停阈值估计的最大单侧跨度（min） |
 | min_snr | 3.0 | 峰级 SNR 门 |
 | min_peak_span_points | 5 | 峰跨距门 |
 | min_area | 0.0 | 面积门（0=关） |
@@ -408,7 +411,7 @@ python -m inference.cli --mode fullscan --batch_dir ../data/test/mzml --no_model
 
 | 轮次 | # | 缺陷 | 对策落点 |
 |---|---|---|---|
-| 参数层 | D1 | 全局单一基线失真，两阶段基线概念并存 | `baseline_mode` 增加 local_valley（§8） |
+| 参数层 | D1 | 全局单一基线失真，两阶段基线概念并存 | `baseline_mode` 增加 local_valley（§8）；Phase2 边界截停改峰侧局部稳定尾噪声（冒烟实测，§5 P2） |
 | 参数层 | D2 | prominence 相对全局 dynamic 吞真实小峰 | `min_prominence_abs` 双门槛（§5 P1/§8） |
 | 参数层 | D3 | distance 按点数随采样密度不稳 | `min_peak_width_min` 按通道中位步长换算（§5 P1/§8） |
 | 参数层 | D4 | 各阶段平滑/原始数组不一致 | 明确全流程统一用同一条数组（§5 P1） |
@@ -438,3 +441,41 @@ python -m inference.cli --mode fullscan --batch_dir ../data/test/mzml --no_model
 - [x] 参数表完整、默认值明确、config 可覆盖
 - [x] 错误处理与性能分析覆盖主要风险
 - [x] 输出格式列定义完整（CSV 两表 + 标注图）
+
+---
+
+## 18. 实测验证与改进项（mrmpformerv2 × test1 全批，2026-08-26）
+
+### 18.1 实测概况
+
+命令：
+```
+python -m inference.cli --mode fullscan --batch_dir ../data/mzml/test1 \
+    --model checkpoint/mrmpformerv2.pth --threshold 0.5 \
+    --output_dir ../output/test/fullscan_test1_v2 --verbose
+```
+
+| 样品组 | 通道数 | 峰数/样品 | 模型验证/样品 |
+|---|---|---|---|
+| 农残混标 ~ 混标-8（8 个混标） | 12 | 23-34 | 12-17 |
+| 空白1 / 1-2 / 1-3（3 个空白） | 8-11 | 69-83 | 3-10 |
+
+- 信号阶段（Phase1-3a）对真实峰定位准确：涕灭威 6.04min、内吸磷 8.45、甲基异柳磷 11.45、杀扑磷 9.07、甲拌磷 11.72 等均正确。
+- 空白验证率 <15%、混标 ~50%，符合"空白多为噪声/基质峰"预期。
+
+### 18.2 发现与改进项（按优先级）
+
+| # | 发现 | 影响 | 改进方案 | 状态 |
+|---|---|---|---|---|
+| F1 | **模型置信度标定差异**：mrmpformerv2 对正确峰打分仅 0.67~0.94（quanformer ~0.998）。默认 `threshold=0.99` 下 mrmpformerv2 **全部峰未验证**，0.5 阈值恢复正常 | 阈值选错 → 验证环节整体失效 | ① 文档化各模型经验阈值表（mrmpformerv2→0.5，quanformer→0.99）；② 新增 `--validate_threshold` 独立参数，与预测阈值解耦；③ 可加"分值分布自动标定"工具：对某 mzML 全窗跑一次低阈值推理，输出 score 分布建议阈值 | 待实现 |
+| F2 | **SNR 平坦噪声爆炸**：峰侧噪声区完全平坦时 `noise_pp≈0` 被 clamp 到 1e-10，SNR 达 3.65e15（如杀扑磷-1） | 显示/排序失真 | `compute_local_snr` 中噪声兜底改为 `max(noise_pp, 全噪声区均值×0.001)` 并设 SNR 上限（如 1e6）；gate 输出加 min(snr, cap) | 待实现 |
+| F3 | **跨文件重复加载模型**：每 mzML 一次 `build_predictor`（加载权重），test1 共加载 11 次 | 批处理耗时 | `build_predictor` 增加进程级模型缓存（按 model_path 缓存 model/device，仅首次加载），或 fullscan main 循环外加载一次传入 | 待实现 |
+| F4 | **弱峰验证盲区**：对硫磷-2 的 7 个峰 SNR 3-7 全未验证（模型分 <0.5），但部分为真实信号（15.2min 区域） | 弱峰可信度无法区分 | 阈值分档：`--validate_threshold`（硬验证）+ `--min_score_report`（弱分仅记录不参与 validated），并输出 `score` 供人工排序 | 待实现 |
+| F5 | **空白/高噪声场景峰数偏多**（69-83/样品）：`max_peaks_per_channel=50` 频繁触顶，噪声被门控后仍保留 | 峰表噪音大 | 空白场景建议 `--scan_min_snr 4~5`、`--scan_prominence_ratio 0.08`；文档补充"噪声场景参数预设" | 待实现 |
+| F6 | **绘图多峰标签重叠**：50+ 峰时旋转标签仍拥挤（D12 部分缓解） | 可读性 | 峰值超阈值（如 20）时仅标注 validated 峰号，未验证峰只画灰框 | 待实现 |
+| F7 | 空白样品中 3-10 峰仍被验证（疑似基质残留/柱流失） | 业务误判风险 | 提供跨样品汇总对比表（同 compound RT/峰数对齐，空白-混标并排），便于人工剔除残留 | 待实现 |
+
+### 18.3 已落地改进（本次实现过程中完成）
+
+- 模型验证由"每通道一次推理"改为"每 mzML 一次批量推理"（窗口一次性渲染 + 单轮 `build_predictor`），避免 12×模型加载（原每文件 12 次 → 现 1 次）。
+- 边界截停阈值由全通道低十分位改为峰侧局部稳定尾噪声（冒烟实测发现全谱扩边问题，见 §5 P2）。

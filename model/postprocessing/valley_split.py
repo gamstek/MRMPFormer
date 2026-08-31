@@ -526,9 +526,9 @@ def _plot_xic_smoothed_with_valley(xic_list, xic_info, df_all, plot_dir, sigma=2
                 df_i = df[df.get("mz", df.iloc[:, 0]) == xic_info.loc[i, "mz"]]
 
             for _, row in df_i.iterrows():
-                if "rt_min" in row and "rt_max" in row:
-                    ax.axvline(float(row["rt_min"]), color="red", linestyle="--", linewidth=1, alpha=0.6)
-                    ax.axvline(float(row["rt_max"]), color="red", linestyle="--", linewidth=1, alpha=0.6)
+                if ("rt_min" in row and "rt_max" in row) or ("peak_start" in row and "peak_end" in row):
+                    ax.axvline(float(row.get("peak_start", row.get("rt_min"))), color="red", linestyle="--", linewidth=1, alpha=0.6)
+                    ax.axvline(float(row.get("peak_end", row.get("rt_max"))), color="red", linestyle="--", linewidth=1, alpha=0.6)
 
         ax.set_xlim(rt_lo, rt_hi)
         ax.set_xlabel("RT (min)")

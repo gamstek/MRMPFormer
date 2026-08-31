@@ -124,6 +124,26 @@ def get_args_parser():
                         help='MRMPFormer v1: Recall Loss 实验开关（默认关闭；论文定义未确认，'
                              '启用将报错提示，防止编造公式）')
 
+    # * MRMPFormer v1 FDR 结构参数（与 configs/mrmpformer_v1_*.json 对齐；缺失时 build() 走 getattr 默认值）
+    parser.add_argument('--num_fdr_bins', default=33, type=int,
+                        help='MRMPFormer v1: FDR 分布 Bin 数 N')
+    parser.add_argument('--fdr_bin_power', default=2.0, type=float,
+                        help='MRMPFormer v1: 自动 Bin 候选偏移幂指数 p（W=sign(u)|u|^p）')
+    parser.add_argument('--fdr_bin_values', default=None, type=float, nargs='+',
+                        help='MRMPFormer v1: 显式 Bin 候选偏移列表（覆盖自动生成；长度须等于 num_fdr_bins，'
+                             '自动做零均值对称化；null=自动生成）')
+    parser.add_argument('--fdr_scale_mode', default='initial_box_width', type=str,
+                        choices=('initial_box_width', 'roi_width'),
+                        help='MRMPFormer v1: FDR 偏移归一化尺度 initial_box_width=初始框宽 w0 / roi_width=1.0')
+    parser.add_argument('--fdr_layer_weights', default=[0.5, 0.7, 1.0], type=float, nargs='+',
+                        help='MRMPFormer v1: 各层 FDR 分布损失权重 α_k（长度 < dec_layers 时尾部补 1.0）')
+    parser.add_argument('--fdr_loss_coef', default=2.0, type=float,
+                        help='MRMPFormer v1: FDR 分布损失总权重 λ_fdr（每层权重 = λ_fdr × α_k）')
+    parser.add_argument('--fdr_min_width', default=1e-4, type=float,
+                        help='MRMPFormer v1: 精化框宽度下限（clamp 保证 cxcywh 有效）')
+    parser.add_argument('--detach_boundary_feedback', action='store_true',
+                        help='MRMPFormer v1: 消融用——边界位置反馈梯度截断（默认 false 不 detach）')
+
     # dataset parameters
     parser.add_argument('--dataset_file', default='coco')
     parser.add_argument('--coco_path', type=str, default='data/coco')

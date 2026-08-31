@@ -13,7 +13,7 @@ MRMPFormer是基于 **DETR（ResNet-50 + Transformer）系列** 的色谱峰检�
 
 - **输入**：`.mzML` 原始质谱数据
 - **输出**：峰面积 CSV + 预测标注图
-- **模型**：ResNet-50 骨干 + 1层Encoder + 1层Decoder（hidden_dim=256, nheads=8）
+- **模型**：ResNet-50 骨干 + Transformer（hidden_dim=256, nheads=8）。两个变体由 `--model` 选择：`quanformer`（1 Encoder + 1 Decoder 基线）；`mrmpformer_v1`（1 Encoder + 3 Decoder + FDR 边界逐层精化）
 - **查询数**：num_queries=3（最多同时检出 3 个峰）
 - **开发版本**：v2.8.13
 - **当前开发范围**：仅 **Targeted × Centroided（MRM）** 模式；其余三组合（Targeted × Profile / Untargeted × Centroided / Untargeted × Profile）保留现状、暂不开发
@@ -27,7 +27,7 @@ MRMPFormer是基于 **DETR（ResNet-50 + Transformer）系列** 的色谱峰检�
 | 环节 | 做什么 | 入口 | 产物 |
 |---|---|---|---|
 | ① 构建数据集 | 标注 xlsx + mzML → COCO 格式 bbox 标注（bbox 直接映射人工 `peak_start/peak_end`） | `model/preprocessing/coco_annotation.py` | `data/coco/`（train/val + `train_coco.json`/`val_coco.json`） |
-| ② 训练 | 用 COCO 数据集训练/微调 DETR 模型 | `python -m train --config configs/quanformer_baseline.json`（从零）/ `quanformer_v2_finetune.json`（微调） | `checkpoint/quanformer.pth`（基线）、`quanformerv2.pth`（微调） |
+| ② 训练 | 用 COCO 数据集训练/微调 DETR 模型 | `python -m train --config configs/quanformer_baseline.json`（从零）/ `quanformer_v2_finetune.json`（微调）/ `mrmpformer_v1_fdr.json`（v1） | `checkpoint/quanformer.pth`（基线）、`quanformerv2/v3.pth`（微调）、`mrmpformerv1/v2.pth`（v1 训练） |
 | ③ 推理 | 用测试 mzML + 已训练模型产出预测值 | `python -m inference.cli --mode pipeline --model checkpoint/quanformer.pth` | `batch_predictions/<样品>/prediction.csv` → `prediction_snr.csv` → `prediction_refined.csv` |
 | ④ 评估 | 用预测值 + 人工标注计算模型效果 | `python -m tools.evaluation.evaluate_baseline --labels ../data/label/20260715_shiyaoyuan_test.xlsx` | `evaluation_report.json`（P/R/F1、面积 R²、RT 偏差、RSD）、`match_details.csv`、`area_pairs.csv` |
 
@@ -75,11 +75,11 @@ wiff/ + msdata/ ──(converters 格式转换)──> mzml/ ──(coco_annotat
 
 | # | 防线 | 位置 | 检查内容 | 参数（默认） | 结果去向 |
 |---|---|---|---|---|---|
-| 1 | **标注 RT 一致性**（新） | `label_qc` → 训练数据构建 & 推理管线 | ①跨样品：同化合物同通道在各样品间 RT 极差；②双离子：同一样品中定量/定性离子 RT 极差。**极差 >1 min 判疑似实验有误**：警示人工复核 + 涉事行剔除（不生成 ROI / 不进训练 bbox） | `--qc_label_rt_tol`(1.0) | `output/QC/<run>/qc_label_rt.csv` |
-| 2 | ROI 通道级 | `preprocessing/xic_extraction.py` | 平滑后整条 XIC 最大强度过低、RT 点数过少 → 不生成 ROI | `--pipeline_min_max_intensity`(1000)、`--pipeline_min_chrom_points`(10) | 各样品 `pipeline_qc_excluded.csv` → 汇总 `qc_roi_channels.csv` |
-| 3 | 预测框级 | `inference/predictor.py` | score < 阈值的检测框不输出；feature 无化合物则跳过 | `--threshold`(0.99) | `qc_prediction_threshold.csv` |
-| 4 | SNR 框级 | `postprocessing/snr_filter.py` | 框外 SNR、框外噪声点数联合判定 | `--snr_min`(3.0)、`--snr_min_noise_points`(5) | `box_outside_snr_report.csv` → 汇总 `qc_snr_boxes.csv` |
-| 5 | 精修框级 | `postprocessing/peak_refinement.py` | 精修置信度、SNR、次峰比例、框宽上限等门控 | `--post_min_confidence`(0.99)、`--post_min_snr`(3.0) 等 | `qc_post_refinement.csv` |
+| 1 | **标注 RT 一致性**（新） | `label_qc` → 训练数据构建 & 推理管线 | ①跨样品：同化合物同通道在各样品间 RT 极差；②双离子：同一样品中定量/定性离子 RT 极差。**极差 >1 min 判疑似实验有误**：警示人工复核 + 涉事行剔除（不生成 ROI / 不进训练 bbox） | `--qc_label_rt_tol`(1.0) | `output/QC/<run>/qc1_label_rt.csv` |
+| 2 | ROI 通道级 | `preprocessing/xic_extraction.py` | 平滑后整条 XIC 最大强度过低、RT 点数过少 → 不生成 ROI | `--pipeline_min_max_intensity`(1000)、`--pipeline_min_chrom_points`(10) | 各样品 `pipeline_qc_excluded.csv` → 汇总 `qc2_roi.csv` |
+| 3 | 预测框级 | `inference/predictor.py` | score < 阈值的检测框不输出；feature 无化合物则跳过 | `--threshold`(0.99) | 各样品 `qc3_threshold_<样本名>.csv` → 汇总 `qc3_threshold.csv` |
+| 4 | SNR 框级 | `postprocessing/snr_filter.py` | 框外 SNR、框外噪声点数联合判定 | `--snr_min`(3.0)、`--snr_min_noise_points`(5) | 各样品 `qc4_snr_<样本名>.csv` → 汇总 `qc4_snr.csv` |
+| 5 | 精修框级 | `postprocessing/peak_refinement.py` | 精修置信度、SNR、次峰比例、框宽上限等门控 | `--post_min_confidence`(0.99)、`--post_min_snr`(3.0) 等 | 各样品 `qc5_refined_<样本名>.csv` → 汇总 `qc5_refined.csv` |
 
 ### 标注 RT 一致性检查（防线 1 详述）
 
@@ -93,23 +93,24 @@ wiff/ + msdata/ ──(converters 格式转换)──> mzml/ ──(coco_annotat
 | 跨样品、组内样品数 =2 | 两行都剔（无法仲裁谁错）+ 警示人工复核 |
 | 双离子 | 两通道都剔（无法判断定量/定性谁错） |
 
-推理侧通过可选参数 `--labels` 启用（不传则此检查跳过，保持"推理无需标注"的契约）；训练数据构建（`coco_annotation`）默认启用。
+推理侧 `roi`/`pipeline` 模式必填 `--labels`，该检查随之启用（`fullscan` 模式不依赖标注，自动跳过）；训练数据构建（`coco_annotation`）默认启用。
 
 ### 统一 QC 输出
 
-所有环节的 QC 结果表统一写入 **`../output/QC/<run_name>/`**（run_name 为本次运行输出目录名，训练侧为 `coco_<实验名>_<时间戳>`）：
+所有环节的 QC 结果表统一写入 **`../output/QC/<run_name>/`**（run_name 为本次运行输出目录名，训练侧为 `coco_<数据集名>`，同数据集多次构建汇总/覆盖到同一处）：
 
 ```
 output/QC/<run_name>/
-├── qc_label_rt.csv            # 标注 RT 一致性（含保留行，便于复核）
-├── qc_roi_channels.csv        # ROI 通道级剔除汇总（含 reason）
-├── qc_prediction_threshold.csv# 预测阈值剔除统计
-├── qc_snr_boxes.csv           # SNR 逐框明细汇总
-├── qc_post_refinement.csv     # 精修门控剔除明细
-└── qc_summary.md              # 各环节检查数/剔除数/人工复核清单
+├── qc1_label_rt.csv          # 标注 RT 一致性（含保留行，便于复核）
+├── qc2_roi.csv               # ROI 通道级剔除汇总（含 reason）
+├── qc3_threshold.csv         # 预测阈值剔除统计（样本级 qc3_threshold_<样本名>.csv 汇总）
+├── qc4_snr.csv               # SNR 逐框明细汇总（样本级 qc4_snr_<样本名>.csv 汇总）
+├── qc5_refined.csv           # 精修门控剔除明细（样本级 qc5_refined_<样本名>.csv 汇总）
+├── qc_summary.md             # 各环节检查数/剔除数/人工复核清单
+└── qc_alert.md               # 全防线人工预警报告（需人工复核清单）
 ```
 
-> **当前状态**：五道防线与统一 QC 输出目录已全部实施运行（`docs/plan_qc.md` P1/P2/P3 完成）。2026-08-20 防线 1 在 20260715 实验标注中查出 20 项需人工复核（跨样品/双离子 RT 极差 12.7~25.9 min）。
+> **当前状态**：五道防线与统一 QC 输出目录已全部实施运行。2026-08-20 防线 1 在 20260715 实验标注中查出 20 项需人工复核（跨样品/双离子 RT 极差 12.7~25.9 min）。
 
 ---
 
@@ -280,13 +281,14 @@ python main.py --debug  # 调试模式（额外日志输出到 stdout）
 > 💡 四种分析模式（Targeted / Untargeted × Centroided / Profile）的原理、适用场景与操作流程，详见 [User_Tutorials.md](User_Tutorials.md)。
 > ⚠️ **当前项目仅开发 Targeted × Centroided（MRM）模式**，其余三模式保留现状、暂不开发。
 
-统一入口 `model/inference/cli.py`（在 `model/` 目录下用 `python -m inference.cli` 调用），通过 `--mode` 切换 3 种运行模式（`roi` / `pipeline` 均支持 `--mzml` 单文件或 `--batch_dir` 目录递归扫描，含子目录）：
+统一入口 `model/inference/cli.py`（在 `model/` 目录下用 `python -m inference.cli` 调用），通过 `--mode` 切换 4 种运行模式（`roi` / `pipeline` 均支持 `--mzml` 单文件或 `--batch_dir` 目录递归扫描，含子目录）：
 
 | 模式 | 说明 | 适用场景 |
 |------|------|----------|
 | `pipeline` | 完整管线：ROI 提取 → 预测 → SNR 筛选 → 精修（单文件或目录递归） | ⭐ 生产环境（推荐） |
 | `roi` | 仅 EIC/ROI 提取（无需 `--model`，无预测 CSV） | 检查 XIC/ROI 质量 |
-| `batch_dir` | 对已有 XIC/ROI 中间结果目录批量预测+积分 | 续跑 / 断点恢复 / ROI 复用 |
+| `roi2inference` | 对已有 XIC/ROI 中间结果目录批量预测+积分 | 续跑 / 断点恢复 / ROI 复用 |
+| `fullscan` | 整谱 XIC 全峰识别：全部 transition、不依赖标注；信号级找峰 + 可选模型验证（`--model` 提供则按峰切 ±1min 窗验证） | 全峰扫描 / 无标注场景（参数模板：`configs/full_xic_scan.json`） |
 
 ---
 
@@ -300,6 +302,7 @@ cd model
 # 批量 mzML（最常用；目录递归含子目录）
 python -m inference.cli --mode pipeline `
   --model checkpoint/quanformer.pth `
+  --labels ../data/label/20260715_shiyaoyuan_test.xlsx `
   --batch_dir ../data/test/mzml `
   --output_dir ../output/pipeline_batch `
   --threshold 0.99 --plot `
@@ -310,12 +313,13 @@ python -m inference.cli --mode pipeline `
 # 单个 mzML
 python -m inference.cli --mode pipeline `
   --model checkpoint/quanformer.pth `
+  --labels ../data/label/20260715_shiyaoyuan_test.xlsx `
   --mzml ../data/test/mzml/20260715_shiyaoyuan_test_1.mzML `
   --output_dir ../output/pipeline_single_test `
   --threshold 0.99 --plot
 ```
 
-> **ROI 生成方式（B 范式）**：默认以各通道谱图**最高强度点**居中；传 `--labels` 时改为**标注驱动**——仅标注命中通道生成 ROI，窗口中心 = 标注 `rt` 字段，并由防线 1（标注 RT 一致性）把关（剔除涉事通道）。不传 `--labels` 时推理无需标注（契约不变）。
+> **ROI 生成方式（B 范式）**：`roi` / `pipeline` 模式**必须传 `--labels`**（标注驱动）——仅标注命中通道生成 ROI，窗口中心 = 标注 `rt` 字段，并由防线 1（标注 RT 一致性）把关（剔除涉事通道）；不再支持 apex（最高强度点）通道驱动。`fullscan` 模式不依赖标注。
 
 **输出结构**（以 `--output_dir ../output/pipeline_batch` 为例，`<样品>` 为 mzML 文件名去后缀）：
 
@@ -335,30 +339,37 @@ python -m inference.cli --mode pipeline `
 │           ├── xic_matrix.npy           # 同上
 │           ├── snr_kept/                # 保留行红框标注图（--save_snr_jpeg 时生成；旧版目录名为 筛选保留/）
 │           ├── snr_dropped/             # 剔除行红框标注图（同上；旧版为 筛选剔除/）
-│           ├── prediction_refined.csv   # ⭐ 最终精修结果（峰面积 + 置信度）
+│           ├── prediction_refined.csv   # ⭐ 最终精修结果（RT/高度/置信度/SNR；面积见 *_with_area.csv）
+│           ├── prediction_refined_with_area.csv  # 精修框补算峰面积（推理报告自动生成）
 │           └── refined_plots/           # 精修标注图（--plot 时生成）
 ├── pipeline_timing.log                  # 阶段计时日志
-└── pipeline_timing_runs.jsonl           # 计时记录（JSONL）
+├── pipeline_timing_runs.jsonl           # 计时记录（JSONL）
+├── inference_report.md                  # ⭐ 推理报告（跑完自动生成：样本摘要/化合物×样品面积矩阵/QC/管线与列说明）
+└── inference_report_all.csv             # ⭐ 全部样品合并明细（精修结果 + 补算峰面积）
 ```
+
+> 跑完 pipeline 后自动生成推理报告（`--no_report` 可关闭）：`inference_report.md` 为可读报告，`inference_report_all.csv` 为合并明细（每样品×每 ROI 一行），同时为每个样品补算精修峰面积（`snr_filtered/<样品>/SNR_box_*/prediction_refined_with_area.csv`）。
 
 ---
 
 ### 轻量模式
 
 不需要完整管线（SNR 筛选和区间精修）时使用。
-注意：`roi` 仅做 EIC/ROI 提取（不输出预测 CSV，也无需 `--model`）；想看预测框标注请两步走：先 `roi` 生成 ROI，再 `batch_dir --plot` 画图；需要完整预测结果请使用 `pipeline`。
+注意：`roi` 仅做 EIC/ROI 提取（不输出预测 CSV，也无需 `--model`）；想看预测框标注请两步走：先 `roi` 生成 ROI，再 `roi2inference --plot` 画图；需要完整预测结果请使用 `pipeline`。
 
 ```powershell
-# 单个 mzML（输出到 <output_dir>/<文件名>/；无需 --model）
+# 单个 mzML（输出到 <output_dir>/<文件名>/；无需 --model，但 --labels 必填）
 python -m inference.cli --mode roi `
+  --labels ../data/label/20260715_shiyaoyuan_test.xlsx `
   --mzml ../data/test/mzml/20260715_shiyaoyuan_test_1.mzML --output_dir ../output/test/roi_check
 
 # 批量 mzML（目录递归含子目录）
 python -m inference.cli --mode roi `
+  --labels ../data/label/20260715_shiyaoyuan_test.xlsx `
   --batch_dir ../data/test/mzml --output_dir ../output/test/roi_check
 
-# 对已有 ROI 目录批量预测+积分（--plot 时同时生成预测框标注图）
-python -m inference.cli --mode batch_dir `
+# 对已有 ROI 目录批量预测+积分（--plot 时同时生成预测框标注图；roi2inference 无需 --labels）
+python -m inference.cli --mode roi2inference `
   --model checkpoint/quanformer.pth `
   --batch_dir ../output/test/roi_check --output_dir ../output/test/pred_check --plot
 ```
@@ -367,9 +378,10 @@ python -m inference.cli --mode batch_dir `
 >
 > | 模式 | 默认 `--output_dir` | 说明 |
 > |------|---------------------|------|
-> | `roi` | `../output/inference/xic-roi-batch` | EIC/ROI 提取产物，可供 `batch_dir` 模式复用 |
-> | `batch_dir` | `../output/inference/batch_predictions` | 对已有 ROI 目录的批量预测 |
+> | `roi` | `../output/inference/xic-roi-batch` | EIC/ROI 提取产物，可供 `roi2inference` 模式复用 |
+> | `roi2inference` | `../output/inference/batch_predictions` | 对已有 ROI 目录的批量预测 |
 > | `pipeline` | `../output/inference/full_pipeline` | 完整管线（ROI + 预测 + SNR + 精修） |
+> | `fullscan` | `../output/inference/full_scan` | 整谱全峰扫描 |
 >
 > **测试/试跑请显式指定 `../output/test/<名称>`** 单独存放，不与正式产物混放。
 
@@ -378,17 +390,19 @@ python -m inference.cli --mode batch_dir `
 ### 推理参数速查
 
 > 以下为 `model/inference/cli.py` **全部**命令行参数（与 argparse 定义一一对应）。
-> 「完整参数模板」可直接复制到终端，按注释填写/删减；除 `--model` 外所有参数均可省略（使用默认值）。
+> 「完整参数模板」可直接复制到终端，按注释填写/删减；除 `--model`（roi 外必填）与 `--labels`（roi/pipeline 必填）外，其余参数均可省略（使用默认值）。
 
 **完整参数模板**（注释即填写说明）：
 
 ```powershell
 python -m inference.cli `
   # ==================== 基础参数 ====================
-  # 运行模式（默认 pipeline），可选：roi / batch_dir / pipeline
+  # 运行模式（默认 pipeline），可选：roi / roi2inference / pipeline / fullscan
   --mode pipeline `
-  # 【必填】模型权重 .pth 路径（相对 model/ 目录；roi 模式非必填）
+  # 【必填】模型权重 .pth 路径（相对 model/ 目录；roi 模式非必填，fullscan 可选）
   --model checkpoint/quanformer.pth `
+  # 【必填】人工标注 xlsx（roi/pipeline 模式标注驱动生成 ROI；fullscan 模式忽略）
+  --labels ../data/label/20260715_shiyaoyuan_test.xlsx `
   # 置信度阈值（默认 0.99，建议 0.99 起步，过低会引入假峰）
   --threshold 0.99 `
   # 积分方式（默认 linear）：linear / raw / external_baseline
@@ -400,9 +414,9 @@ python -m inference.cli `
   # [roi / pipeline] 输入 mzML 文件路径，或包含 mzML 的目录（递归扫描）
   --mzml ../data/test/mzml/20260715_shiyaoyuan_test_1.mzML `
   # [roi / pipeline] mzML 目录（递归扫描含子目录）；
-  # [batch_dir] testXIC 输出目录
+  # [roi2inference] testXIC 输出目录
   --batch_dir ../data/test/mzml `
-  # [pipeline/batch_dir] 生成预测框标注图（roi 模式不支持）
+  # [pipeline/roi2inference] 生成预测框标注图（roi 模式不支持）
   --plot `
   # ==================== Pipeline QC 参数 ====================
   # [QC] XIC 平滑后最大强度低于此值 → 不生成 ROI（默认 1000；0=关闭）
@@ -467,6 +481,8 @@ python -m inference.cli `
   # ==================== 输出控制 ====================
   # 不写 pipeline_timing.log / pipeline_timing_runs.jsonl（终端仍打印计时汇总）
   --no_timing `
+  # 跑完后不自动生成推理报告（默认生成 inference_report.md + inference_report_all.csv）
+  --no_report `
   # SNR 筛选时生成 snr_kept/snr_dropped/ 红框标注 jpeg（默认关闭，省磁盘）
   --save_snr_jpeg
 ```
@@ -478,7 +494,8 @@ python -m inference.cli `
 | 参数 | 默认 | 说明 |
 |------|------|------|
 | `--model` | 必填（roi 除外） | 模型 `.pth` 路径 |
-| `--mode` | `pipeline` | 运行模式：`roi` / `batch_dir` / `pipeline` |
+| `--labels` | 必填（roi/pipeline） | 人工标注 xlsx（标注驱动 ROI；fullscan 忽略） |
+| `--mode` | `pipeline` | 运行模式：`roi` / `roi2inference` / `pipeline` / `fullscan` |
 | `--threshold` | `0.99` | 置信度阈值 |
 | `--integration_method` | `linear` | `linear` / `raw` / `external_baseline` |
 | `--smooth_sigma` | `0.0` | 高斯平滑 sigma |
@@ -494,7 +511,25 @@ python -m inference.cli `
 | `--pipeline_min_chrom_points` | `10` | 色谱点数少于此跳过 |
 | `--post_min_confidence` | `0.99` | 精修后最低置信度 |
 | `--no_timing` | — | 不写计时日志文件（终端仍打印） |
+| `--no_report` | — | 跑完后不自动生成推理报告 |
 | `--save_snr_jpeg` | — | SNR 筛选生成红框标注图（默认关闭） |
+
+---
+
+### 整谱全峰扫描（fullscan）
+
+不依赖标注的**全峰识别**模式：对全部 transition 通道做信号级找峰（基线分位 / prominence / 边界截停等 `scan_*` 参数），`--model` 提供时按候选峰切 ±1min 窗口做模型验证。参数模板：`configs/full_xic_scan.json`。
+
+```powershell
+# 纯信号处理（不跑模型）
+python -m inference.cli --mode fullscan `
+  --batch_dir ../data/test/mzml --output_dir ../output/test/fullscan_01
+
+# 带模型验证（候选峰切窗推理）
+python -m inference.cli --mode fullscan `
+  --model checkpoint/quanformer.pth `
+  --batch_dir ../data/test/mzml --output_dir ../output/test/fullscan_01
+```
 
 ---
 
@@ -554,6 +589,27 @@ python -m train `
   --lr 1e-4 --lr_backbone 1e-5
 ```
 
+### 参数配置外置（--config，推荐）
+
+所有入口（`train.py` / `inference.cli.py` / `preprocessing/coco_annotation.py` / `tools.evaluation.evaluate_baseline.py`）都支持 `--config configs/<名称>.json`：配置文件提供**默认参数**，CLI 参数仍可覆盖；`_comment_*` 键为注释不生效。现成配置（均在 `model/configs/` 下）：
+
+| 配置 | 用途 |
+|------|------|
+| `quanformer_baseline.json` | quanformer 基线，从零训练（`coco_path: ../data/test/coco`） |
+| `quanformer_v2_finetune.json` | quanformer 微调（test1 数据 `../data/test/coco`，产出 quanformerv2） |
+| `quanformer_baseline_test1ft.json` | 对照实验：test1 数据微调基线 |
+| `quanformer_v3_finetune.json` | quanformer 第 3 轮微调（合并数据集 `../data/coco/merged`，产出 quanformerv3） |
+| `mrmpformer_v1_fdr.json` | MRMPFormer v1（traindata3，FDR 边界精化全开，产出 mrmpformerv1） |
+| `mrmpformer_v1_multisrc.json` | MRMPFormer v1 多源联合训练（产出 mrmpformerv2） |
+| `inference_pipeline.json` | 完整推理管线（pipeline 模式）参数模板 |
+| `full_xic_scan.json` | 整谱全峰扫描（fullscan 模式）参数模板 |
+| `evaluation_baseline.json` | 基线一键精度评测参数 |
+| `coco_annotation.json` / `coco_annotation_traindata3.json` | COCO 数据集构建参数（10 文件合并 / traindata3 全量） |
+
+示例：`python -m train --config configs/mrmpformer_v1_fdr.json`
+
+> MRMPFormer v1 的 FDR 结构参数（`num_fdr_bins` / `fdr_bin_power` / `fdr_bin_values` / `fdr_scale_mode` / `fdr_layer_weights` / `fdr_loss_coef` / `fdr_min_width` / `detach_boundary_feedback`）与分类/定位损失参数（Focal、动态 L1、PW-CIoU）均已注册到 `train.py` 的 argparse，配置文件与 CLI 均可控制。
+
 ### 关键参数
 
 | 参数 | 默认 | 说明 |
@@ -582,7 +638,8 @@ python -m train `
   --resume checkpoint/quanformer.pth --device auto --eval
 ```
 
-> ⚠️ 恢复训练时会自动跳过 `class_embed` 和 `query_embed` 权重（维度可能不匹配）。
+> ⚠️ 恢复训练仅在 checkpoint 与当前模型**同名字段维度不一致**时才跳过该权重（如 COCO 预训练迁移场景）；自训 checkpoint 续训/微调时分类头与 `query_embed` 完整加载，不会静默随机初始化。
+> 💡 从旧 QuanFormer 单层权重热启动 MRMPFormer v1 时，自动走 `load_legacy_quanformer_state` 迁移：decoder L1 参数复制初始化到 L2/L3，FDR/边界反馈模块保持新初始化。
 > 💡 当前 `quanformer.pth` 的训练参数：`enc_layers=1, dec_layers=1, num_queries=3, hidden_dim=256, nheads=8, dim_feedforward=2048, dropout=0.1`。
 
 ---
@@ -595,6 +652,7 @@ MRMPFormer/
 ├── environment.yml               # Conda 环境（name: gamstekpeaking；在仓库根目录使用）
 ├── model/                        # ⭐ 核心代码（须在此目录下用 python -m <pkg> 调用）
 │   ├── train.py                  # 训练入口（python -m train ...）
+│   ├── configs/                  # 参数配置文件（--config 外置默认参数：训练/推理/评测/数据集构建）
 │   ├── inference/                # 推理：CLI 入口 + 预测器 + 两轮检测
 │   │   └── cli.py                #   统一推理入口（python -m inference.cli --mode ...）
 │   ├── models/                   # 模型定义（quanformer / mrmpformer / shared）
@@ -640,6 +698,7 @@ python wiff.py           # 批量转换
 | `mzml/` | 色谱图查看/导出 | `python -m tools.mzml.chromatogram list <file>` |
 | `benchmark/` | 性能基准测试 | `python -m tools.benchmark.runner --help` |
 | `visualization/` | 可视化 | — |
+| `evaluation/` | 推理报告 / 框修正消融实验 / 基线精度评测 / 对比 | `python -m tools.evaluation.inference_report --output_dir ../output/inference/full_pipeline`；`python -m tools.evaluation.refine_ablation` |
 | `tests/` | 测试脚本 | — |
 
 ---

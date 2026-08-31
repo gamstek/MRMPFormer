@@ -103,8 +103,14 @@ def main():
 
     df = read_csv_safe(pred_path)
 
-    # 自动推断 xic_matrix 和 roi_windows_csv 路径
-    xic_path = Path(args.xic_matrix) if args.xic_matrix else pred_path.parent.parent.parent / "xic-roi-batch" / pred_path.parent.name / "xic_matrix.npy"
+    # 自动推断 xic_matrix 和 roi_windows_csv 路径（xic_roi 新目录优先，回退旧 xic-roi-batch）
+    if args.xic_matrix:
+        xic_path = Path(args.xic_matrix)
+    else:
+        roi_base = pred_path.parent.parent.parent
+        _cands = [roi_base / "xic_roi" / pred_path.parent.name / "xic_matrix.npy",
+                  roi_base / "xic-roi-batch" / pred_path.parent.name / "xic_matrix.npy"]
+        xic_path = next((p for p in _cands if p.is_file()), _cands[0])
     roi_path = Path(args.roi_windows_csv) if args.roi_windows_csv else xic_path.parent / "roi_windows.csv"
 
     if not xic_path.is_file():

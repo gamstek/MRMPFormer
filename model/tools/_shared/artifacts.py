@@ -1,10 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-公共 artifact 工具：CSV 安全读取、ROI map 加载、RT 窗口解析、XIC matrix 定位、
-图像名到行索引转换等。
-
-所有函数均保持与原脚本相同的行为，不修改业务逻辑。
-"""
+"""评估与可视化工具共用的读取、定位类辅助函数。"""
 
 import os
 from pathlib import Path
@@ -15,19 +10,25 @@ import pandas as pd
 
 
 def read_csv_safe(path: Path) -> pd.DataFrame:
-    """安全读取 CSV，兼容 Windows 中文路径（避免 C 引擎 OSError）。"""
+    """读取 CSV，依次尝试 utf-8-sig / utf-8 / gbk，规避 Windows 中文路径问题。
+
+    空文件（如仅 BOM/空行的空表）返回空 DataFrame，避免 EmptyDataError
+    被误当成编码问题回退到 gbk 而产生误导性报错。
+    """
     last_err = None
     for enc in ("utf-8-sig", "utf-8", "gbk"):
         try:
             with open(str(path), "r", encoding=enc, newline="") as f:
                 return pd.read_csv(f)
+        except pd.errors.EmptyDataError:
+            return pd.DataFrame()
         except Exception as e:
             last_err = e
     raise last_err
 
 
 def safe_float(v, default: float = np.nan) -> float:
-    """安全转换为 float，失败时返回 default。"""
+    """转 float，失败或为空时返回 default。"""
     try:
         if pd.isna(v):
             return default
@@ -37,10 +38,7 @@ def safe_float(v, default: float = np.nan) -> float:
 
 
 def load_roi_map(path: Path) -> Dict[str, Tuple[float, float]]:
-    """
-    从 roi_windows.csv 加载 image → (rt_lo, rt_hi) 映射。
-    同时注册 basename 键，方便按文件名匹配。
-    """
+    """读取 roi_windows.csv，返回 image 全路径及文件名到 (rt_lo, rt_hi) 的映射。"""
     if not path.is_file():
         return {}
     df = read_csv_safe(path)
@@ -60,12 +58,7 @@ def resolve_rt_window(
     roi_map: Dict[str, Tuple[float, float]],
     image_cell: str,
 ) -> Tuple[Optional[Tuple[float, float]], str]:
-    """
-    按多种键匹配 roi_windows（basename、去目录前缀等）。
-    返回 (window_or_none, match_note)。
-
-    match_note 说明匹配方式：'key=...' 表示精确命中，'no_match_tried=...' 表示未命中。
-    """
+    """在 roi_map 中匹配图像的 RT 窗口，返回 (窗口, 匹配方式)。"""
     s = str(image_cell).strip().replace("\\", "/")
     if not s:
         return None, "empty_image"
@@ -73,12 +66,11 @@ def resolve_rt_window(
     name = os.path.basename(s)
     if name not in candidates:
         candidates.append(name)
-    # SNR 有时写 snr_kept/xxx.jpeg（旧产物为 筛选保留/xxx.jpeg）；roi 表也可能只有 xxx 或带路径
+    # roi 表中的键可能只写文件名，补一个去路径的候选
     for c in list(candidates):
-        if "/" in c or "\\" in c:
-            tail = c.replace("\\", "/").split("/")[-1]
-            if tail not in candidates:
-                candidates.append(tail)
+        tail = c.replace("\\", "/").split("/")[-1]
+        if tail not in candidates:
+            candidates.append(tail)
     for c in candidates:
         if c in roi_map:
             return roi_map[c], "key=%r" % c
@@ -86,12 +78,9 @@ def resolve_rt_window(
 
 
 def image_to_row_index(image_name: str, compound_name) -> Optional[int]:
-    """
-    从 image 名称或 compound_name 解析 XIC 矩阵中的 0 基行索引（Zero-based Index）。
+    """解析 XIC 矩阵的 0 基行索引，两者均按 1 基编号记录。
 
-    优先级：
-    1. compound_name 是纯数字 → 减 1 得行号（1 基编号 → 0 基索引）
-    2. image 名前缀 "N_mz..." 中 N 为数字 → 减 1 得行号
+    优先取 compound_name 的数值；否则看图像名前缀 "N_mz..." 中的 N。
     """
     c = safe_float(compound_name, np.nan)
     if np.isfinite(c) and c > 0:
@@ -102,19 +91,16 @@ def image_to_row_index(image_name: str, compound_name) -> Optional[int]:
         prefix = stem.split("_mz", 1)[0]
         if prefix.isdigit():
             n = int(prefix)
-            if n > 0:  # 1 基编号必须 > 0
+            if n > 0:
                 return n - 1
     return None
 
 
 def locate_xic_npy(snr_dir: Path) -> Optional[Path]:
-    """
-    在 SNR 目录附近查找 xic_matrix.npy。
-    搜索顺序：
-    1. SNR 子目录自身
-    2. 父目录
-    3. 祖父目录
-    4. xic-roi-batch/<样品名>/
+    """定位 SNR 目录对应的 xic_matrix.npy。
+
+    依次尝试 SNR 目录自身、父目录、祖父目录，
+    再到祖父（及其上级）下的 xic_roi/<样品名>/ 或 xic-roi-batch/<样品名>/。
     """
     cands = [
         snr_dir / "xic_matrix.npy",
@@ -123,8 +109,9 @@ def locate_xic_npy(snr_dir: Path) -> Optional[Path]:
     ]
     sample_name = snr_dir.parent.name
     gp = snr_dir.parent.parent
-    cands.append(gp / "xic-roi-batch" / sample_name / "xic_matrix.npy")
-    cands.append(gp.parent / "xic-roi-batch" / sample_name / "xic_matrix.npy")
+    for roi_dir_name in ("xic_roi", "xic-roi-batch"):
+        cands.append(gp / roi_dir_name / sample_name / "xic_matrix.npy")
+        cands.append(gp.parent / roi_dir_name / sample_name / "xic_matrix.npy")
     for p in cands:
         if p.is_file():
             return p
@@ -132,10 +119,7 @@ def locate_xic_npy(snr_dir: Path) -> Optional[Path]:
 
 
 def locate_roi_csv(snr_dir: Path, explicit: Optional[Path] = None) -> Path:
-    """
-    在 SNR 目录附近查找 roi_windows.csv。
-    若提供 explicit 且存在则直接返回；否则依次搜索 SNR 目录自身、xic-roi-batch。
-    """
+    """定位 roi_windows.csv：explicit 优先，其次 SNR 目录自身，最后到 xic_roi/xic-roi-batch 目录。"""
     if explicit is not None and explicit.is_file():
         return explicit
     rw = snr_dir / "roi_windows.csv"
@@ -143,14 +127,39 @@ def locate_roi_csv(snr_dir: Path, explicit: Optional[Path] = None) -> Path:
         return rw
     sample_name = snr_dir.parent.name
     gp = snr_dir.parent.parent
-    alt = gp / "xic-roi-batch" / sample_name / "roi_windows.csv"
-    if alt.is_file():
-        return alt
+    for roi_dir_name in ("xic_roi", "xic-roi-batch"):
+        alt = gp / roi_dir_name / sample_name / "roi_windows.csv"
+        if alt.is_file():
+            return alt
     return rw
 
 
+def resolve_pred_root(result_root: Path) -> Path:
+    """预测输出根目录：predictions_model，缺失时退回 batch_predictions。"""
+    new_root = result_root / "predictions_model"
+    if new_root.is_dir():
+        return new_root
+    return result_root / "batch_predictions"
+
+
+def resolve_roi_root(result_root: Path) -> Path:
+    """ROI 根目录：xic_roi，缺失时退回 xic-roi-batch。"""
+    new_root = result_root / "xic_roi"
+    if new_root.is_dir():
+        return new_root
+    return result_root / "xic-roi-batch"
+
+
+def resolve_snr_root(result_root: Path) -> Path:
+    """SNR/精修结果根目录：prediction_refined，缺失时退回 snr_filtered。"""
+    new_root = result_root / "prediction_refined"
+    if new_root.is_dir():
+        return new_root
+    return result_root / "snr_filtered"
+
+
 def refined_core_stem(png_path: Path) -> str:
-    """从 refined PNG 文件名去掉 _refined 后缀，得到核心 stem。"""
+    """refined PNG 文件名去掉 _refined 后缀。"""
     s = png_path.stem
     suf = "_refined"
     if s.lower().endswith(suf.lower()):
@@ -159,10 +168,7 @@ def refined_core_stem(png_path: Path) -> str:
 
 
 def find_row_for_refined_png(df: pd.DataFrame, png_path: Path) -> Optional[pd.Series]:
-    """
-    在 prediction_refined.csv 中匹配 refined PNG 对应的行。
-    先精确匹配 stem，再尝试前缀包含匹配。
-    """
+    """在 prediction_refined.csv 中找到 refined PNG 对应的行：先精确匹配 stem，再前缀包含匹配。"""
     core = refined_core_stem(png_path)
     exact = []
     prefixed = []

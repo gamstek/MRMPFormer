@@ -10,17 +10,17 @@ ROI 生成一律标注驱动（B 范式，与训练数据生成同一路径）�
   python -m inference.cli --mode roi --mzml ../data/test/mzml/sample.mzML --labels ../data/label/<实验>.xlsx
   python -m inference.cli --mode roi --batch_dir ../data/test/mzml --labels ../data/label/<实验>.xlsx
 
-  # 想看预测框标注：先 roi 生成 ROI，再 batch_dir --plot 对已有 ROI 目录画图
+  # 想看预测框标注：先 roi 生成 ROI，再 roi2inference --plot 对已有 ROI 目录画图
   python -m inference.cli --mode roi --batch_dir ../data/test/mzml --labels ../data/label/<实验>.xlsx
-  python -m inference.cli --mode batch_dir --model checkpoint/quanformer.pth --batch_dir ../output/inference/xic-roi-batch --plot
+  python -m inference.cli --mode roi2inference --model checkpoint/quanformer.pth --batch_dir ../output/inference/xic-roi-batch --plot
 
   # 对已有 ROI 目录批量预测+积分
-  python -m inference.cli --mode batch_dir --model checkpoint/quanformer.pth --batch_dir ../output/inference/xic-roi-batch
+  python -m inference.cli --mode roi2inference --model checkpoint/quanformer.pth --batch_dir ../output/inference/xic-roi-batch
 
   # 完整管线（ROI → 预测 → SNR 筛选 → 精修，单文件或目录递归）
   python -m inference.cli --mode pipeline --model checkpoint/quanformer.pth --batch_dir ../data/test/mzml --labels ../data/label/<实验>.xlsx
 
-  # 目录递归时不同子目录出现同名 mzML：输出目录自动加路径前缀（如 子目录A__样品1）避免覆盖
+  # 目录递归时不同子目录出现同名 mzML：输出目录自动加路径前缀（如 子目录A__样本1）避免覆盖
 """
 import argparse
 import json
@@ -232,7 +232,7 @@ def _print_mzml_roi_stats_summary(mzml_roi_stats: list) -> None:
         % (len(mzml_roi_stats), total_chrom, total_roi, total_excl)
     )
     if len(mzml_roi_stats) <= 20:
-        print("%-28s %10s %10s %10s" % ("mzML 样品", "色谱条数", "ROI图", "QC剔除"))
+        print("%-28s %10s %10s %10s" % ("mzML 样本", "色谱条数", "ROI图", "QC剔除"))
         for s in mzml_roi_stats:
             label = s.get("stem") or s.get("mzml") or "?"
             print(
@@ -246,7 +246,7 @@ def _print_mzml_roi_stats_summary(mzml_roi_stats: list) -> None:
             )
     else:
         avg_roi = total_roi / len(mzml_roi_stats) if mzml_roi_stats else 0.0
-        print("（%d 个样品，省略逐条；平均每样品 ROI 图 %.1f 张）" % (len(mzml_roi_stats), avg_roi))
+        print("（%d 个样本，省略逐条；平均每样本 ROI 图 %.1f 张）" % (len(mzml_roi_stats), avg_roi))
 
 
 def _print_resource_stats_block(title: str, stats: dict, indent: str = "") -> None:
@@ -303,7 +303,7 @@ def _build_pipeline_timing_report(
     add("[PIPELINE TIMING] %s" % mode_label)
     add("=" * 60)
     add("时间戳: %s" % datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    add("样品数: %d" % int(n_samples))
+    add("样本数: %d" % int(n_samples))
     total_roi = 0
     if mzml_roi_stats:
         total_roi = sum(int(s.get("n_roi_images", 0) or 0) for s in mzml_roi_stats)
@@ -370,12 +370,12 @@ def _build_pipeline_timing_report(
         sample_sum = sum(p.get("total", 0.0) for p in per_sample_seconds)
         add("-" * 60)
         add(
-            "按样品 SNR+后处理: 合计 %s (SNR %s + post %s)"
+            "按样本 SNR+后处理: 合计 %s (SNR %s + post %s)"
             % (_format_elapsed(sample_sum), _format_elapsed(snr_sum), _format_elapsed(post_sum))
         )
         if len(per_sample_seconds) <= 20:
             add("-" * 60)
-            add("%-24s %22s %22s %22s" % ("样品", "SNR", "post", "合计"))
+            add("%-24s %22s %22s %22s" % ("样本", "SNR", "post", "合计"))
             for p in per_sample_seconds:
                 add(
                     "%-24s %22s %22s %22s"
@@ -388,7 +388,7 @@ def _build_pipeline_timing_report(
                 )
         else:
             add(
-                "（%d 个样品，省略逐条；单样品平均 SNR %s, post %s）"
+                "（%d 个样本，省略逐条；单样本平均 SNR %s, post %s）"
                 % (
                     len(per_sample_seconds),
                     _format_elapsed(snr_sum / len(per_sample_seconds)),
@@ -479,11 +479,27 @@ def _print_pipeline_timing_summary(
     return record
 
 
+def _resolve_exp_name(args) -> str:
+    """确定实验名（Step 7）：--exp_name 优先；缺省回退：单 mzML → 文件名 stem；
+    目录输入 → 目录名；再兜底 UTC 时间戳。"""
+    if getattr(args, "exp_name", None):
+        return str(args.exp_name).strip()
+    import datetime
+    for _a in (getattr(args, "mzml", None), getattr(args, "batch_dir", None)):
+        if _a:
+            _p = Path(_a)
+            if _p.is_file():
+                return _p.stem
+            if _p.is_dir():
+                return _p.name
+    return datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+
+
 def _collect_mzml_inputs(mzml_arg, batch_dir_arg):
     """收集输入 mzML：--mzml 单文件/目录，或 --batch_dir 目录（递归含子目录）。
 
     返回 [(Path, key), ...]；key 默认为文件名 stem，目录递归下不同子目录出现同名 stem 时，
-    key 改为相对扫描根目录的路径展平（如 ``子目录A__样品1``），避免输出目录互相覆盖。
+    key 改为相对扫描根目录的路径展平（如 ``子目录A__样本1``），避免输出目录互相覆盖。
     """
     if mzml_arg and batch_dir_arg:
         print("[ERROR] --mzml 与 --batch_dir 不可同时提供", file=sys.stderr)
@@ -560,7 +576,7 @@ def _group_labels_by_sample(labels):
 
 
 def _pick_sample_labels(labels, groups, key, mzml_name, mzml_idx):
-    """多样品标注 → 当前 mzML 对应行（与 coco_annotation 同规则；匹配失败回退全部标注）。"""
+    """多样本标注 → 当前 mzML 对应行（与 coco_annotation 同规则；匹配失败回退全部标注）。"""
     _by, _order = groups
     if key in _by:
         return _by[key]
@@ -570,7 +586,7 @@ def _pick_sample_labels(labels, groups, key, mzml_name, mzml_idx):
         return _by[_order[0]]
     if mzml_idx < len(_order):
         return _by[_order[mzml_idx]]
-    print(f"[WARN] mzML「{key}」未匹配到标注样品({list(_order)})，回退用全部标注")
+    print(f"[WARN] mzML「{key}」未匹配到标注样本({list(_order)})，回退用全部标注")
     return labels
 
 
@@ -585,7 +601,7 @@ _QC_POST_GATE_COLS = [
 
 
 def _merge_qc_csvs(glob_result, out_path):
-    """按 glob 汇总多个同构 QC csv（各样品子目录），加 stem 列；返回 (文件数, 合并行数)。"""
+    """按 glob 汇总多个同构 QC csv（各样本子目录），加 stem 列；返回 (文件数, 合并行数)。"""
     frames = []
     for p in glob_result:
         try:
@@ -603,69 +619,86 @@ def _merge_qc_csvs(glob_result, out_path):
     return len(frames), len(merged)
 
 
+def _emit_qc5_sample(refined_csv, sample_dir):
+    """从样本的 prediction_refined.csv 抽门控列子集，落盘 qc5_refined_<样本名>.csv（防线5 样本级 QC）。
+
+    返回写盘路径（无可用门控列时仍保留首列 + 尽力列）。
+    """
+    try:
+        df = pd.read_csv(refined_csv)
+    except Exception as e:
+        print(f"[WARN] 读取精修输出失败 {refined_csv}: {e}")
+        return None
+    if df.empty:
+        return None
+    keep = [c for c in _QC_POST_GATE_COLS if c in df.columns]
+    df_sub = df[keep].copy() if keep else df.iloc[:, :1].copy()
+    out_path = sample_dir / ("qc5_refined_%s.csv" % sample_dir.name)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    df_sub.to_csv(out_path, index=False, encoding="utf-8-sig")
+    return out_path
+
+
 def _collect_qc_tables(base_out, qc_root, label_qc_rows=None, n_label_excl=0, n_label_review=0,
                        post_output_name="prediction_refined.csv"):
     """pipeline 结束后统一汇总各环节 QC 表到 ../output/QC/<run_name>/。
 
-    P2 覆盖：qc_label_rt.csv（标注 RT 一致性，调用方已先写入）+ qc_roi_channels.csv + qc_summary.md。
-    P3 覆盖：qc_prediction_threshold.csv（② 预测阈值丢弃）+ qc_snr_boxes.csv（④ SNR 逐框）
-    + qc_post_refinement.csv（⑤ 精修门控列）+ qc_summary.md 增补。
+    P2 覆盖：qc1_label_rt.csv（标注 RT 一致性，调用方已先写入）+ qc2_roi.csv + qc_summary.md。
+    P3 覆盖：qc3_threshold.csv（② 预测阈值丢弃）+ qc4_snr.csv（④ SNR 逐框）
+    + qc5_refined.csv（⑤ 精修门控列，样本级 qc5_refined_<样本名>.csv 合并）+ qc_summary.md 增补。
     """
     import datetime
 
     qc_root.mkdir(parents=True, exist_ok=True)
 
-    # 1) ROI 通道级剔除：汇总各样品 pipeline_qc_excluded.csv
+    # 1) ROI 通道级剔除：汇总各样本 pipeline_qc_excluded.csv → qc2_roi.csv（防线2）
     n_sample_excl, n_roi_excl = _merge_qc_csvs(
-        sorted((base_out / "xic-roi-batch").glob("*/pipeline_qc_excluded.csv")),
-        qc_root / "qc_roi_channels.csv",
+        sorted((base_out / "xic_roi").glob("*/pipeline_qc_excluded.csv")),
+        qc_root / "qc2_roi.csv",
     )
     if n_roi_excl:
-        print(f"[INFO] QC 汇总: ROI 通道级剔除 -> {qc_root / 'qc_roi_channels.csv'}（{n_roi_excl} 行）")
+        print(f"[INFO] QC 汇总: ROI 通道级剔除 -> {qc_root / 'qc2_roi.csv'}（{n_roi_excl} 行）")
 
-    # 2) 预测阈值丢弃：汇总各样品 qc_prediction_threshold.csv
+    # 2) 预测阈值丢弃：汇总各样本 qc3_threshold_*.csv → qc3_threshold.csv（防线3）
     n_pred_files, n_pred_imgs = _merge_qc_csvs(
-        sorted((base_out / "batch_predictions").glob("*/qc_prediction_threshold.csv")),
-        qc_root / "qc_prediction_threshold.csv",
+        sorted((base_out / "predictions_model").glob("*/qc3_threshold_*.csv")),
+        qc_root / "qc3_threshold.csv",
     )
     n_pred_dropped = 0
     if n_pred_imgs:
-        pred_merged = pd.read_csv(qc_root / "qc_prediction_threshold.csv")
+        pred_merged = pd.read_csv(qc_root / "qc3_threshold.csv")
         n_pred_dropped = int(pred_merged.get("n_dropped", pd.Series(dtype=int)).sum())
-        print(f"[INFO] QC 汇总: 预测阈值 -> {qc_root / 'qc_prediction_threshold.csv'}（{n_pred_imgs} 图，丢弃 {n_pred_dropped} 框）")
+        print(f"[INFO] QC 汇总: 预测阈值 -> {qc_root / 'qc3_threshold.csv'}（{n_pred_imgs} 图，丢弃 {n_pred_dropped} 框）")
 
-    # 3) SNR 框级：汇总各样品 box_outside_snr_report.csv
+    # 3) SNR 框级：汇总各样本 qc4_snr_*.csv → qc4_snr.csv（防线4）
     n_snr_files, n_snr_rows = _merge_qc_csvs(
-        sorted((base_out / "snr_filtered").glob("*/SNR_box_*/box_outside_snr_report.csv")),
-        qc_root / "qc_snr_boxes.csv",
+        sorted((base_out / "prediction_refined").glob("*/qc4_snr_*.csv")),
+        qc_root / "qc4_snr.csv",
     )
     n_snr_passed = 0
     if n_snr_rows:
-        snr_merged = pd.read_csv(qc_root / "qc_snr_boxes.csv")
+        snr_merged = pd.read_csv(qc_root / "qc4_snr.csv")
         n_snr_passed = int(snr_merged.get("passed_snr_threshold", pd.Series(dtype=int)).sum())
-        print(f"[INFO] QC 汇总: SNR 框级 -> {qc_root / 'qc_snr_boxes.csv'}（{n_snr_rows} 框，通过 {n_snr_passed}）")
+        print(f"[INFO] QC 汇总: SNR 框级 -> {qc_root / 'qc4_snr.csv'}（{n_snr_rows} 框，通过 {n_snr_passed}）")
 
-    # 4) 精修框级：汇总各样品 prediction_refined.csv 的门控列子集
-    n_post_files, n_post_rows = 0, 0
-    n_post_review = 0
+    # 4) 精修框级：汇总各样本 qc5_refined_*.csv → qc5_refined.csv（防线5，样本级由每样本 post 结束后落盘）
+    n_post_files, n_post_rows, n_post_review = 0, 0, 0
     post_frames = []
-    for p in sorted((base_out / "snr_filtered").glob("*/SNR_box_*/%s" % post_output_name)):
+    for p in sorted((base_out / "prediction_refined").glob("*/qc5_refined_*.csv")):
         try:
             df = pd.read_csv(p)
         except Exception as e:
-            print(f"[WARN] 读取精修输出失败: {p}: {e}")
+            print(f"[WARN] 读取精修 QC 失败: {p}: {e}")
             continue
-        keep = [c for c in _QC_POST_GATE_COLS if c in df.columns]
-        df_sub = df[keep].copy() if keep else df.iloc[:, :1].copy()
-        df_sub.insert(0, "stem", p.parent.parent.name)
-        post_frames.append(df_sub)
+        df.insert(0, "stem", p.parent.name)
+        post_frames.append(df)
         n_post_files += 1
-        n_post_rows += len(df_sub)
-        if "need_manual_review" in df_sub.columns:
-            n_post_review += int(df_sub["need_manual_review"].fillna(0).sum())
+        n_post_rows += len(df)
+        if "need_manual_review" in df.columns:
+            n_post_review += int(df["need_manual_review"].fillna(0).sum())
     if post_frames:
         post_merged = pd.concat(post_frames, ignore_index=True)
-        post_path = qc_root / "qc_post_refinement.csv"
+        post_path = qc_root / "qc5_refined.csv"
         post_merged.to_csv(post_path, index=False, encoding="utf-8-sig")
         print(f"[INFO] QC 汇总: 精修框级 -> {post_path}（{n_post_rows} 行，需人工复核 {n_post_review}）")
 
@@ -676,44 +709,44 @@ def _collect_qc_tables(base_out, qc_root, label_qc_rows=None, n_label_excl=0, n_
         "- 生成时间: %s" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "- 来源: pipeline 推理（output_dir=%s）" % base_out,
         "",
-        "## 1. 标注 RT 一致性（qc_label_rt.csv）",
+        "## 1. 标注 RT 一致性（qc1_label_rt.csv）",
         "- 检查项: %d" % len(label_qc_rows or []),
         "- 剔除通道: %d" % n_label_excl,
         "- 需人工复核: %d" % n_label_review,
         "",
-        "## 2. ROI 通道级剔除（qc_roi_channels.csv）",
-        "- 涉及样品数: %d" % n_sample_excl,
+        "## 2. ROI 通道级剔除（qc2_roi.csv）",
+        "- 涉及样本数: %d" % n_sample_excl,
         "- 剔除条目: %d 行" % n_roi_excl,
         "",
-        "## 3. 预测阈值（qc_prediction_threshold.csv）",
-        "- 涉及样品数: %d" % n_pred_files,
+        "## 3. 预测阈值（qc3_threshold.csv）",
+        "- 涉及样本数: %d" % n_pred_files,
         "- ROI 图: %d" % n_pred_imgs,
         "- 阈值丢弃框: %d" % n_pred_dropped,
         "",
-        "## 4. SNR 框级（qc_snr_boxes.csv）",
-        "- 涉及样品数: %d" % n_snr_files,
+        "## 4. SNR 框级（qc4_snr.csv）",
+        "- 涉及样本数: %d" % n_snr_files,
         "- 总框: %d" % n_snr_rows,
         "- 通过 SNR: %d" % n_snr_passed,
         "- 剔除: %d" % (n_snr_rows - n_snr_passed),
         "",
-        "## 5. 精修框级（qc_post_refinement.csv）",
-        "- 涉及样品数: %d" % n_post_files,
+        "## 5. 精修框级（qc5_refined.csv）",
+        "- 涉及样本数: %d" % n_post_files,
         "- 总行: %d" % n_post_rows,
         "- 需人工复核（final_conf 低于阈值）: %d" % n_post_review,
         "",
         "## 6. 人工复核清单（标注 RT 一致性）",
     ]
-    if (qc_root / "qc_roi_channels.csv").is_file():
-        reason_counts = pd.read_csv(qc_root / "qc_roi_channels.csv")["reason"].value_counts()
+    if (qc_root / "qc2_roi.csv").is_file():
+        reason_counts = pd.read_csv(qc_root / "qc2_roi.csv")["reason"].value_counts()
         _reason_line = "- reason 分布: " + ", ".join(f"{k}={v}" for k, v in reason_counts.items())
-        _idx3 = lines.index("## 3. 预测阈值（qc_prediction_threshold.csv）")
+        _idx3 = lines.index("## 3. 预测阈值（qc3_threshold.csv）")
         if lines[_idx3 - 1] == "":
             lines.insert(_idx3 - 1, _reason_line)
         else:
             lines.insert(_idx3, _reason_line)
     review_rows = [r for r in (label_qc_rows or []) if r.get("suggest_review")]
     if review_rows:
-        lines += ["| 检查类型 | 样品 | 化合物 | 通道 | RT(min) | 组中位 | 极差(min) |", "|---|---|---|---|---|---|---|"]
+        lines += ["| 检查类型 | 样本 | 化合物 | 通道 | RT(min) | 组中位 | 极差(min) |", "|---|---|---|---|---|---|---|"]
         for r in review_rows:
             lines.append("| %s | %s | %s | %s | %s | %s | %s |" % (
                 r.get("check_type", ""), r.get("sample_id", ""), r.get("compound", ""),
@@ -730,14 +763,211 @@ def _collect_qc_tables(base_out, qc_root, label_qc_rows=None, n_label_excl=0, n_
     summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"[INFO] QC 汇总: 报告 -> {summary_path}")
 
+    # ---- 全防线人工预警 qc_alert.md（覆盖阶段①的防线1-only 版本）----
+    _write_full_qc_alert(
+        base_out=base_out, qc_root=qc_root,
+        label_qc_rows=label_qc_rows,
+        n_roi_excl=n_roi_excl, n_pred_dropped=n_pred_dropped,
+        n_snr_rows=n_snr_rows, n_snr_passed=n_snr_passed,
+        n_post_review=n_post_review,
+    )
+
+
+def _write_full_qc_alert(base_out, qc_root, label_qc_rows=None, n_roi_excl=0,
+                         n_pred_dropped=0, n_snr_rows=0, n_snr_passed=0, n_post_review=0):
+    """生成 qc_alert.md：汇总全部 QC 防线的人工预警（防线1-5），供人工一站式复核。
+
+    防线1 明细来自标注 RT 一致性检查行；防线5 明细来自 qc5_refined.csv 的
+    need_manual_review=1 行；防线2/3/4 给出剔除/丢弃统计与关注点提示。
+    """
+    import datetime
+
+    excl1 = [r for r in (label_qc_rows or []) if r.get("action") == "excluded"]
+    rev1 = [r for r in (label_qc_rows or []) if r.get("suggest_review")]
+    n_alert_total = len(excl1) + int(n_roi_excl > 0) + n_post_review
+
+    lines = [
+        "# QC 人工预警报告（全防线汇总）",
+        "",
+        "- 来源: pipeline 推理（output_dir=%s）" % base_out,
+        "- 生成时间: %s" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "- 防线: ①标注RT ②ROI通道 ③预测阈值 ④SNR框 ⑤精修框",
+        "",
+        "## 一、防线1 标注 RT 一致性（qc1_label_rt.csv）",
+        "- 剔除标注: %d 行 | 需人工复核: %d 项" % (len(excl1), len(rev1)),
+        "",
+    ]
+    if rev1:
+        lines += ["| 检查类型 | 样本 | 化合物 | 通道 | RT(min) | 组中位 | 极差(min) | 处置 |",
+                  "|---|---|---|---|---|---|---|---|"]
+        for r in rev1:
+            lines.append("| %s | %s | %s | %s | %s | %s | %s | %s |" % (
+                r.get("check_type", ""), r.get("sample_id", ""), r.get("compound", ""),
+                r.get("channel", ""), r.get("rt", ""), r.get("group_median", ""),
+                r.get("rt_range", ""), r.get("action", "")))
+        lines.append("")
+    else:
+        lines += ["（无）", ""]
+
+    lines += ["## 二、防线2 ROI 通道级（qc2_roi.csv）",
+              "- 剔除条目: %d 行（reason 分布见 qc2_roi.csv / qc_summary.md）" % n_roi_excl,
+              "",
+              "## 三、防线3 预测阈值（qc3_threshold.csv）",
+              "- 阈值丢弃框: %d 个" % n_pred_dropped,
+              "- 关注点: 若某图 n_queries 全部被丢弃，多为低置信度/模糊峰，建议抽查对应 ROI。",
+              "",
+              "## 四、防线4 SNR 框级（qc4_snr.csv）",
+              "- 总框: %d | 通过 SNR: %d | 剔除: %d" % (n_snr_rows, n_snr_passed, n_snr_rows - n_snr_passed),
+              "- 关注点: 空白/低浓度样品整批剔除属正常；加标样品大量剔除需复核 SNR 阈值设置。",
+              "",
+              "## 五、防线5 精修框级（qc5_refined.csv）",
+              "- 需人工复核（final_conf 低于阈值）: %d 项" % n_post_review,
+              "",
+    ]
+    if n_post_review and (qc_root / "qc5_refined.csv").is_file():
+        try:
+            q5 = pd.read_csv(qc_root / "qc5_refined.csv")
+            q5_rev = q5[q5.get("need_manual_review", pd.Series(dtype=int)).fillna(0) == 1]
+            if not q5_rev.empty:
+                cols = [c for c in ("stem", "image", "main_rt_peak", "main_score_ai",
+                                    "main_conf_final", "final_conf_best", "need_manual_review")
+                        if c in q5_rev.columns]
+                lines += ["| %s |" % " | ".join(cols), "|" + "---|" * len(cols)]
+                for _, r in q5_rev.iterrows():
+                    lines.append("| %s |" % " | ".join(str(r.get(c, "")) for c in cols))
+                lines.append("")
+        except Exception as e:
+            print(f"[WARN] 读取 qc5_refined.csv 生成预警明细失败: {e}")
+    else:
+        lines += ["（无）", ""]
+
+    if n_alert_total == 0:
+        lines += ["**结论: 未发现需人工干预的告警。**", ""]
+    else:
+        lines += ["**结论: 发现 %d 项告警，请按上表逐项复核。**" % n_alert_total, ""]
+    lines += ["## 处置指引",
+              "- 防线1 剔除行已生效于本轮（不生成 ROI）；复核修正标注后需重建数据并重跑；",
+              "- 防线5 需复核峰请人工查看对应 refined_plots 图后决定是否保留；",
+              "- 各防线明细与汇总见 QC 根目录 qc1_label_rt / qc2_roi / qc3_threshold / qc4_snr / qc5_refined。",
+              ""]
+    alert_path = qc_root / "qc_alert.md"
+    alert_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"[INFO] QC 预警(全防线): {alert_path}（告警 {n_alert_total} 项）")
+
+
+def _write_predictions_model_summary(base_out):
+    """需求1：predictions_model 根级汇总——predictions_model_all.csv + predictions_model_report.md（放阶段文件夹内）。"""
+    import datetime
+
+    pred_root = base_out / "predictions_model"
+    csv_files = sorted(pred_root.glob("*/model_prediction_*.csv")) if pred_root.is_dir() else []
+    if not csv_files:
+        return
+    frames = []
+    for p in csv_files:
+        try:
+            df = pd.read_csv(p)
+        except Exception as e:
+            print(f"[WARN] 读取预测明细失败 {p}: {e}")
+            continue
+        df.insert(0, "stem", p.parent.name)
+        frames.append(df)
+    if not frames:
+        return
+    merged = pd.concat(frames, ignore_index=True)
+    all_csv = pred_root / "predictions_model_all.csv"
+    merged.to_csv(all_csv, index=False, encoding="utf-8-sig")
+
+    lines = [
+        "# 模型推理输出汇总（predictions_model）",
+        "",
+        "- 生成时间: %s" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "- 样本数: %d | 检出框总数: %d" % (len(frames), len(merged)),
+        "- 明细: %s" % all_csv.name,
+        "",
+        "| 样本 | 图数 | 检出峰数 | 最高置信度 | 平均SNR | 平均面积 |",
+        "|---|---|---|---|---|---|",
+    ]
+    for stem, g in merged.groupby("stem"):
+        n_img = int(g["image"].nunique()) if "image" in g.columns else len(g)
+        n_peak = len(g)
+        max_sc = float(g["score"].max()) if "score" in g.columns and g["score"].notna().any() else None
+        mean_snr = float(g["snr"].mean()) if "snr" in g.columns and g["snr"].notna().any() else None
+        mean_area = float(g["area"].mean()) if "area" in g.columns and g["area"].notna().any() else None
+        lines.append("| %s | %d | %d | %s | %s | %s |" % (
+            stem, n_img, n_peak,
+            "%.3f" % max_sc if max_sc is not None else "—",
+            "%.4g" % mean_snr if mean_snr is not None else "—",
+            "%.6g" % mean_area if mean_area is not None else "—"))
+    report = pred_root / "predictions_model_report.md"
+    report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"[INFO] 模型输出汇总: {all_csv} / {report}")
+
+
+def _write_prediction_refined_summary(base_out):
+    """需求5：prediction_refined 根级汇总——prediction_refined_all.csv + prediction_refined_report.md（放阶段文件夹内）。"""
+    import datetime
+
+    ref_root = base_out / "prediction_refined"
+    if not ref_root.is_dir():
+        return
+    frames = []
+    for p in sorted(ref_root.glob("*/prediction_refined_with_area.csv")):
+        frames.append((p.parent.name, p))
+    if not frames:
+        for p in sorted(ref_root.glob("*/prediction_refined.csv")):
+            frames.append((p.parent.name, p))
+    if not frames:
+        return
+    all_rows = []
+    for stem, p in frames:
+        try:
+            df = pd.read_csv(p)
+        except Exception as e:
+            print(f"[WARN] 读取精修明细失败 {p}: {e}")
+            continue
+        df.insert(0, "stem", stem)
+        all_rows.append(df)
+    if not all_rows:
+        return
+    merged = pd.concat(all_rows, ignore_index=True)
+    all_csv = ref_root / "prediction_refined_all.csv"
+    merged.to_csv(all_csv, index=False, encoding="utf-8-sig")
+
+    lines = [
+        "# 修正后输出汇总（prediction_refined）",
+        "",
+        "- 生成时间: %s" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "- 样本数: %d | 精修峰总数: %d" % (len(all_rows), len(merged)),
+        "- 明细: %s" % all_csv.name,
+        "",
+        "| 样本 | 精修峰数 | 含次峰 | 需人工复核 | 主峰平均置信度 | 面积合计 |",
+        "|---|---|---|---|---|---|",
+    ]
+    for stem, g in merged.groupby("stem"):
+        n = len(g)
+        n_small = int((g.get("small_count", pd.Series(0)).fillna(0) > 0).sum()) if "small_count" in g.columns else 0
+        n_rev = int(g.get("need_manual_review", pd.Series(0)).fillna(0).sum()) if "need_manual_review" in g.columns else 0
+        mean_sc = float(g["main_score_ai"].mean()) if "main_score_ai" in g.columns and g["main_score_ai"].notna().any() else None
+        area_col = "main_area" if "main_area" in g.columns else ("area" if "area" in g.columns else None)
+        tot_area = float(g[area_col].sum()) if area_col and g[area_col].notna().any() else None
+        lines.append("| %s | %d | %d | %d | %s | %s |" % (
+            stem, n, n_small, n_rev,
+            "%.3f" % mean_sc if mean_sc is not None else "—",
+            "%.6g" % tot_area if tot_area is not None else "—"))
+    report = ref_root / "prediction_refined_report.md"
+    report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"[INFO] 修正后输出汇总: {all_csv} / {report}")
+
 
 def main_cli():
-    parser = argparse.ArgumentParser(description="MRMPFormer 统一推理入口（roi / batch_dir / pipeline）")
+    parser = argparse.ArgumentParser(description="MRMPFormer 统一推理入口（roi / roi2inference / pipeline / fullscan）")
     parser.add_argument("--mode", type=str, default="pipeline",
-                        choices=["roi", "batch_dir", "pipeline"],
+                        choices=["roi", "roi2inference", "pipeline", "fullscan"],
                         help=(
-                            "roi=仅ROI生成(单文件或目录递归); batch_dir=对已有ROI目录批量预测+积分; "
-                            "pipeline=完整流水线（ROI->预测->SNR筛选->post_newtest，单文件或目录递归）"
+                            "roi=仅ROI生成(单文件或目录递归); roi2inference=对已有ROI目录批量预测+积分; "
+                            "pipeline=完整流水线（ROI->预测->SNR筛选->post_newtest，单文件或目录递归）; "
+                            "fullscan=整谱 XIC 全峰识别（全部 transition，不依赖标注）"
                         ))
     parser.add_argument("--model", type=str, default=None,
                         help="模型路径 (.pth)；也可由 --config 提供（roi 模式非必填，其余模式必填）")
@@ -746,14 +976,20 @@ def main_cli():
                         choices=["linear", "raw", "external_baseline"])
     parser.add_argument("--smooth_sigma", type=float, default=0.0)
     parser.add_argument("--output_dir", type=str, default=None,
-                        help="输出根目录（统一写到 ../output/ 下）；null=按模式默认：roi→../output/inference/xic-roi-batch，"
-                             "batch_dir→../output/inference/batch_predictions，pipeline→../output/inference/full_pipeline。"
-                             "测试运行建议指定 ../output/test/<名称> 单独存放")
+                        help="输出根目录（统一写到 ../output/ 下）；null=按模式默认：roi→../output/inference/xic_roi，"
+                             "roi2inference→../output/inference/predictions_model，pipeline→../output/inference/<实验模式>_<实验名>"
+                             "（实验名由 --exp_name 或自动回退确定）。测试运行建议指定 ../output/test/<名称> 单独存放")
+    parser.add_argument("--exp_name", type=str, default=None,
+                        help="实验名（用于输出目录 ../output/inference/<实验模式>_<实验名> 与推理报告 "
+                             "inference_report_<实验名>.md）；缺省回退：单 mzML→文件名，目录输入→目录名，再兜底 UTC 时间戳")
     parser.add_argument("--mzml", type=str,
                         help="[roi/pipeline] 单个 mzML 文件路径，或包含 mzML 的目录（递归扫描）")
     parser.add_argument("--batch_dir", type=str,
-                        help="[roi/pipeline] mzML 目录（递归扫描）；[batch_dir] testXIC 输出目录")
-    parser.add_argument("--plot", action="store_true", help="[pipeline/batch_dir] 生成预测框标注图（roi 模式不支持）")
+                        help="[roi/pipeline] mzML 目录（递归扫描）；[roi2inference] testXIC 输出目录")
+    parser.add_argument("--plot", action="store_true", help="[pipeline/roi2inference] 生成预测可视化图（roi 模式不支持）")
+    parser.add_argument("--plot_style", type=str, default="xic", choices=["xic", "roi"],
+                        help="--plot 的图型：xic=XIC 曲线+多 query 阴影+信息框（默认，model_plots/）；"
+                             "roi=ROI 原图叠红框（predicted_plots/，功能保留）")
 
     # ===== Pipeline (QC + post_newtest + SNR) 对齐流程图：低强度/少点数剔除 → 预测 → 框修正/二次峰 → SNR =====
     parser.add_argument(
@@ -780,7 +1016,7 @@ def main_cli():
         "--qc_label_rt_tol",
         type=float,
         default=1.0,
-        help="[pipeline] 标注 RT 一致性 QC 阈值（min）：跨样品/双离子 rt 极差超此值判疑似实验有误，"
+        help="[pipeline] 标注 RT 一致性 QC 阈值（min）：跨样本/双离子 rt 极差超此值判疑似实验有误，"
              "剔除涉事通道并警示人工复核；0=关闭。默认 1.0（需 --labels）",
     )
     parser.add_argument("--snr_min", type=float, default=3.0, help="[SNR筛选] 框外SNR阈值，单位同 mzml_box_outside_snr_pipeline")
@@ -875,11 +1111,60 @@ def main_cli():
         help="[post] 启用小峰相对主峰的 RT 门控；不显式传入则关闭（允许多峰不按 RT 限制）",
     )
 
+    # ==================== fullscan（整谱全峰识别）====================
+    parser.add_argument("--scan_baseline_percentile", type=float, default=25.0,
+                        help="[fullscan] 基线分位（global_percentile 模式）")
+    parser.add_argument("--scan_baseline_mode", type=str, default="global_percentile",
+                        choices=["global_percentile", "local_valley"],
+                        help="[fullscan] 基线模式")
+    parser.add_argument("--scan_min_peak_ratio", type=float, default=0.04,
+                        help="[fullscan] 峰高 = baseline + r·dynamic")
+    parser.add_argument("--scan_prominence_ratio", type=float, default=0.055,
+                        help="[fullscan] find_peaks prominence（相对 dynamic）")
+    parser.add_argument("--scan_min_prominence_abs", type=float, default=0.0,
+                        help="[fullscan] prominence 绝对下限（>0 时启用，防小峰被全局 dynamic 吞）")
+    parser.add_argument("--scan_min_peak_gap_points", type=int, default=3,
+                        help="[fullscan] find_peaks 最小点距")
+    parser.add_argument("--scan_min_peak_width_min", type=float, default=0.10,
+                        help="[fullscan] RT 尺度最小峰宽（distance 按通道中位步长换算）")
+    parser.add_argument("--scan_void_time_min", type=float, default=0.5,
+                        help="[fullscan] 排除溶剂前沿/柱平衡区（RT < 此值不参与 dynamic 与枚举）")
+    parser.add_argument("--scan_max_peaks_per_channel", type=int, default=50,
+                        help="[fullscan] 单通道候选上限，超限保留 prominence 前 N")
+    parser.add_argument("--scan_init_half_width_min", type=float, default=0.05,
+                        help="[fullscan] 精修初始半宽（min）")
+    parser.add_argument("--scan_boundary_posterior_lookahead", type=int, default=5,
+                        help="[fullscan] 边界后验窗点数")
+    parser.add_argument("--scan_boundary_posterior_mean_scale", type=float, default=1.25,
+                        help="[fullscan] 边界后验均值倍数")
+    parser.add_argument("--scan_edge_noise_stop_mode", type=str, default="stable_tail_mean",
+                        choices=["stable_tail_mean", "roi_bottom_decile_mean", "low_percentile"],
+                        help="[fullscan] 边界截停阈值：stable_tail_mean=峰侧局部稳定尾噪声（默认）")
+    parser.add_argument("--scan_edge_max_span_min", type=float, default=1.0,
+                        help="[fullscan] 边界截停阈值估计的最大单侧跨度（min）")
+    parser.add_argument("--scan_min_snr", type=float, default=3.0,
+                        help="[fullscan] 峰级本地 SNR 门")
+    parser.add_argument("--scan_min_peak_span_points", type=int, default=5,
+                        help="[fullscan] 峰跨距（baseline 以上连续点数）门")
+    parser.add_argument("--scan_min_area", type=float, default=0.0,
+                        help="[fullscan] 峰面积门（0=关）")
+    parser.add_argument("--scan_window_half_min", type=float, default=1.0,
+                        help="[fullscan] 模型验证窗口半宽（与训练一致）")
+    parser.add_argument("--keep_windows", action="store_true",
+                        help="[fullscan] 保留模型验证窗口 JPEG")
+    parser.add_argument("--no_plots", action="store_true",
+                        help="[fullscan] 关闭整谱标注图")
+
     # ==================== 输出控制 ====================
     parser.add_argument(
         "--no_timing",
         action="store_true",
         help="[pipeline] 不写 pipeline_timing.log / pipeline_timing_runs.jsonl（终端仍打印计时汇总）",
+    )
+    parser.add_argument(
+        "--no_report",
+        action="store_true",
+        help="[pipeline] 跑完后不自动生成推理报告（默认生成 inference_report_<实验名>.md + all.csv + 补算面积）",
     )
     parser.add_argument(
         "--save_snr_jpeg",
@@ -924,11 +1209,14 @@ def main_cli():
         parser.set_defaults(**_cfg)
         print(f"[INFO] 已加载推理配置: {_cfg_path}")
     args = parser.parse_args()
-    if not args.model and args.mode != "roi":
-        parser.error("--model 必填（命令行或 --config 提供；roi 模式仅生成 ROI，无需模型）")
+    if not args.model and args.mode not in ("roi", "fullscan"):
+        parser.error("--model 必填（命令行或 --config 提供；roi 模式仅生成 ROI，无需模型；"
+                     "fullscan 模型可选，提供则开启验证）")
     if args.mode in ("roi", "pipeline") and not args.labels:
         parser.error("--labels 必填：ROI 生成只支持标注驱动（B 范式，与训练一致），"
                      "不再支持 apex（最高强度点）通道驱动")
+    if args.mode == "fullscan" and args.labels:
+        print("[INFO] fullscan 模式不依赖 --labels，已忽略")
 
     # ---- 配置运行时日志过滤 ----
     from framework.util.logutil import configure_log_level, install_filter
@@ -959,18 +1247,23 @@ def main_cli():
         )
 
         # base output layout (one run per invocation)
-        base_out = Path(args.output_dir) if args.output_dir else Path("../output/inference/full_pipeline")
+        # Step 7：默认输出目录 ../output/inference/<实验模式>_<实验名>
+        exp_name = _resolve_exp_name(args)
+        if args.output_dir:
+            base_out = Path(args.output_dir)
+        else:
+            base_out = Path("../output/inference") / ("%s_%s" % (args.mode, exp_name))
         base_out.mkdir(parents=True, exist_ok=True)
         run_name = base_out.name  # 各环节 QC 表统一输出 ../output/QC/<run_name>/
         qc_root = Path("../output/QC") / run_name
-        roi_root = base_out / "xic-roi-batch"
-        pred_root = base_out / "batch_predictions"
-        snr_root = base_out / "snr_filtered"
+        roi_root = base_out / "xic_roi"
+        pred_root = base_out / "predictions_model"
+        snr_root = base_out / "prediction_refined"
         roi_root.mkdir(parents=True, exist_ok=True)
         pred_root.mkdir(parents=True, exist_ok=True)
         snr_root.mkdir(parents=True, exist_ok=True)
 
-        # ---- 标注驱动 ROI（B 范式，必填 --labels）：解析 + RT 一致性 QC + 按样品分组 ----
+        # ---- 标注驱动 ROI（B 范式，必填 --labels）：解析 + RT 一致性 QC + 按样本分组 ----
         exclude_native_ids = None
         labels = None
         label_qc_rows = []
@@ -982,7 +1275,7 @@ def main_cli():
         if label_qc_rows:
             qc_root.mkdir(parents=True, exist_ok=True)
             from preprocessing.label_qc import write_qc_table, write_qc_alert
-            write_qc_table(label_qc_rows, qc_root / "qc_label_rt.csv")
+            write_qc_table(label_qc_rows, qc_root / "qc1_label_rt.csv")
             _n_alert = write_qc_alert(label_qc_rows, qc_root / "qc_alert.md",
                                       source=f"推理管线 {args.mode}",
                                       tol=args.qc_label_rt_tol)
@@ -1040,13 +1333,10 @@ def main_cli():
         stage_seconds["1_ROI生成(xic_extraction)"] = t_roi_end - t_roi
         stage_intervals["1_ROI生成(xic_extraction)"] = (t_roi, t_roi_end)
 
-        # 3) Run MRMPFormer (newtest) in batch mode（batch_dir 下逐子目录预测，单样品同样适用）
+        # 3) Run MRMPFormer (newtest) in batch mode（batch_dir 下逐子目录预测，单样本同样适用）
         integration_method = getattr(args, "integration_method", "linear")
-        pred_basename = (
-            "prediction.csv"
-            if integration_method == "linear"
-            else f"prediction_{integration_method}.csv"
-        )
+        # Step 3：预测输出改名为 model_prediction_<样本名>.csv（pipeline 内逐样本定位）
+        method_suffix = "" if integration_method == "linear" else "_%s" % integration_method
         a = argparse.Namespace(
             images_path=None,
             batch_dir=str(roi_root),
@@ -1056,6 +1346,7 @@ def main_cli():
             prediction_output=None,  # 批量分支不使用该字段：predictor 以 batch_output/<子目录>/<pred_basename> 落盘
             threshold=args.threshold,
             plot=bool(args.plot),
+            plot_style=args.plot_style,
             plot_dir="predicted_plots",
             baseline_correction=False,
             integration_method=integration_method,
@@ -1083,7 +1374,8 @@ def main_cli():
         for mzml_path, key in mzml_inputs:
             stem = key
             sample_t0 = time.perf_counter()
-            pred_csv = pred_root / stem / pred_basename
+            # Step 3：样本内 prediction 表 model_prediction_<样本名>.csv（pipeline 批量分支由 predictor 落盘）
+            pred_csv = pred_root / stem / f"model_prediction_{stem}{method_suffix}.csv"
             roi_windows_csv = roi_root / stem / "roi_windows.csv"
             if not pred_csv.is_file():
                 print(f"[WARN] Skip {stem}: missing prediction csv: {pred_csv}")
@@ -1112,18 +1404,8 @@ def main_cli():
             snr_sec = time.perf_counter() - t_snr
             snr_intervals.append((t_snr, time.perf_counter()))
 
-            # locate SNR_box_<thr>/ directory generated by mzml_box_outside_snr_pipeline.py
-            t = float(args.snr_min)
-            if t < 0:
-                snr_run_dir_name = "SNR_box_all"
-            else:
-                if abs(t - round(t)) < 1e-9:
-                    snr_run_dir_name = f"SNR_box_{int(round(t))}"
-                else:
-                    snr_run_dir_name = f"SNR_box_{(t):.10g}"
-
-            snr_run_dir = sample_snr_parent / snr_run_dir_name
-            refined_root_dir = snr_run_dir  # post_newtest writes inside the same folder
+            # Step 2：snr_filter 结果直写样本目录（不再有 SNR_box_<thr>/ 子层）
+            refined_root_dir = sample_snr_parent
             if not (refined_root_dir / "prediction_snr.csv").is_file():
                 print(f"[WARN] Skip post_newtest for {stem}: missing {refined_root_dir/'prediction_snr.csv'}")
                 per_sample_seconds.append(
@@ -1206,17 +1488,22 @@ def main_cli():
                     "total": time.perf_counter() - sample_t0,
                 }
             )
-            # ---- 每样品结论行 ----
+            # Step 5：防线5 样本级 QC（精修门控列子集）落盘 qc5_refined_<样本名>.csv
+            _qc5_path = _emit_qc5_sample(
+                refined_root_dir / args.post_output_name, refined_root_dir)
+            if _qc5_path is not None:
+                print(f"[INFO] 精修 QC(样本级): {_qc5_path}")
+            # ---- 每样本结论行 ----
             _n_roi = int(_roi_by_stem.get(stem, {}).get("n_roi_images", -1))
-            print(f"[样品] {stem}: ROI {_n_roi} 张 | 检出 {_count_csv_rows(pred_csv)}"
+            print(f"[样本] {stem}: ROI {_n_roi} 张 | 检出 {_count_csv_rows(pred_csv)}"
                   f" | SNR 保留 {_count_csv_rows(refined_root_dir / 'prediction_snr.csv')}"
                   f" | 精修输出 {_count_csv_rows(refined_root_dir / args.post_output_name)}"
                   f" | {per_sample_seconds[-1]['total']:.1f}s")
 
-        stage_seconds["3_SNR筛选(全部样品)"] = sum(p.get("snr", 0.0) for p in per_sample_seconds)
+        stage_seconds["3_SNR筛选(全部样本)"] = sum(p.get("snr", 0.0) for p in per_sample_seconds)
         stage_seconds["4_框修正(peak_refinement)"] = sum(p.get("post", 0.0) for p in per_sample_seconds)
         if snr_intervals:
-            stage_intervals["3_SNR筛选(全部样品)"] = snr_intervals
+            stage_intervals["3_SNR筛选(全部样本)"] = snr_intervals
         if post_intervals:
             stage_intervals["4_框修正(peak_refinement)"] = post_intervals
         accounted = sum(stage_seconds.values())
@@ -1225,7 +1512,7 @@ def main_cli():
         if total_sec > accounted:
             stage_seconds["5_其它(跳过/间隙)"] = total_sec - accounted
         print("=" * 64)
-        print(f"[推理完成] {len(mzml_files)} 个样品 | 总耗时 {_format_elapsed(total_sec)} | 输出 {base_out}/")
+        print(f"[推理完成] {len(mzml_files)} 个样本 | 总耗时 {_format_elapsed(total_sec)} | 输出 {base_out}/")
         print("=" * 64)
         _collect_qc_tables(
             base_out,
@@ -1235,6 +1522,9 @@ def main_cli():
             n_label_review=n_label_review,
             post_output_name=str(args.post_output_name),
         )
+        # Step 7b：阶段级根级汇总（predictions_model_all.csv + report；prediction_refined_all.csv + report）
+        _write_predictions_model_summary(base_out)
+        _write_prediction_refined_summary(base_out)
         _print_pipeline_timing_summary(
             mode_label=str(args.mode),
             n_samples=len(mzml_files),
@@ -1247,6 +1537,27 @@ def main_cli():
             mzml_roi_stats=mzml_roi_stats,
             log_dir=None if bool(args.no_timing) else base_out,
         )
+
+        # ---- 自动生成推理报告（汇总精修结果 + 补算峰面积；Step 7c 改名 inference_report_<实验名>.md + all.csv）----
+        if not bool(getattr(args, "no_report", False)):
+            try:
+                from tools.evaluation.inference_report import generate_for_pipeline
+                _rep = generate_for_pipeline(
+                    output_dir=str(base_out),
+                    exp_name=exp_name,
+                    integration_method="snr",
+                    do_integrate=True,
+                    verbose=True,
+                )
+                print(f"[INFO] 推理报告已生成: {_rep['report_md']}")
+            except Exception as _e:
+                print(f"[WARN] 推理报告生成失败（不影响主流程）: {_e}")
+        return
+
+    if args.mode == "fullscan":
+        from .fullscan import main as fullscan_main
+
+        fullscan_main(args)
         return
 
     if args.mode == "roi":
@@ -1256,7 +1567,7 @@ def main_cli():
             args.labels, args.qc_label_rt_tol)
         groups = _group_labels_by_sample(labels)
         mzml_inputs = _collect_mzml_inputs(args.mzml, args.batch_dir)
-        out_base = Path(args.output_dir) if args.output_dir else Path("../output/inference/xic-roi-batch")
+        out_base = Path(args.output_dir) if args.output_dir else Path("../output/inference/xic_roi")
         for mzml_idx, (mzml_path, key) in enumerate(mzml_inputs):
             out_dir = out_base / key
             out_dir.mkdir(parents=True, exist_ok=True)
@@ -1267,7 +1578,7 @@ def main_cli():
                 exclude_native_ids=exclude_native_ids, labels=sample_labels)
         return
 
-    if args.mode == "batch_dir":
+    if args.mode == "roi2inference":
         from .predictor import main as newtest_main
         import argparse as ap
         if not args.batch_dir or not os.path.isdir(args.batch_dir):
@@ -1276,12 +1587,13 @@ def main_cli():
         a = ap.Namespace(
             images_path=None,
             batch_dir=args.batch_dir,
-            batch_output=args.output_dir or "../output/inference/batch_predictions",
+            batch_output=args.output_dir or "../output/inference/predictions_model",
             model=args.model,
             feature=None,
             prediction_output=None,  # 批量分支不使用该字段：predictor 以 batch_output/<子目录>/prediction[_<方法>].csv 落盘
             threshold=args.threshold,
             plot=args.plot,
+            plot_style=args.plot_style,
             plot_dir="predicted_plots",
             baseline_correction=False,
             integration_method=args.integration_method,  # 透传 CLI 参数，不再硬编码 linear

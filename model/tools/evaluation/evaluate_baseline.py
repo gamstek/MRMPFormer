@@ -141,7 +141,8 @@ def match_image(pred_rows, gt_peaks, tol, loose_tol=0.2):
                 if i in used:
                     continue
                 try:
-                    lo, hi = float(pr["rt_min"]), float(pr["rt_max"])
+                    lo = float(pr.get("peak_start", pr.get("rt_min")))
+                    hi = float(pr.get("peak_end", pr.get("rt_max")))
                 except (TypeError, ValueError, KeyError):
                     continue
                 if abs(lo - g[0]) <= loose_tol + 1e-9 and abs(hi - g[1]) <= loose_tol + 1e-9:
@@ -190,8 +191,10 @@ def run_inference_for_mzml(mzml, model, out_dir, threshold, smooth_sigma,
     if ret.returncode != 0:
         raise RuntimeError(f"推理失败 (exit={ret.returncode}): {mzml}")
     stem = Path(mzml).stem
-    pred_csv = out_dir / "batch_predictions" / stem / "prediction.csv"
-    feat_csv = out_dir / "xic-roi-batch" / stem / "feature.csv"
+    from tools._shared.artifacts import resolve_pred_root, resolve_roi_root
+
+    pred_csv = resolve_pred_root(out_dir) / stem / "prediction.csv"
+    feat_csv = resolve_roi_root(out_dir) / stem / "feature.csv"
     if not pred_csv.is_file():
         raise FileNotFoundError(f"未找到推理输出: {pred_csv}")
     if not feat_csv.is_file():
@@ -325,8 +328,8 @@ def evaluate(pred_feat_map, labels_path, tol, min_score, quant_tol=0.2,
             fn += len(fns) + len(loose)  # 宽松配对不改变检测口径：该 gt 仍计 FN
 
             def _collect_quant(pr, g, match_label):
-                rt_devs_start.append(abs(float(pr["rt_min"]) - g[0]))
-                rt_devs_end.append(abs(float(pr["rt_max"]) - g[1]))
+                rt_devs_start.append(abs(float(pr.get("peak_start", pr.get("rt_min"))) - g[0]))
+                rt_devs_end.append(abs(float(pr.get("peak_end", pr.get("rt_max"))) - g[1]))
                 if rec is not None:
                     gt_area = float(g[2])  # 多峰格式下按峰对应的 area1-3
                     pred_area = float(pr.get("area") or 0.0)
@@ -339,7 +342,8 @@ def evaluate(pred_feat_map, labels_path, tol, min_score, quant_tol=0.2,
                 _collect_quant(pr, g, "strict")
                 details.append({"stem": stem, "native_id": native_id, "result": "TP",
                                 "gt_start": g[0], "gt_end": g[1],
-                                "pred_start": pr["rt_min"], "pred_end": pr["rt_max"],
+                                "pred_start": pr.get("peak_start", pr.get("rt_min")),
+                                "pred_end": pr.get("peak_end", pr.get("rt_max")),
                                 "score": pr.get("score"), "quant": 1})
             loose_by_pred = {id(pr): g for pr, g in loose}
             for pr in fps:
@@ -349,7 +353,8 @@ def evaluate(pred_feat_map, labels_path, tol, min_score, quant_tol=0.2,
                 details.append({"stem": stem, "native_id": native_id, "result": "FP",
                                 "gt_start": gt_peaks[0][0] if gt_peaks else None,
                                 "gt_end": gt_peaks[0][1] if gt_peaks else None,
-                                "pred_start": pr.get("rt_min"), "pred_end": pr.get("rt_max"),
+                                "pred_start": pr.get("peak_start", pr.get("rt_min")),
+                                "pred_end": pr.get("peak_end", pr.get("rt_max")),
                                 "score": pr.get("score"), "quant": 1 if g is not None else 0})
             for g in fns:
                 details.append({"stem": stem, "native_id": native_id, "result": "FN",
