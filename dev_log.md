@@ -27,6 +27,17 @@ MRMPFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 
 ## 开发时间线
 
+### 2026-09-03
+
+- 代码生成(cpp/): 新建 C++20 MRMPFormer 共享库骨架与公开 C ABI，定义异步任务接口、结构化单条色谱提交结构和 ONNX Runtime 查找模块；补充 ABI 编译契约测试与构建目录忽略规则。
+- 调试(cpp/include/mrmpformer.h): 明确 `qf_default_config` 的全部配置默认值，特别是 `use_gpu=-1` 表示默认 CPU 模式；ABI 测试增加默认配置运行时断言。
+- 测试(cpp/): 通过 Visual Studio 内置 CMake 与 MSVC 完成 C++ 共享库骨架的 x64 配置、Release 编译和 `header_abi` CTest 验证。
+- 代码生成(cpp/include/mrmpformer.h): 完成 MRMPFormer C ABI、异步任务生命周期与单条色谱提交接口。
+- 代码生成(cpp/src/onnx_inference.cpp): 集成 ONNX Runtime 的动态输入尺寸与模型接口校验。
+- 测试(cpp/): 在全新 CPU 构建目录完成 Release 编译、5 项 CTest、C 示例及导出符号审计。
+- 文档生成(README.md+cpp/README.md+docs/CPP_API_DIFFERENCES.md): 补充 C++ 库构建、部署、C API 使用和 QuanFormer 迁移说明。
+- 调试(cpp/): 忽略本地 `build-*` 验证目录，并移除 CMake 未使用的 `USE_CUDA` 验证参数；CPU/GPU 提供程序选择由 ONNX Runtime 包和运行时配置决定。
+
 ### 2026-08-25
 
 - 重构(converters/msdata.py+wiff.py+desktop/workers/converter.py+desktop/pages/preprocessing.py): desktop 格式转换复用 converters/ 纯算法 —— 删除 MsdataConverter 内重复实现（bin 定位/OPENMS_DATA_PATH/subprocess/输出检测），改写为 Qt 薄包装 FormatConverter（与 IonZenithWorker 同模式），run() 内延迟导入按格式路由 converters/msdata.py 或 converters/wiff.py 的 convert_file；converters 侧 convert_file 新增 output_dir（None=留输入目录同级）/timeout 参数并返回成功信息字符串（CLI 行为不变，main 显式传 OUTPUT_DIR）；新增 wiff/wiff2 → mzML 格式对（FORMAT_PAIRS + 拖拽后缀映射 + 运行前按当前格式过滤文件列表防混跑）；exe 存在性检查由 UI 前置移至 worker error 信号统一反馈；desktop/bin/README_bin.md 标注为打包自包含副本；py_compile + converters 模块导入验证通过

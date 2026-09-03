@@ -746,3 +746,17 @@ R 或 Bioconductor 包未正确安装，请按照上方「Untargeted 模式」�
 ---
 
 > 更多细节：[项目全景](docs/PROJECT_PANORAMA.md) · [已知问题](docs/Bugs.md) · [跨平台部署](docs/MRMPFormer%20跨平台部署指南.md)
+
+---
+
+## MRMPFormer C/C++ 共享库
+
+`cpp/` 提供不依赖 Python 的 C++20 共享库，使用 C ABI（公共头文件：
+[`cpp/include/mrmpformer.h`](cpp/include/mrmpformer.h)）调用
+`model/checkpoint/mrmpformerv2.onnx`。输入使用 transition 的 `mzq1`、`mzq3`
+和 `channel`，ONNX 使用 `scores` 与 `boxes_xyxy` 输出；结果中的
+`SIGNAL_FALLBACK`、`CHANNEL_LOW_INTENSITY` 和 `status/alerts` 来自 C++ 的
+QC/后处理，而非 ONNX 网络。
+
+构建、部署、纯 C 示例和内存/回调约定见 [cpp/README.md](cpp/README.md)；从
+QuanFormer 迁移时请先阅读 [C API 差异与迁移指南](docs/CPP_API_DIFFERENCES.md)。

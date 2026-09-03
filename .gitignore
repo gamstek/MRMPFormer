@@ -5,6 +5,9 @@
 *.pth
 __pycache__/
 .onnx_deps/
+.superpowers/
+/cpp/build/
+/cpp/build-*/
 
 # MRMPFormer 训练产物
 MRMPFormer/logs/
