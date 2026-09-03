@@ -4,6 +4,7 @@
 *.mzML
 *.pth
 __pycache__/
+.onnx_deps/
 
 # MRMPFormer 训练产物
 MRMPFormer/logs/
