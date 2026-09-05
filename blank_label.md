@@ -19,7 +19,7 @@
 7. [峰精修（阶段 4）](#6-峰精修阶段-4)
 8. [面积积分（阶段 5）](#7-面积积分阶段-5)
 9. [管线汇总输出](#8-管线汇总输出)
-10. [全谱扫描（fullscan）](#9-全谱扫描fullscan)
+10. [全谱扫描（massnova）](#9-全谱扫描massnova)
 11. [诊断工具](#10-诊断工具)
 12. [评估工具](#11-评估工具)
 13. [实验脚本](#12-实验脚本)
@@ -30,6 +30,9 @@
 
 ## 管线总览
 
+> 推理入口：`model/inference/cli.py`（`--mode`：`roi` / `roi2inference` / `pipeline` / `massnova`）。
+> `pipeline` = 完整管线（XIC → 预测 → SNR → 精修）；`roi` = 仅 ROI 生成；`roi2inference` = 对已有 ROI 目录批量预测+积分；`massnova` = 整谱全峰识别。
+
 ```
 mzML 数据
   │  (1) XIC 提取 / ROI 生成      → feature.csv / roi_windows.csv / pipeline_qc_excluded.csv / xic_matrix.npy
@@ -38,12 +41,13 @@ mzML 数据
   │  (4) 峰精修                   → prediction_refined.csv / qc5_refined_<样本>.csv
   │  (5) 面积积分                 → prediction_refined_with_area.csv
   │  (汇总)                      → all.csv / predictions_model_all.csv / prediction_refined_all.csv
+  │  (阶段报告)                  → predictions_model_report.md / prediction_refined_report.md / inference_report_<实验名>.md
   │  (QC 汇总, output/QC/<run>)  → qc1_label_rt.csv / qc2_roi.csv / qc3_threshold.csv / qc4_snr.csv / qc5_refined.csv
-  │  (可选) 全谱扫描              → full_scan_peaks.csv / scan_summary.csv / scan_qc_excluded.csv
-  └─ (诊断/评估/实验工具)          → verify_snr_dual_matrix.csv、match_details.csv、area_pairs.csv 等
+  │  (可选) 全谱扫描              → massnova_peaks.csv / scan_summary.csv / scan_qc_excluded.csv
+  └─ (评估/实验工具)               → match_details.csv、area_pairs.csv 等
 ```
 
-- 样本级明细表落在 `output/<run>/<阶段目录>/<样本>/`，QC 汇总表落在 `output/QC/<run>/`。
+- 样本级明细表落在 `output/<run>/<阶段目录>/<样本>/`（pipeline 模式下阶段目录为 `xic_roi/`、`predictions_model/`、`prediction_refined/`），QC 汇总表落在 `output/QC/<run>/`。
 - 所有 CSV 均使用 `encoding="utf-8-sig"`（Excel 打开中文不乱码）。
 - 汇总表通常在第 0 列插入 `stem`（样本目录名）。
 
@@ -145,17 +149,24 @@ mzML 数据
 | `n_points` | 该色谱数据点数 |
 | `max_intensity_smoothed` | 平滑后最大强度 |
 
+### 3.2 build_log.txt（COCO 构建日志）
+
+生成脚本：`model/preprocessing/coco_annotation.py`
+- 位置：`<output_dir>/build_log.txt`
+- 用途：记录数据集构建过程日志（mzML 处理、标注匹配、QC 剔除计数等）。非 CSV，属配套日志。
+
 ---
 
 ## 4. 模型预测（阶段 2）
 
-生成脚本：`model/inference/predictor.py`
+生成脚本：`model/inference/predictor.py`（批量模式由 `inference/cli.py --mode roi2inference` 透传调用，`roi2inference` 即"对已有 ROI 目录批量预测"）
 用途：模型推理的**逐框积分明细**——每个预测框（每峰）一行。是整条 pipeline 的"第一份定量结果"，下游 SNR 滤波、精修都以它为输入。
 
 ### 4.1 model_prediction_<样本>.csv / prediction.csv
 
-- 位置：批量模式 `<batch_output>/<样本>/model_prediction_<样本>.csv`；单目录模式默认 `../output/inference/prediction.csv`
+- 位置：批量模式（`roi2inference`/`pipeline`）`<batch_output>/<样本>/model_prediction_<样本>.csv`；单目录模式默认 `../output/inference/prediction.csv`
 - 用途：逐框记录框坐标、置信度、峰 RT 区间、峰顶、面积与质量参数。
+- 列（按落盘顺序）：
 
 | 列名 | 含义 |
 |---|---|
@@ -391,17 +402,40 @@ mzML 数据
 | `qc3_threshold.csv` | 各样本 `qc3_threshold_*.csv` | 首列插 `stem`（见 4.2） |
 | `qc4_snr.csv` | 各样本 `qc4_snr_*.csv` | 首列插 `stem`（见 5.1） |
 | `qc5_refined.csv` | 各样本 `qc5_refined_*.csv` | 首列插 `stem`（见 6.2） |
+| `qc_summary.md` / `qc_alert.md` | 各防线统计 | QC 汇总 / 全防线人工预警报告（需人工复核清单） |
 
 > 注：`output/QC/full_pipeline/` 下存在旧版命名 `qc_label_rt.csv`、`qc_roi_channels.csv`、`qc_prediction_threshold.csv`、`qc_snr_boxes.csv`、`qc_post_refinement.csv`，字段与上述 qc1~qc5 完全一致，仅文件名不同（早期 run 命名）。
 
+### 8.5 阶段级 Markdown 报告（含表格）
+
+生成脚本：`model/inference/cli.py`（pipeline 收尾时 `_write_predictions_model_summary` / `_write_prediction_refined_summary`）
+
+| 文件 | 位置 | 用途 |
+|---|---|---|
+| `predictions_model_report.md` | `<base_out>/predictions_model/` | 模型输出阶段汇总：每样本图数/峰数/最高置信度/平均 SNR/平均面积 |
+| `prediction_refined_report.md` | `<base_out>/prediction_refined/` | 精修输出阶段汇总（精修后各统计量） |
+
+### 8.6 推理报告 inference_report_<实验名>.md
+
+生成脚本：`model/tools/evaluation/inference_report.py`（`generate_for_pipeline`，cli.py pipeline 收尾调用；`--no_report` 关闭）
+- 位置：`<base_out>/inference_report_<实验名>.md`（实验名由 `--exp_name` 指定，缺省回退：单 mzML→文件名、目录→目录名）
+- 用途：可读推理报告——样本摘要 / 化合物×样品面积矩阵 / QC 汇总 / 管线与列说明。同名配套机器可读明细为 `all.csv`（见 8.1）。
+- 同脚本还为每个样品补算并写回 `prediction_refined/<样品>/prediction_refined_with_area.csv`（见 7.1）。
+
+### 8.7 计时日志 pipeline_timing.log / pipeline_timing_runs.jsonl
+
+生成脚本：`model/inference/cli.py`（`--no_timing` 关闭；终端仍打印计时汇总）
+- 位置：`<base_out>/pipeline_timing.log`（文本）、`<base_out>/pipeline_timing_runs.jsonl`（结构化 JSONL）
+- 用途：记录 pipeline 各阶段（XIC 提取/预测/SNR/精修/报告）耗时，供性能分析。非 CSV，属配套日志。
+
 ---
 
-## 9. 全谱扫描（fullscan）
+## 9. 全谱扫描（massnova）
 
-生成脚本：`model/inference/fullscan.py`
+生成脚本：`model/inference/massnova.py`
 用途：不依赖标注，对 mzML 全部 transition 做整谱峰识别 + 模型验证。位置：`<out_root>/<样本>/`。
 
-### 9.1 full_scan_peaks.csv（主结果表）
+### 9.1 massnova_peaks.csv（主结果表）
 
 - 用途：**每个峰一行**的明细。
 
@@ -447,40 +481,9 @@ mzML 数据
 
 ---
 
-## 10. 诊断工具
+## 10. 评估工具
 
-生成脚本：`model/tools/diagnostics/verify_snr_dual_matrix.py`
-
-### 10.1 verify_snr_dual_matrix.csv
-
-- 位置：`<base_out>/verify_snr_dual_matrix.csv`（如 `output/test/verify_step5/verify_snr_dual_matrix.csv`）
-- 用途：验证"四象限矩阵（全局 RMS vs 局部 RMS）+ 局部峰峰"能否区分**空白假阳性**与**混标真峰**（区分度研究）。只读不写任何产物。对 prediction_refined.csv 每个精修主峰框，在 xic_matrix.npy 上统一重算三种 SNR。
-
-| 列名 | 含义 |
-|---|---|
-| `sample` | 样本名 |
-| `label` | 样本类别：`blank`（空白）/ `mix`（混标） |
-| `compound_ion` | 从 image 文件名解析的"化合物-离子"串（如 `杀扑磷-2`） |
-| `image` | 精修行 image 的 stem |
-| `main_rt_peak` | 主峰峰顶 RT（读自 prediction_refined.csv） |
-| `main_height` | 主峰峰高（读自 prediction_refined.csv） |
-| `score` | 主峰模型 AI 置信度（= prediction_refined.csv 的 main_score_ai） |
-| `main_snr_stage4` | 精修阶段主峰 SNR（= prediction_refined.csv 的 main_snr，脚本命名为 stage4） |
-| `snr_outside_box_stage3` | 上游 SNR 滤波阶段值（= prediction_snr.csv 的 snr_outside_box，按 image 匹配，命名 stage3） |
-| `snr_global_rms` | 全局 RMS SNR：噪声=框外全部点，基线=噪声均值，噪声量=σ(RMS) |
-| `snr_local_rms` | 局部 RMS SNR：噪声=框两侧紧邻点（max(3, 0.2×框内点数)），其余同全局 |
-| `snr_local_pp` | 局部峰峰 SNR（现有报告口径 compute_snr_outside_box） |
-| `ratio_local_over_global` | snr_local_rms / snr_global_rms（无结构时≈1） |
-| `quadrant` | 四象限判定（阈值 3.0）：`保留`（全局≥3 且局部≥3）/ `纯噪声剔除`（均<3）/ `多峰复核`（全局<3、局部≥3）/ `当前可疑剔除`（全局≥3、局部<3）/ `无效(NaN)` |
-| `main_area` | 主峰面积（优先 prediction_refined_with_area.csv，否则取精修行） |
-| `is_detected` | 是否检出：main_area 有限且 > 0（混标真峰判据） |
-| `is_blank_fp` | 是否命中脚本硬编码的空白假阳性清单（BLANK_FP） |
-
----
-
-## 11. 评估工具
-
-### 11.1 evaluate_baseline.py（`model/tools/evaluation/evaluate_baseline.py`）
+### 10.1 evaluate_baseline.py（`model/tools/evaluation/evaluate_baseline.py`）
 
 **match_details.csv** —— 每个预测框/标注峰与人工标注的匹配判定明细（TP/FP/FN），用于 P/R/F1 溯源。
 
@@ -504,7 +507,11 @@ mzML 数据
 | `manual_area` | 人工标注面积 |
 | `match` | 配对类型：`strict` / `loose` |
 
-### 11.2 refine_ablation.py（`model/tools/evaluation/refine_ablation.py`）
+**evaluation_report.json** —— 一键评测汇总（非 CSV）：`{model, mzmls, labels, tolerance, quant_tolerance, metrics}`，metrics 含 P/R/F1、面积 R²、RT 偏差、RSD 等。
+
+**qc_alert.md** —— 评测侧人工预警报告（与管线 QC 的 qc_alert.md 同源格式）。
+
+### 10.2 refine_ablation.py（`model/tools/evaluation/refine_ablation.py`）
 
 **detail.csv** —— "无精修（A）/有精修（B）"两种方法下每个检测框相对人工标注的命中明细。
 
@@ -527,7 +534,7 @@ mzML 数据
 | `A_start` / `A_end` / `A_area` | A 方法（无精修）框起止 RT 与面积 |
 | `B_start` / `B_end` / `B_area` | B 方法（精修）main 峰起止 RT 与面积 |
 
-### 11.3 visualize_compare.py（`model/tools/evaluation/visualize_compare.py`）
+### 10.3 visualize_compare.py（`model/tools/evaluation/visualize_compare.py`）
 
 **compare_summary.csv** —— 双模型（v1/v2）预测与人工标注的逐通道复核汇总（`{name1}`/`{name2}` 由 --name1/--name2 决定）。
 
@@ -539,15 +546,15 @@ mzML 数据
 | `{name1}_start` / `{name1}_end` / `{name1}_score` / `{name1}_verdict` | 模型1 最高分框起止 RT、置信度、判定（`TP`/`FN(漏检)`/`FP(偏Δs/Δe)`/`FP(区间无效)`/`无标注`） |
 | `{name2}_start` / `{name2}_end` / `{name2}_score` / `{name2}_verdict` | 同模型2 |
 
-### 11.4 inference_report.py（`model/tools/evaluation/inference_report.py`）
+### 10.4 inference_report.py（`model/tools/evaluation/inference_report.py`）
 
 - 输出 `<output_dir>/all.csv`（跨样品合并明细，同 8.1）与各样品 `prediction_refined_with_area.csv`（同 7.1）。
 
 ---
 
-## 12. 实验脚本
+## 11. 实验脚本
 
-### 12.1 oulu/area_compare.py → `oulu_area_compare_details.csv`
+### 11.1 oulu/area_compare.py → `oulu_area_compare_details.csv`
 
 对比欧陆标准品面积 vs AI 主峰面积（main_area）相对误差。
 
@@ -560,9 +567,9 @@ mzML 数据
 | `ai_area` | AI 主峰面积（main_area） |
 | `rel_error` | 相对误差 \|ai−std\|/std |
 
-### 12.2 oulu/full_report.py → `oulu_full_comparison.csv`
+### 11.2 oulu/full_report.py → `oulu_full_comparison.csv`
 
-欧陆标准 vs snr_filtered 主峰面积全量对比。
+欧陆标准 vs AI 主峰面积（`prediction_refined.csv` 的 `main_area`）全量对比。
 
 | 列名 | 含义 |
 |---|---|
@@ -570,7 +577,7 @@ mzML 数据
 | `rel_error` | 相对误差 |
 | `error_band` | 误差分档：`(0%,1%]` / `(1%,2%]` / `(2%,5%]` / `(5%,10%]` / `(10%,50%]` / `(50%,100%]` / `>100%` |
 
-### 12.3 jiangnan/area_compare.py → `area_comparison_details.csv`
+### 11.3 jiangnan/area_compare.py → `area_comparison_details.csv`
 
 对比江南大学农残仪器 CSV 与人工加标 OS.txt 面积。
 
@@ -582,7 +589,7 @@ mzML 数据
 | `rel_error` | 相对误差（一侧缺失为 None） |
 | `pair` | 对比对标识（`<csv文件>_vs_<os_sample>`） |
 
-### 12.4 jiangnan/area_ratio.py → `area_ratio_details.csv`
+### 11.4 jiangnan/area_ratio.py → `area_ratio_details.csv`
 
 两浓度对（10/20ppb 或 20/50ppb）下 CSV 面积比 vs OS 面积比一致性。
 
@@ -595,7 +602,7 @@ mzML 数据
 | `R_os` | os_low / os_high |
 | `metric_diff` | \|R_csv − R_os\|（核心指标） |
 
-### 12.5 jiangnan/compound_presence.py → `compound_presence_all.csv` / `compound_only_summary.csv` / `only_*.csv`
+### 11.5 jiangnan/compound_presence.py → `compound_presence_all.csv` / `compound_only_summary.csv` / `only_*.csv`
 
 对比 CSV（仪器）与 OS（人工加标）两侧化合物集合差异。
 
@@ -609,9 +616,9 @@ mzML 数据
 
 ---
 
-## 13. mzML 工具
+## 12. mzML 工具
 
-### 13.1 mzml/inspect.py
+### 12.1 mzml/inspect.py
 
 把 mzML 可读内容导出为 CSV（`<stem>_inspect/` 目录）。
 
@@ -626,13 +633,13 @@ mzML 数据
 | `<stem>_spectrum_summary.csv` | `spec_index` / `ms_level` / `n_peaks` / `rt_sec` | 谱图序号 / 质谱级数 / 峰数 / 保留时间（秒） |
 | `<stem>_points/<safe_name>.csv` | `rt_sec` / `intensity` | 单色谱数据点（RT 秒 / 强度） |
 
-### 13.2 mzml/chromatogram.py（export 子命令）
+### 12.2 mzml/chromatogram.py（export 子命令）
 
 输出 `<stem>_<safe_name>_points.csv`：`rt_sec`（保留时间，秒）、`intensity`（强度）。供外部工具绘图或核对。
 
 ---
 
-## 14. 常用字段字典
+## 13. 常用字段字典
 
 | 字段 | 含义 | 出现位置 |
 |---|---|---|
@@ -652,7 +659,7 @@ mzML 数据
 | `score` / `main_score_ai` / `model_score` | 模型 AI 置信度（0~1） | 明细表 |
 | `snr` / `main_snr` / `snr_outside_box` | 信噪比 | 明细表、QC 表 |
 | `area` / `main_area` / `small*_area` | 峰面积 | 明细表、all.csv |
-| `detected` / `is_detected` / `validated` | 检出标记（bool） | all.csv、verify_snr_dual_matrix.csv、full_scan_peaks.csv |
+| `detected` / `is_detected` / `validated` | 检出标记（bool） | all.csv、massnova_peaks.csv |
 | `point_counts` / `n_points` / `main_point_counts` | 峰内连续点数 | 明细表 |
 | `integration_method_used` | 积分方法名 | 明细表 |
 

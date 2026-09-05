@@ -1,0 +1,11 @@
+{
+  "_comment_source": "MRM-XIC 模拟训练集（Dataset Definition V6.0 / Label V5.0），交付清单见 data/MRM_XIC_Delivery_Manifest.md",
+  "sim_root": "../data/train",
+  "output_dir": "../data/coco/traindatav2",
+  "val_samples": 10,
+  "window_half_min": 1.0,
+  "multi_peak_margin_min": 0.15,
+  "seed": 61002,
+  "limit_samples": 0,
+  "force": false
+}

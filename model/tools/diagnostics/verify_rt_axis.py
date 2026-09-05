@@ -15,7 +15,7 @@
     --smooth_sigma 0.8 ^
     --min_chrom_points 10 ^
     --min_max_intensity 1000 ^
-    --snr_min 3
+    --snr_min 10
 """
 import argparse
 import json
@@ -55,7 +55,7 @@ def main():
     ap.add_argument("--smooth_sigma", type=float, default=0.8)
     ap.add_argument("--min_chrom_points", type=int, default=10)
     ap.add_argument("--min_max_intensity", type=float, default=1000.0)
-    ap.add_argument("--snr_min", type=float, default=3.0)
+    ap.add_argument("--snr_min", type=float, default=10.0)
     args = ap.parse_args()
 
     result_root = Path(args.result_root)

@@ -66,7 +66,7 @@ def _default_main_argv():
         "--output_dir", DEFAULT_OUTPUT_DIR,
         "--threshold", "0.90",
         "--smooth_sigma", "0.0",
-        "--snr_min", "3.0",
+        "--snr_min", "10.0",
         "--snr_gaussian_sigma", "0.8",
         "--snr_min_noise_points", "5",
         "--plot",

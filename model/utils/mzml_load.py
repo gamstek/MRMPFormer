@@ -16,15 +16,44 @@ def is_valid_utf8(data: bytes) -> bool:
         return False
 
 
+def _repair_invalid_utf8_bytes(raw: bytes) -> bytes:
+    """局部解码修复：ASCII 段原样保留；非 ASCII 连续段依次试 UTF-8 → GBK → GB18030 解码，
+    统一以 UTF-8 重新编码。这样既保留文件中本已合法的 UTF-8 中文（样品名/色谱 id），
+    也能正确还原仪器写进 userParam/method_path 的 GBK 中文（不再被替换成 �）。"""
+    out = bytearray()
+    i, n = 0, len(raw)
+    while i < n:
+        if raw[i] < 0x80:
+            out.append(raw[i])
+            i += 1
+            continue
+        j = i
+        while j < n and raw[j] >= 0x80:
+            j += 1
+        run = raw[i:j]
+        decoded = None
+        for enc in ("utf-8", "gbk", "gb18030"):
+            try:
+                decoded = run.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if decoded is None:
+            decoded = run.decode("utf-8", errors="replace")
+        out.extend(decoded.encode("utf-8"))
+        i = j
+    return bytes(out)
+
+
 def repair_mzml_bytes_for_openms(raw: bytes) -> bytes:
-    """Replace invalid UTF-8 bytes so OpenMS XML parser can read the file."""
+    """Replace invalid UTF-8 bytes so OpenMS XML parser can read the file (GBK preserved)."""
     if is_valid_utf8(raw):
         return raw
     print(
         "[WARN] mzML has non-UTF-8 bytes (often GBK in userParam/method_path); "
-        "replacing invalid sequences before load"
+        "decoding GBK runs and re-encoding to UTF-8 before load"
     )
-    return raw.decode("utf-8", errors="replace").encode("utf-8")
+    return _repair_invalid_utf8_bytes(raw)
 
 
 def _mzml_load_ok(exp: MSExperiment, path_str: str) -> bool:
@@ -111,3 +140,50 @@ def load_ms_experiment(mzml_path, verbose=True):
 def _load_ms_experiment_mzml(mzml_path: Path):
     exp = load_ms_experiment(mzml_path, verbose=True)
     return exp, None
+
+
+def fix_mzml_encoding(root_dir):
+    """一次性批量修复：将 root_dir 递归下所有 *.mzML 的非 UTF-8 字节就地转正为 UTF-8。
+
+    修复后文件满足 is_valid_utf8，后续加载直接走长路径，不再触发 WARN / 临时副本。
+    """
+    root = Path(root_dir)
+    if not root.is_dir():
+        raise FileNotFoundError("not a directory: %s" % root)
+    fixed, already_valid = [], 0
+    for p in root.rglob("*"):
+        if p.suffix.lower() != ".mzml":
+            continue
+        raw = p.read_bytes()
+        if is_valid_utf8(raw):
+            already_valid += 1
+            continue
+        repaired = _repair_invalid_utf8_bytes(raw)
+        if repaired == raw:
+            already_valid += 1
+            continue
+        p.write_bytes(repaired)
+        fixed.append(str(p))
+    print("[FIX] %d file(s) repaired, %d already valid UTF-8" % (len(fixed), already_valid))
+    for f in fixed:
+        print("  repaired: %s" % f)
+
+
+def main(argv=None):
+    import argparse
+
+    ap = argparse.ArgumentParser(description="mzML 编码修复工具")
+    ap.add_argument(
+        "--fix-dir", metavar="DIR",
+        help="递归修复该目录下所有 mzML 的非 UTF-8 字节（就地写回 UTF-8）",
+    )
+    args = ap.parse_args(argv)
+    if args.fix_dir:
+        fix_mzml_encoding(args.fix_dir)
+        return 0
+    ap.print_help()
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

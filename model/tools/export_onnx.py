@@ -2,7 +2,7 @@
 """导出 MRMPFormer checkpoint 为 ONNX。
 
 用法（在 model/ 目录下）：
-    python -m tools.export_onnx --checkpoint checkpoint/mrmpformerv2.pth --out checkpoint/mrmpformerv2.onnx
+    python -m tools.export_onnx --checkpoint checkpoint/mrmpformer.pth --out checkpoint/mrmpformer.onnx
 
 ONNX 接口约定：
     输入:
@@ -155,8 +155,8 @@ def verify(checkpoint_path: str, onnx_path: str):
 
 def main():
     parser = argparse.ArgumentParser(description="导出 MRMPFormer checkpoint 为 ONNX")
-    parser.add_argument("--checkpoint", default="checkpoint/mrmpformerv2.pth")
-    parser.add_argument("--out", default="checkpoint/mrmpformerv2.onnx")
+    parser.add_argument("--checkpoint", default="checkpoint/mrmpformer.pth")
+    parser.add_argument("--out", default="checkpoint/mrmpformer.onnx")
     parser.add_argument("--opset", type=int, default=17)
     parser.add_argument("--no-verify", action="store_true")
     args = parser.parse_args()

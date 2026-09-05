@@ -11,7 +11,7 @@
 
 用法:
   python run_two_round_detection.py --batch_predictions results/batch_predictions --images_root xic-roi-batch --model checkpoint/quanformer.pth
-  python run_two_round_detection.py ... --min_confidence 0.99 --min_snr 3 --min_secondary_ratio 0.05
+  python run_two_round_detection.py ... --min_confidence 0.99 --min_snr 10 --min_secondary_ratio 0.05
 """
 import argparse
 import os
@@ -525,7 +525,7 @@ def filter_candidates_for_second_round(
     intensity_matrix,
     roi_windows,
     min_confidence=0.99,
-    min_snr=3.0,
+    min_snr=10.0,
     min_secondary_ratio=0.05,
     noise_barrier_ratio=0.5,
 ):
@@ -845,7 +845,7 @@ def main():
     parser.add_argument("--output_base", type=str, default="../output/inference/two_round",
                         help="输出根目录：masked/ round2/ newprediction/ plots/")
     parser.add_argument("--min_confidence", type=float, default=0.99)
-    parser.add_argument("--min_snr", type=float, default=3.0)
+    parser.add_argument("--min_snr", type=float, default=10.0)
     parser.add_argument("--min_secondary_ratio", type=float, default=0.05)
     parser.add_argument("--noise_barrier_ratio", type=float, default=0.5,
                         help="噪声阻碍：后25%%平均噪声×此系数加入次峰阈值，噪声越大所需峰高越高")

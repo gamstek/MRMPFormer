@@ -30,7 +30,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 # === SNR 默认参数（与 mzml_box_outside_snr_pipeline 保持一致） ===
 SNR_DEFAULTS = {
-    "min_snr": 3.0,
+    "min_snr": 10.0,
     "smooth_sigma": 0.8,
     "min_noise_points": 5,
     "min_chrom_points": 0,
@@ -42,7 +42,7 @@ SNR_DEFAULTS = {
 POST_DEFAULTS = {
     "small_peak_rt_tol": 0.3,
     "min_confidence": 0.99,
-    "min_snr": 3.0,
+    "min_snr": 10.0,
     "min_secondary_ratio": 0.05,
     "noise_barrier_ratio": 0.5,
     "small_noise_window_half": 0.30,
@@ -220,7 +220,7 @@ def _run_post_one(
         "--output_name", str(post_kwargs.get("output_name", "prediction_refined.csv")),
         "--small_peak_rt_tol", str(post_kwargs.get("small_peak_rt_tol", 0.3)),
         "--min_confidence", str(post_kwargs.get("min_confidence", 0.99)),
-        "--min_snr", str(post_kwargs.get("min_snr", 3.0)),
+        "--min_snr", str(post_kwargs.get("min_snr", 10.0)),
         "--min_secondary_ratio", str(post_kwargs.get("min_secondary_ratio", 0.05)),
         "--noise_barrier_ratio", str(post_kwargs.get("noise_barrier_ratio", 0.5)),
         "--small_noise_window_half", str(post_kwargs.get("small_noise_window_half", 0.30)),
@@ -318,7 +318,7 @@ def run_post_only(
             "--output_name", str(output_name),
             "--small_peak_rt_tol", str(small_peak_rt_tol),
             "--min_confidence", str(min_confidence),
-            "--min_snr", "3.0",
+            "--min_snr", "10.0",
             "--min_secondary_ratio", "0.05",
             "--noise_barrier_ratio", "0.5",
             "--small_noise_window_half", "0.30",

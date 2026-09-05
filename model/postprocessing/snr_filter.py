@@ -20,7 +20,7 @@
     --prediction_csv "D:\\out\\prediction.csv" ^
     --roi_windows_csv "D:\\out\\roi_windows.csv" ^
     --output_dir "D:\\results\\box_snr" ^
-    --min_snr 5 ^
+    --min_snr 10 ^
     --gaussian_sigma 0.8
 
 roi_windows.csv 可选；若缺省则用 old_rt/retention_time 与 XIC 轴按 roi_rt_mapping 推算 ±1 min 窗口。
@@ -712,7 +712,7 @@ def main():
                     help="输出目录（默认直写该目录=样本目录；加 --nested_run_dir 则其下创建旧版 SNR_box_<阈值>/ 子层）")
     ap.add_argument("--nested_run_dir", action="store_true",
                     help="兼容旧行为：在 output_dir 下再建 SNR_box_<阈值>/ 子层")
-    ap.add_argument("--min_snr", "--snr_threshold", dest="min_snr", type=float, default=3.0)
+    ap.add_argument("--min_snr", "--snr_threshold", dest="min_snr", type=float, default=10.0)
     ap.add_argument(
         "--gaussian_sigma",
         "--smooth_sigma",
