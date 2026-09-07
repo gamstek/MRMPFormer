@@ -961,13 +961,13 @@ def _write_prediction_refined_summary(base_out):
 
 
 def main_cli():
-    parser = argparse.ArgumentParser(description="MRMPFormer 统一推理入口（roi / roi2inference / pipeline / fullscan）")
+    parser = argparse.ArgumentParser(description="MRMPFormer 统一推理入口（roi / roi2inference / pipeline / massnova）")
     parser.add_argument("--mode", type=str, default="pipeline",
-                        choices=["roi", "roi2inference", "pipeline", "fullscan"],
+                        choices=["roi", "roi2inference", "pipeline", "massnova"],
                         help=(
                             "roi=仅ROI生成(单文件或目录递归); roi2inference=对已有ROI目录批量预测+积分; "
                             "pipeline=完整流水线（ROI->预测->SNR筛选->post_newtest，单文件或目录递归）; "
-                            "fullscan=整谱 XIC 全峰识别（全部 transition，不依赖标注）"
+                            "massnova=整谱 XIC 全峰识别（MassNova 集成 / 仅提供时序数据，不依赖标注）"
                         ))
     parser.add_argument("--model", type=str, default=None,
                         help="模型路径 (.pth)；也可由 --config 提供（roi 模式非必填，其余模式必填）")
@@ -1019,7 +1019,7 @@ def main_cli():
         help="[pipeline] 标注 RT 一致性 QC 阈值（min）：跨样本/双离子 rt 极差超此值判疑似实验有误，"
              "剔除涉事通道并警示人工复核；0=关闭。默认 1.0（需 --labels）",
     )
-    parser.add_argument("--snr_min", type=float, default=3.0, help="[SNR筛选] 框外SNR阈值，单位同 mzml_box_outside_snr_pipeline")
+    parser.add_argument("--snr_min", type=float, default=10.0, help="[SNR筛选] 框外SNR阈值，单位同 mzml_box_outside_snr_pipeline")
     parser.add_argument("--snr_gaussian_sigma", type=float, default=0.8, help="[SNR筛选] mzML 强度高斯平滑 sigma")
     parser.add_argument("--snr_min_noise_points", type=int, default=5, help="[SNR筛选] 框外噪声至少点数")
 
@@ -1076,7 +1076,7 @@ def main_cli():
     parser.add_argument("--post_disable_lr_repredict_on_small_fail", action="store_true")
 
     parser.add_argument("--post_min_confidence", type=float, default=0.99)
-    parser.add_argument("--post_min_snr", type=float, default=3.0)
+    parser.add_argument("--post_min_snr", type=float, default=10.0)
     parser.add_argument("--post_small_noise_window_half", type=float, default=0.30)
     parser.add_argument("--post_main_boundary_noise_percentile", type=float, default=20.0)
     parser.add_argument("--post_plot_sigma", type=float, default=0.8)
@@ -1111,49 +1111,49 @@ def main_cli():
         help="[post] 启用小峰相对主峰的 RT 门控；不显式传入则关闭（允许多峰不按 RT 限制）",
     )
 
-    # ==================== fullscan（整谱全峰识别）====================
+    # ==================== massnova（整谱全峰识别）====================
     parser.add_argument("--scan_baseline_percentile", type=float, default=25.0,
-                        help="[fullscan] 基线分位（global_percentile 模式）")
+                        help="[massnova] 基线分位（global_percentile 模式）")
     parser.add_argument("--scan_baseline_mode", type=str, default="global_percentile",
                         choices=["global_percentile", "local_valley"],
-                        help="[fullscan] 基线模式")
+                        help="[massnova] 基线模式")
     parser.add_argument("--scan_min_peak_ratio", type=float, default=0.04,
-                        help="[fullscan] 峰高 = baseline + r·dynamic")
+                        help="[massnova] 峰高 = baseline + r·dynamic")
     parser.add_argument("--scan_prominence_ratio", type=float, default=0.055,
-                        help="[fullscan] find_peaks prominence（相对 dynamic）")
+                        help="[massnova] find_peaks prominence（相对 dynamic）")
     parser.add_argument("--scan_min_prominence_abs", type=float, default=0.0,
-                        help="[fullscan] prominence 绝对下限（>0 时启用，防小峰被全局 dynamic 吞）")
+                        help="[massnova] prominence 绝对下限（>0 时启用，防小峰被全局 dynamic 吞）")
     parser.add_argument("--scan_min_peak_gap_points", type=int, default=3,
-                        help="[fullscan] find_peaks 最小点距")
+                        help="[massnova] find_peaks 最小点距")
     parser.add_argument("--scan_min_peak_width_min", type=float, default=0.10,
-                        help="[fullscan] RT 尺度最小峰宽（distance 按通道中位步长换算）")
+                        help="[massnova] RT 尺度最小峰宽（distance 按通道中位步长换算）")
     parser.add_argument("--scan_void_time_min", type=float, default=0.5,
-                        help="[fullscan] 排除溶剂前沿/柱平衡区（RT < 此值不参与 dynamic 与枚举）")
+                        help="[massnova] 排除溶剂前沿/柱平衡区（RT < 此值不参与 dynamic 与枚举）")
     parser.add_argument("--scan_max_peaks_per_channel", type=int, default=50,
-                        help="[fullscan] 单通道候选上限，超限保留 prominence 前 N")
+                        help="[massnova] 单通道候选上限，超限保留 prominence 前 N")
     parser.add_argument("--scan_init_half_width_min", type=float, default=0.05,
-                        help="[fullscan] 精修初始半宽（min）")
+                        help="[massnova] 精修初始半宽（min）")
     parser.add_argument("--scan_boundary_posterior_lookahead", type=int, default=5,
-                        help="[fullscan] 边界后验窗点数")
+                        help="[massnova] 边界后验窗点数")
     parser.add_argument("--scan_boundary_posterior_mean_scale", type=float, default=1.25,
-                        help="[fullscan] 边界后验均值倍数")
+                        help="[massnova] 边界后验均值倍数")
     parser.add_argument("--scan_edge_noise_stop_mode", type=str, default="stable_tail_mean",
                         choices=["stable_tail_mean", "roi_bottom_decile_mean", "low_percentile"],
-                        help="[fullscan] 边界截停阈值：stable_tail_mean=峰侧局部稳定尾噪声（默认）")
+                        help="[massnova] 边界截停阈值：stable_tail_mean=峰侧局部稳定尾噪声（默认）")
     parser.add_argument("--scan_edge_max_span_min", type=float, default=1.0,
-                        help="[fullscan] 边界截停阈值估计的最大单侧跨度（min）")
-    parser.add_argument("--scan_min_snr", type=float, default=3.0,
-                        help="[fullscan] 峰级本地 SNR 门")
+                        help="[massnova] 边界截停阈值估计的最大单侧跨度（min）")
+    parser.add_argument("--scan_min_snr", type=float, default=10.0,
+                        help="[massnova] 峰级本地 SNR 门")
     parser.add_argument("--scan_min_peak_span_points", type=int, default=5,
-                        help="[fullscan] 峰跨距（baseline 以上连续点数）门")
+                        help="[massnova] 峰跨距（baseline 以上连续点数）门")
     parser.add_argument("--scan_min_area", type=float, default=0.0,
-                        help="[fullscan] 峰面积门（0=关）")
+                        help="[massnova] 峰面积门（0=关）")
     parser.add_argument("--scan_window_half_min", type=float, default=1.0,
-                        help="[fullscan] 模型验证窗口半宽（与训练一致）")
+                        help="[massnova] 模型验证窗口半宽（与训练一致）")
     parser.add_argument("--keep_windows", action="store_true",
-                        help="[fullscan] 保留模型验证窗口 JPEG")
+                        help="[massnova] 保留模型验证窗口 JPEG")
     parser.add_argument("--no_plots", action="store_true",
-                        help="[fullscan] 关闭整谱标注图")
+                        help="[massnova] 关闭整谱标注图")
 
     # ==================== 输出控制 ====================
     parser.add_argument(
@@ -1209,14 +1209,14 @@ def main_cli():
         parser.set_defaults(**_cfg)
         print(f"[INFO] 已加载推理配置: {_cfg_path}")
     args = parser.parse_args()
-    if not args.model and args.mode not in ("roi", "fullscan"):
+    if not args.model and args.mode not in ("roi", "massnova"):
         parser.error("--model 必填（命令行或 --config 提供；roi 模式仅生成 ROI，无需模型；"
-                     "fullscan 模型可选，提供则开启验证）")
+                     "massnova 模型可选，提供则开启验证）")
     if args.mode in ("roi", "pipeline") and not args.labels:
         parser.error("--labels 必填：ROI 生成只支持标注驱动（B 范式，与训练一致），"
                      "不再支持 apex（最高强度点）通道驱动")
-    if args.mode == "fullscan" and args.labels:
-        print("[INFO] fullscan 模式不依赖 --labels，已忽略")
+    if args.mode == "massnova" and args.labels:
+        print("[INFO] massnova 模式不依赖 --labels，已忽略")
 
     # ---- 配置运行时日志过滤 ----
     from framework.util.logutil import configure_log_level, install_filter
@@ -1554,10 +1554,10 @@ def main_cli():
                 print(f"[WARN] 推理报告生成失败（不影响主流程）: {_e}")
         return
 
-    if args.mode == "fullscan":
-        from .fullscan import main as fullscan_main
+    if args.mode == "massnova":
+        from .massnova import main as massnova_main
 
-        fullscan_main(args)
+        massnova_main(args)
         return
 
     if args.mode == "roi":

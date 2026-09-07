@@ -171,4 +171,17 @@ MRMPFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 - 文档生成(README.md): 修复完整管线部分 —— 数据路径改为 `../data/...`（`cd model` 后根目录数据）、输出结构图修正（`prediction_refined.csv` 实际位于 `snr_filtered/<样品>/SNR_box_<阈值>/` 下，补充 `predicted_plots/`、`refined_plots/`、计时日志）、轻量模式路径统一
 - 文档生成(README.md): 安装部分拆分为「第一步 安装 Python 环境」+「第二步 安装项目依赖」两节，明确 Python 3.10~3.11 与 pip/conda 两种路径
 - 文档生成(README.md): 推理参数速查新增「完整参数模板」—— 覆盖 `model/main.py` argparse 全部 42 个参数（基础/QC/SNR/Post 四组），每个参数配注释填写说明，可直接复制运行（bash 语法已验证）
-- 其他(model/environment.yml): 补充缺失的 `pyopenms==3.3.0`，与 `requirements.txt` 对齐（testXIC.py 顶层硬依赖，缺失会导致管线无法启动）
+- 其他(model/environment.yml): 补充缺失的 `pyopenms==3.3.0`，与 `requirements.txt` 对齐（testXIC.py 顶层硬依赖，缺失会导致管线无 法启动）
+
+### 2026-09-04
+
+- 数据分析(model/tools/evaluation/evaluate_baseline.py 关联): 深挖 test2 特殊峰在 0.8/0.05min 阈值下检出率低的原因——三轮剖析：宽峰 OOD（训练集 >0.8min 仅 2 框）、动态 L1/PW-CIoU 偏窄峰、FDR initial_box_width 表示上限、GT 边界主观/含漂移起点；量化"几何覆盖上限"（分数全放行 tol=0.05 仅 35%），判定该口径 ≥80% 在现行分峰 GT 下几何不可达
+- 数据建模(output/special_peak_isolation/labels/test2_v2.xlsx): 逐张复核 25 张 信号+GT+预测 叠加图后生成隔离版 test2 v2 标签（XML 原位手术保留 sharedStrings；边界=谷底/信号足点，剔除漂移起点与浅谷缝框）
+- 代码生成(models/mrmpformer/v1/losses_special.py + detr_special.py): [隔离实验] 特殊峰专项损失——QFL 质量感知分类 / log 宽度 L1（尺度等变）/ roi_width FDR（解除 3×w0 表示上限）；注册 mrmpformer_special 变体（models/__init__.py + train.py choices 增项，原版零改动）
+- 测试(model/tools/evaluation/evaluate_special_isolation.py): 隔离特殊峰评估器（复用原版对齐/命中逻辑 + tag 独立读回），v1 标签复现官方 4/44
+- 调试(models/mrmpformer/v1/): QFL 在固定 0.8 阈值下把 score 锚定 IoU，窄峰 0.8 档被系统性压制 → 9ep 止损，改 focal 变体（configs/mrmpformer_special_v2.json）自 v1 checkpoint 热启动续训 22ep
+- 测试(训练产物): special_v2 最终 val AP50 0.968（超原版 v3 0.957-0.966）；test2 特殊峰 0.8/0.05 由 4/44 → 7/44（v1 标签）/ 6/42（v2 标签）；完整分析与结论见 output/special_peak_isolation/special_peak_report.md
+- 重构(全局整理·权重): output/train/mrmpformer_special_v2/checkpoint.pth 转移至 model/checkpoint/mrmpformer_special_v2.pth（MD5 校验一致）——model/checkpoint 现存 5 权重：mrmpformer.pth（默认，v3 最终，grid4 对比最优）+ quanformer/quanformerv2/quanformerv3（基线与两轮对照）+ mrmpformer_special_v2（隔离实验）；mrmpformerv2.pth/.onnx 此前已发布 Git LFS 并删本地（过时，v3 取代）
+- 重构(全局整理·产物清理): output 从 7.8GB 降至 2.6GB —— output/train 各 run 删中间 checkpoint 仅留最终 checkpoint.pth + log.txt + config_used.txt（7.4GB→2.3GB）；output/evaluation 删旧 6 模型对比 cmp/cmp_m1_t05/cmp_s08/cmp_tol02 与 fdr_trace（保留 grid4/grid4_test2/grid4_test2_vis 三份四模型对比，对应 docs/model_eval_grid_test1test2_4models.md）；删 output/test（verify_step5）、output/inference/fullscan_test1_mrmv2（massnova 旧名产物）、QC 冗余（仅留 coco_traindatav1 训练数据存证）、空目录 roi/visualization/_smoke/archive；special_peak_isolation 删 special_v2_dbg 与 __pycache__（保留完整证据链：报告/v2 标签/25 张复核叠加图/评估指标/_pipeline/全部脚本）
+- 重构(全局整理·脚本与配置): 删过时配置 10 个（evaluation_cmp_×6 对应已删 cmp 产物、mrmpformer_v1_fdr/v1_multisrc 输出目录已不存在、mrmpformer_v3_cascade/v3_layered 无文档失败变体）+ 过时文档 5 个（docs/plan_debug/plan_terminal/plan_products/plan_inference_outputs_restructure 已完成工作方案、joint_evaluation_4models 旧四模型对比）+ 一次性脚本 model/_inspect_labels.py、tools/diagnostics/verify_snr_dual_matrix.py（BASE 硬编码锚定已删 verify_step5 数据）
+- 调试(全局整理·引用修正): inference_pipeline.json/massnova.json/export_onnx.py/fdr_trace.py 的权重引用由已删 mrmpformerv2.pth（或不存在 mrmpformerv3.pth）统一改指 checkpoint/mrmpformer.pth；inference_pipeline.json output_dir 由已删 ../output/test/verify_step5 改 null（走默认命名）；evaluation_baseline.json 清除指向已删 pred_v1_fixed 的复用路径改为 run_inference=1 模板；README 配置表/目录树/示例命令（6 处 --model）同步，blank_label.md 删 §10 诊断工具章并重编号后续章节

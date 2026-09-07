@@ -53,6 +53,7 @@ class MRMPFormer(nn.Module):
                  fdr_scale_mode='initial_box_width',
                  detach_boundary_feedback=False,
                  fdr_min_width=1e-4,
+                 fdr_cascade=False,
                  aux_loss=True):
         super().__init__()
         self.num_queries = num_queries
@@ -92,6 +93,10 @@ class MRMPFormer(nn.Module):
         self.fdr_scale_mode = fdr_scale_mode
         self.detach_boundary_feedback = detach_boundary_feedback
         self.fdr_min_width = float(fdr_min_width)
+        # 级联输入模式：每层 FDR 解码以「上一层精化边界」为锚点（x^k = x^{k-1} + decode(Δz_k)·s0），
+        # 各层只学相对前层的残差增量——逐层递进由级联结构自然产生（区别于把阶梯写进监督目标的
+        # fdr_layer_progress）。False=原版（所有层相对同一初始框解码累计 logits z_k）
+        self.fdr_cascade = bool(fdr_cascade)
         self.aux_loss = aux_loss
         self.version = MODEL_VERSION  # 模型结构版本号，防新旧 checkpoint 混淆
 
@@ -99,23 +104,34 @@ class MRMPFormer(nn.Module):
     # 边界位置反馈回调：第 k 层解码完成后，把该层精化边界编码进下一层 query_pos
     # ------------------------------------------------------------------
     def _make_boundary_pos_fn(self):
-        """闭包内独立维护 z 的累计链（与 forward 末尾的输出重算完全同构：
+        """闭包内独立维护解码链（与 forward 末尾的输出重算完全同构：
         FDRHead/BoundaryPositionMLP/BBox 头均不含 Dropout，两次前向确定性一致，
-        梯度经两条通路汇入同一组参数，autograd 自动求和）。"""
-        state = {'z': None, 'init_xyxy': None, 's0': None}
+        梯度经两条通路汇入同一组参数，autograd 自动求和）。
+        级联模式（fdr_cascade）：本层 own logits 直接解码，加到「上一层精化边界」上。"""
+        state = {'z': None, 'init_xyxy': None, 's0': None, 'prev_lr': None}
 
         def boundary_pos_fn(k: int, h: torch.Tensor) -> torch.Tensor:
             z_k = self.fdr_heads[k](h)                       # k=0: z1；k>=1: Δz
-            state['z'] = z_k if state['z'] is None else state['z'] + z_k
             if state['init_xyxy'] is None:
                 # 初始框只能由第 1 层 Query 特征预测
                 init_cxcywh = self.bbox_embed(h).sigmoid()
                 state['init_xyxy'] = box_ops.box_cxcywh_to_xyxy(init_cxcywh)
                 state['s0'] = self._scale_factor(init_cxcywh)
-            dx = decode_expected_offsets(state['z'], self.fdr_bin_values, state['s0'])
-            x_l = state['init_xyxy'][..., 0] + dx[..., 0]
-            x_r = state['init_xyxy'][..., 2] + dx[..., 1]
-            lr = torch.stack([x_l, x_r], dim=-1)             # [B,Q,2]
+            if self.fdr_cascade:
+                dx = decode_expected_offsets(z_k, self.fdr_bin_values, state['s0'])
+                if state['prev_lr'] is None:
+                    base = torch.stack([state['init_xyxy'][..., 0],
+                                        state['init_xyxy'][..., 2]], dim=-1)
+                else:
+                    base = state['prev_lr']
+                lr = base + dx                               # [B,Q,2] 级联：前层边界 + 本层增量
+                state['prev_lr'] = lr
+            else:
+                state['z'] = z_k if state['z'] is None else state['z'] + z_k
+                dx = decode_expected_offsets(state['z'], self.fdr_bin_values, state['s0'])
+                x_l = state['init_xyxy'][..., 0] + dx[..., 0]
+                x_r = state['init_xyxy'][..., 2] + dx[..., 1]
+                lr = torch.stack([x_l, x_r], dim=-1)         # [B,Q,2]
             bpos = self.boundary_pos_mlp(lr)
             if self.detach_boundary_feedback:
                 bpos = bpos.detach()  # 仅消融实验使用，默认不 detach
@@ -155,11 +171,13 @@ class MRMPFormer(nn.Module):
         s0 = self._scale_factor(initial_box_cxcywh)
 
         # —— FDR：z1 = FFN1(h1)；z_k = z_{k-1} + Δz_k（Logits 残差累加）——
-        fdr_logits = []
+        fdr_logits = []      # 累计 Logits（原版语义：相对初始框的全量偏移分布）
+        fdr_own = []         # 各层 own Logits（z1 / Δz_k）：级联模式监督与解码用
         fdr_deltas = []
         z = None
         for k in range(K):
             out_k = self.fdr_heads[k](hs[k])                 # [B,Q,2,N]
+            fdr_own.append(out_k)
             if k == 0:
                 z = out_k
             else:
@@ -167,13 +185,27 @@ class MRMPFormer(nn.Module):
                 z = z + out_k                                # z_k = z_{k-1} + Δz_k
             fdr_logits.append(z)
 
-        # —— 每层左右边界：累计分布相对【初始边界】解码，禁止坐标残差双重累计 ——
+        # —— 每层左右边界解码 ——
+        # 原版：每层都相对同一【初始边界】解码累计分布 z_k（禁止坐标残差双重累计）；
+        # 级联（fdr_cascade）：第 k 层以第 k-1 层精化边界为锚点解码 own Logits
+        #   （x^k = x^{k-1} + decode(z_own_k)·s0），各层学相对前层的残差增量，
+        #   逐层递进由结构产生，未被监督目标预设。
         refined_lr = []
-        for z_k in fdr_logits:
-            dx = decode_expected_offsets(z_k, self.fdr_bin_values, s0)  # [B,Q,2]
-            x_l = initial_edges_ltrb[..., 0] + dx[..., 0]
-            x_r = initial_edges_ltrb[..., 2] + dx[..., 1]
-            refined_lr.append(torch.stack([x_l, x_r], dim=-1))
+        if self.fdr_cascade:
+            prev_lr = None
+            init_lr = torch.stack([initial_edges_ltrb[..., 0],
+                                   initial_edges_ltrb[..., 2]], dim=-1)
+            for k in range(K):
+                dx = decode_expected_offsets(fdr_own[k], self.fdr_bin_values, s0)
+                base_lr = init_lr if prev_lr is None else prev_lr
+                prev_lr = base_lr + dx
+                refined_lr.append(prev_lr)
+        else:
+            for z_k in fdr_logits:
+                dx = decode_expected_offsets(z_k, self.fdr_bin_values, s0)  # [B,Q,2]
+                x_l = initial_edges_ltrb[..., 0] + dx[..., 0]
+                x_r = initial_edges_ltrb[..., 2] + dx[..., 1]
+                refined_lr.append(torch.stack([x_l, x_r], dim=-1))
 
         # —— 最终二维框：左右=第 3 层，上下=第 1 层初始框 ——
         initial_top = initial_edges_ltrb[..., 1]
@@ -192,7 +224,8 @@ class MRMPFormer(nn.Module):
             'pred_boxes': final_boxes,
             'initial_boxes': initial_box_cxcywh,
             'initial_edges_ltrb': initial_edges_ltrb,
-            'fdr_logits': fdr_logits,                         # [z1,z2,z3]
+            'fdr_logits': fdr_logits,                         # [z1,z2,z3] 累计（原版语义）
+            'fdr_logits_own': fdr_own,                        # [z1,Δz2,Δz3] 各层 own（级联监督用）
             'fdr_deltas': fdr_deltas,                         # [Δz2,Δz3]
             'refined_lr': refined_lr,                         # [lr1,lr2,lr3]
         }
@@ -248,7 +281,10 @@ class MRMPSetCriterion(nn.Module):
                  pw_ciou_eps=1e-6, pw_ciou_weight_clip=None,
                  pw_ciou_mean_width=None,
                  aux_class_loss=True,
-                 fdr_min_width=1e-4):
+                 fdr_min_width=1e-4,
+                 fdr_layer_sigmas=None,
+                 fdr_layer_progress=None,
+                 fdr_cascade=False):
         super().__init__()
         self.num_classes = num_classes
         self.matcher = matcher
@@ -263,6 +299,17 @@ class MRMPSetCriterion(nn.Module):
         self.fdr_scale_mode = fdr_scale_mode
         self.fdr_min_width = float(fdr_min_width)
         self.fdr_loss = DistributionBoundaryLoss(num_bins=bin_values.shape[0])
+        # 逐层分布目标高斯宽度（bin 值域）：None/0=原两点插值；>0=高斯粗化（层级联用）
+        _sigmas = list(fdr_layer_sigmas) if fdr_layer_sigmas else []
+        self.fdr_layer_sigmas = _sigmas + [None] * 8
+        # 逐层目标进度分解 γ_k：L_k 的分布监督目标 = γ_k · d（相对 initial 的期望偏移）。
+        # 缺省全 1.0（各层都学全量 d，现状）；设 [0.5,0.75,1.0] 强制"L1 修一半、L2 到 3/4、
+        # L3 到位"的粗→细分工——decode 仍相对 initial 全量解码，逐层框自然呈梯级（层级联实验用）
+        _prog = list(fdr_layer_progress) if fdr_layer_progress else []
+        self.fdr_layer_progress = [_p if _p is not None else 1.0 for _p in _prog] + [1.0] * 8
+        # 级联模式：L_k 监督 own Logits（z1/Δz_k），目标 = (gt - 前层精化边界.detach()) / s0
+        # ——逐层残差目标，与模型侧 fdr_cascade 解码链一致（prev 边界 detach 防目标漂移）
+        self.fdr_cascade = bool(fdr_cascade)
 
         self.dynamic_l1_enabled = dynamic_l1_enabled
         self.dynamic_l1_eps = dynamic_l1_eps
@@ -405,9 +452,25 @@ class MRMPSetCriterion(nn.Module):
         d_r = (tgt_xyxy[:, 2] - init_edges[idx][:, 2]) / s0_matched
         d_offsets = torch.stack([d_l, d_r], dim=-1)                 # [M,2]
 
+        # 级联模式逐层残差目标：L_k 学 (gt - x^{k-1})/s0；x^0 = 初始边界
+        # （前层边界 detach——每层只对"从当前停住的位置再修多少"负责，防止目标随梯度漂移）
+        cascade_prev_l = init_edges[idx][:, 0].detach()
+        cascade_prev_r = init_edges[idx][:, 2].detach()
+
+        logits_list = outputs['fdr_logits_own'] if self.fdr_cascade else outputs['fdr_logits']
+
         overflow_acc = []
-        for k, z_k in enumerate(outputs['fdr_logits']):
-            res = self.fdr_loss(z_k[idx], d_offsets, self.fdr_bin_values)
+        for k, z_k in enumerate(logits_list):
+            gauss_sigma = self.fdr_layer_sigmas[k] if k < len(self.fdr_layer_sigmas) else None
+            progress = self.fdr_layer_progress[k] if k < len(self.fdr_layer_progress) else 1.0
+            if self.fdr_cascade:
+                d_k = torch.stack(
+                    [(tgt_xyxy[:, 0] - cascade_prev_l) / s0_matched,
+                     (tgt_xyxy[:, 2] - cascade_prev_r) / s0_matched], dim=-1)
+            else:
+                d_k = d_offsets
+            res = self.fdr_loss(z_k[idx], d_k * float(progress),
+                                self.fdr_bin_values, gauss_sigma=gauss_sigma)
             losses[f'loss_fdr_layer_{k + 1}_left'] = res['left']
             losses[f'loss_fdr_layer_{k + 1}_right'] = res['right']
             losses[f'fdr_exp_offset_err_layer_{k + 1}'] = res['exp_offset_err']
@@ -424,6 +487,11 @@ class MRMPSetCriterion(nn.Module):
                  lr_k[:, 1], init_edges[idx][:, 3]], dim=-1)
             iou_k = torch.diagonal(box_ops.box_iou(box_k_xyxy, tgt_xyxy)[0]).mean()
             losses[f'fdr_iou_layer_{k + 1}'] = iou_k.detach()
+
+            # 级联：本层精化边界（detach）成为下一层残差目标的锚点
+            if self.fdr_cascade:
+                cascade_prev_l = lr_k[:, 0].detach()
+                cascade_prev_r = lr_k[:, 1].detach()
 
         losses['fdr_target_overflow_ratio'] = torch.stack(overflow_acc).mean()
         return losses
@@ -573,6 +641,7 @@ def build(args):
         fdr_scale_mode=getattr(args, 'fdr_scale_mode', 'initial_box_width'),
         detach_boundary_feedback=getattr(args, 'detach_boundary_feedback', False),
         fdr_min_width=getattr(args, 'fdr_min_width', 1e-4),
+        fdr_cascade=getattr(args, 'fdr_cascade', False),
         aux_loss=args.aux_loss,
     )
 
@@ -630,6 +699,9 @@ def build(args):
         pw_ciou_weight_clip=getattr(args, 'pw_ciou_weight_clip', None),
         pw_ciou_mean_width=getattr(args, 'pw_ciou_mean_width', None),
         aux_class_loss=getattr(args, 'aux_class_loss', True),
+        fdr_layer_sigmas=getattr(args, 'fdr_layer_sigmas', None),
+        fdr_layer_progress=getattr(args, 'fdr_layer_progress', None),
+        fdr_cascade=getattr(args, 'fdr_cascade', False),
     )
     criterion.to(device)
     postprocessors = {'bbox': PostProcess()}

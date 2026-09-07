@@ -28,8 +28,8 @@ def get_args_parser():
 
     # Model parameters
     parser.add_argument('--model', default='quanformer', type=str,
-                        choices=('quanformer', 'mrmpformer_v1'),
-                        help="Model variant: quanformer (baseline) | mrmpformer_v1")
+                        choices=('quanformer', 'mrmpformer_v1', 'mrmpformer_special'),
+                        help="Model variant: quanformer (baseline) | mrmpformer_v1 | mrmpformer_special [隔离实验]")
     parser.add_argument('--frozen_weights', type=str, default=None,
                         help="Path to the pretrained model. If set, only the mask head will be trained")
     # * Backbone
@@ -124,6 +124,18 @@ def get_args_parser():
                         help='MRMPFormer v1: Recall Loss 实验开关（默认关闭；论文定义未确认，'
                              '启用将报错提示，防止编造公式）')
 
+    # * [隔离实验] special_peak_v1：特殊峰专项损失参数（仅 mrmpformer_special 使用）
+    parser.add_argument('--special_cls', default='qfl', type=str, choices=('qfl', 'focal'),
+                        help='隔离实验: 分类损失 qfl=质量感知(QFL, score回归IoU) | focal=原版')
+    parser.add_argument('--qfl_gamma', default=2.0, type=float,
+                        help='隔离实验: QFL 负样本难例加权 gamma')
+    parser.add_argument('--log_width_enabled', default=True, type=lambda x: str(x).lower() in ('1', 'true', 'yes'),
+                        help='隔离实验: log 宽度 L1 开关（false 回退原版动态 L1）')
+    parser.add_argument('--log_width_center_exp', default=0.5, type=float,
+                        help='隔离实验: 中心项权重指数 λ_c=1/w_gt^p（0=常数权重）')
+    parser.add_argument('--log_width_ref', default=0.1273, type=float,
+                        help='隔离实验: log 宽度项量纲桥接 w_ref（训练集平均峰宽）')
+
     # * MRMPFormer v1 FDR 结构参数（与 configs/mrmpformer_v1_*.json 对齐；缺失时 build() 走 getattr 默认值）
     parser.add_argument('--num_fdr_bins', default=33, type=int,
                         help='MRMPFormer v1: FDR 分布 Bin 数 N')
@@ -137,6 +149,18 @@ def get_args_parser():
                         help='MRMPFormer v1: FDR 偏移归一化尺度 initial_box_width=初始框宽 w0 / roi_width=1.0')
     parser.add_argument('--fdr_layer_weights', default=[0.5, 0.7, 1.0], type=float, nargs='+',
                         help='MRMPFormer v1: 各层 FDR 分布损失权重 α_k（长度 < dec_layers 时尾部补 1.0）')
+    parser.add_argument('--fdr_layer_sigmas', default=None, type=float, nargs='+',
+                        help='MRMPFormer v1: 各层 FDR 分布目标高斯宽度（bin 值域 W∈[-1,1] 上的 σ）。'
+                             'None/0=原两点插值精确监督；>0=高斯核粗化（σ 越大目标越宽）。'
+                             '设 [宽, 中, 0] 可强制"粗→细"逐层精化分摊（层级联实验用）')
+    parser.add_argument('--fdr_layer_progress', default=None, type=float, nargs='+',
+                        help='MRMPFormer v1: 各层 FDR 目标进度分解 γ_k（L_k 监督目标 = γ_k·d，'
+                             '相对 initial 的期望偏移比例）。缺省全 1.0=现状（各层同目标）；'
+                             '设 [0.5,0.75,1.0] 强制 L1 只修一半/L2 到 3/4/L3 到位 → 逐层框呈梯级（层级联实验用）')
+    parser.add_argument('--fdr_cascade', default=False, type=lambda x: str(x).lower() in ('1', 'true', 'yes'),
+                        help='MRMPFormer v1: 级联输入模式——每层 FDR 以上一层精化边界为锚点解码 own Logits，'
+                             '各层学相对前层的残差增量（x^k = x^{k-1} + decode(Δz_k)·s0），监督目标逐层残差化；'
+                             '逐层递进由级联结构自然产生。false=原版（所有层相对同一初始框解码累计 logits）')
     parser.add_argument('--fdr_loss_coef', default=2.0, type=float,
                         help='MRMPFormer v1: FDR 分布损失总权重 λ_fdr（每层权重 = λ_fdr × α_k）')
     parser.add_argument('--fdr_min_width', default=1e-4, type=float,

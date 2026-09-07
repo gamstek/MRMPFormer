@@ -279,6 +279,10 @@ def compute_local_snr(rt_array, intensity_row, rt_min, rt_max,
     neighbor_intervals: 其他峰的 (rt_min, rt_max) 区间列表。左/右侧分别找最近的相邻峰：
       - 左侧：rt_max 最接近（且 < rt_min）的相邻峰，噪声区 = (邻居.rt_max, rt_min)
       - 右侧：rt_min 最接近（且 > rt_max）的相邻峰，噪声区 = (rt_max, 邻居.rt_min)
+    邻居区段与回退扇区统一过安静点过滤（强度 <= 区段 low_noise_frac 分位的点）：
+    边界精修偶尔把框拖进峰尾，区段起点仍在信号上，不过滤会把尾衰减当成噪声
+    （p-p 被抬高数十倍 → 真峰被 SNR 门误杀）。
+
     某侧无邻居或点数不足时，回退到该侧框外扇区内的"低强度安静点"
     （强度 <= 该扇区分位 low_noise_frac 的点），再不足则用整扇区。
 
@@ -335,7 +339,9 @@ def compute_local_snr(rt_array, intensity_row, rt_min, rt_max,
                 # 限制扇区跨度，避免远处的基线漂移计入
                 sub = rt < (rt_min - max_flank_span_min)
                 flank = intensity[left_mask & ~sub]
-            left_region = _quiet_points(rt[left_mask], flank)
+            left_region = flank
+    if left_region is not None:
+        left_region = _quiet_points(None, left_region)
     if left_region is not None and left_region.size >= 2:
         lv = np.maximum(left_region.astype(np.float64), 0.0)
         all_noise.extend(lv.tolist())
@@ -357,7 +363,9 @@ def compute_local_snr(rt_array, intensity_row, rt_min, rt_max,
             if span > max_flank_span_min and np.any(right_mask):
                 sub = rt > (rt_max + max_flank_span_min)
                 flank = intensity[right_mask & ~sub]
-            right_region = _quiet_points(rt[right_mask], flank)
+            right_region = flank
+    if right_region is not None:
+        right_region = _quiet_points(None, right_region)
     if right_region is not None and right_region.size >= 2:
         rv = np.maximum(right_region.astype(np.float64), 0.0)
         all_noise.extend(rv.tolist())

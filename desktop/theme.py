@@ -11,26 +11,41 @@ import os
 
 
 def _ensure_assets():
-    """确保 assets/ 中存在所有自动生成的图标资源。
+    """确保 assets/ 中存在所有自动生成的图标资源（缺失即用 QPainter 绘制）。
 
     返回 (up_arrow_path, down_arrow_path, check_icon_path) 的绝对路径元组（正斜杠），
     可直接嵌入 QSS url()。
-    - spin_up_arrow.png  ← combo_down_arrow.png 旋转 180°
-    - check_icon.png    ← QPainter 绘制的 ✓ 勾号
+    - spin_up_arrow.png    ← 上箭头（三角，向上）
+    - combo_down_arrow.png ← 下箭头（三角，向下）
+    - check_icon.png       ← QPainter 绘制的 ✓ 勾号
     """
-    from PySide6.QtGui import QPixmap, QTransform, QPainter, QPen, QColor
-    from PySide6.QtCore import Qt, QPoint
+    from PySide6.QtGui import QPixmap, QPainter, QPen, QColor
+    from PySide6.QtCore import QPoint
 
     assets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
     up_path = os.path.join(assets_dir, "spin_up_arrow.png")
     down_path = os.path.join(assets_dir, "combo_down_arrow.png")
     check_path = os.path.join(assets_dir, "check_icon.png")
 
-    # 上箭头：下箭头旋转 180°
-    if not os.path.exists(up_path) and os.path.exists(down_path):
-        pm = QPixmap(down_path)
-        rotated = pm.transformed(QTransform().rotate(180), Qt.SmoothTransformation)
-        rotated.save(up_path, "PNG")
+    # 箭头：直接绘制三角，不再依赖预置 png（assets/ 为空时也能出图标）
+    def _draw_arrow(path: str, pointing_up: bool):
+        if os.path.exists(path):
+            return
+        pm = QPixmap(14, 14)
+        pm.fill(QColor(0, 0, 0, 0))
+        painter = QPainter(pm)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QPen(QColor("#6B7280"), 2.0))
+        painter.setBrush(QColor("#6B7280"))
+        if pointing_up:
+            painter.drawPolygon([QPoint(7, 3), QPoint(3, 10), QPoint(11, 10)])
+        else:
+            painter.drawPolygon([QPoint(7, 11), QPoint(3, 4), QPoint(11, 4)])
+        painter.end()
+        pm.save(path, "PNG")
+
+    _draw_arrow(up_path, pointing_up=True)
+    _draw_arrow(down_path, pointing_up=False)
 
     # 勾号图标：QPainter 绘制 ✓
     if not os.path.exists(check_path):
@@ -79,16 +94,11 @@ class Colors:
     progress_bg   = "#E5E7EB"   # 进度条背景
     progress_fill = "#DC2626"   # 进度条填充
 
-    # 侧边栏内文字（白色系，因侧边栏为深蓝色背景）
-    sidebar_text        = "#CBD5E1"  # 侧边栏普通文字
-    sidebar_text_active = "#FFFFFF"  # 侧边栏激活文字
-
 
 class Fonts:
     """字体族常量。优先使用系统自带字体，避免额外安装。
     QFont 和 QSS 均可直接使用 Fonts.primary（不含 CSS 引号以兼容 QFont 构造函数）。"""
     primary = "Microsoft YaHei, Segoe UI, sans-serif"
-    mono    = "Cascadia Code, Consolas, monospace"
 
 
 def global_stylesheet() -> str:

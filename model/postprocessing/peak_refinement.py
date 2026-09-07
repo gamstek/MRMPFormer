@@ -3773,7 +3773,7 @@ def build_parser():
         help="上限：修正框宽度不得超过 ROI 时间窗×该比例（噪声截停得到的较窄主峰框会保留）",
     )
     p1.add_argument("--min_confidence", type=float, default=0.99, help="主峰修正门控：最小置信度")
-    p1.add_argument("--min_snr", type=float, default=3.0, help="主峰修正门控：最小 SNR")
+    p1.add_argument("--min_snr", type=float, default=10.0, help="主峰修正门控：最小 SNR")
     p1.add_argument(
         "--min_secondary_ratio",
         type=float,

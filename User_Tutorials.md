@@ -69,7 +69,7 @@ python -m inference.cli --mode pipeline \
   --batch_dir ../data/test1/mzML \
   --output_dir ../output/targeted \
   --threshold 0.99 --plot \
-  --snr_min 3.0 \
+  --snr_min 10.0 \
   --pipeline_min_max_intensity 1000 \
   --pipeline_min_chrom_points 10
 ```
@@ -183,12 +183,12 @@ python -m inference.cli --mode pipeline \
   --output_dir ../output/t1_centroided \
   --threshold 0.99 --plot \
   --smooth_sigma 0.0 \
-  --snr_min 3.0 \
+  --snr_min 10.0 \
   --pipeline_min_max_intensity 1000 \
   --pipeline_min_chrom_points 10
 ```
 
-**输出**：`<output>/snr_filtered/<样品>/SNR_box_3.0/prediction_refined.csv`（⭐ 最终峰面积 + 置信度）。
+**输出**：`<output>/prediction_refined/<样品>/prediction_refined.csv`（⭐ 最终峰面积 + 置信度）。
 
 **要点**：
 - 仪器方法通道即分析对象，无需准备 feature.csv（自动生成）

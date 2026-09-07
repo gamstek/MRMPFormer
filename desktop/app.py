@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
 )
 from theme import Colors, Fonts, global_stylesheet
 
+APP_VERSION = "v0.1.0"
+
 
 class SidebarButton(QPushButton):
     """
@@ -224,7 +226,7 @@ class GAMSTEKPEAKingWindow(QMainWindow):
         layout.addSpacing(4)
 
         # "关于"区域（底部固定，显示版本号）
-        about_btn = QLabel("  v0.1.0")
+        about_btn = QLabel(f"  {APP_VERSION}")
         about_btn.setFont(QFont(Fonts.primary, 11))
         about_btn.setStyleSheet(f"""
             color: rgba(255,255,255,0.5);
@@ -295,7 +297,10 @@ class GAMSTEKPEAKingWindow(QMainWindow):
         self.status_bar.showMessage(text)
 
     def closeEvent(self, event):
-        """窗口关闭事件 —— 确保所有后台线程优雅退出。"""
-        # QThread 生命周期由各页面自行管理；
-        # 此处预留统一清理逻辑的钩子
+        """窗口关闭事件 —— 回收各页面仍在前台运行的 QThread，避免进程退出时崩溃。"""
+        for i in range(self.stack.count()):
+            page = self.stack.widget(i)
+            shutdown = getattr(page, "shutdown", None)
+            if callable(shutdown):
+                shutdown()
         event.accept()

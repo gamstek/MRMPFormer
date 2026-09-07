@@ -19,7 +19,7 @@ MRMPFormer 是一个基于 **DETR（ResNet-50 + 1 层 Transformer 编解码器�
 | **训练入口** | `model/train.py`（须在 `model/` 目录下用 `python -m train ...` 调用） |
 | **四种分析模式** | Targeted / Untargeted × Centroided / Profile（⚠️ **当前仅开发 Targeted × Centroided（MRM）**，其余三组合暂不开发；原 `getFeature.py`/R、`testXIC.py` 等非 MRM 代码已从仓库删除，如需恢复从 git history 找回） |
 | **输入** | `.mzML` 原始质谱数据（chromatogram 模式） |
-| **输出** | `prediction_refined.csv`（峰面积 + 置信度）、`box_outside_snr_report.csv`、EIC 预测图像 |
+| **输出** | `prediction_refined.csv`（峰面积 + 置信度）、`qc4_snr_<样本名>.csv`（SNR 判定）、EIC 预测图像（`model_plots/`） |
 | **上游来源** | Facebook DETR（`model/framework/` fork 自 DETR） |
 | **版权所有** | LinShuhaiLAB, Xiamen University |
 
@@ -58,11 +58,11 @@ MRMPFormer 是一个基于 **DETR（ResNet-50 + 1 层 Transformer 编解码器�
 ### 输出目录（强制）
 - **推理产物统一写到 `../output/`**（相对 `model/` 目录），禁止散落到 `model/` 下或 `data/` 下
 - **默认输出目录**（`configs/inference_pipeline.json` 的 `output_dir` 默认值，及 cli.py 各模式兜底）：
-  - `pipeline` → `../output/inference/full_pipeline`
-  - `roi` → `../output/inference/xic-roi-batch`
-  - `roi2inference` → `../output/inference/batch_predictions`
+  - `pipeline` → `../output/inference/<实验模式>_<实验名>`（实验名由 `--exp_name` 指定或自动回退）
+  - `roi` → `../output/inference/xic_roi`
+  - `batch_dir` → `../output/inference/predictions_model`
 - **测试/试跑输出**：显式指定 `--output_dir ../output/test/<名称>` 单独存放，**禁止**与正式产物混放
-- 训练产物：`model/output_v2/`（微调 checkpoint）、`model/output_baseline/`（基线），`.pth` 不入 git（.gitignore 已覆盖 `output/`）
+- 训练产物：`../output/train/<run>/`（每 run 保留最终 `checkpoint.pth` + `log.txt` + `config_used.txt`，中间 checkpoint 已清理），`.pth` 不入 git（.gitignore 已覆盖 `output/`）
 
 ### 命令执行（强制）
 - **外部命令优先**：涉及训练（`python -m train ...`）、推理（`python -m inference.cli ...` / `predictor`）、XIC 提取（`extract_xic_with_pyopenms` / `coco_annotation`）等会实际运行模型、写文件或触发 matplotlib/pyopenms 渲染的命令，**优先整理成完整命令交给用户在系统 PowerShell 中执行**，不要反复在沙箱内自跑

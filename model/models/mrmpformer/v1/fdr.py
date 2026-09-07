@@ -164,8 +164,25 @@ class DistributionBoundaryLoss(nn.Module):
         overflow = (target < bin_values[0]) | (target > bin_values[-1])
         return weights, overflow
 
+    @staticmethod
+    def gaussian_soft_labels(target: Tensor, bin_values: Tensor,
+                             sigma: float) -> tuple[Tensor, Tensor]:
+        """target: [*] → 高斯核软标签 (weights: [*, N], overflow: [*] bool)。
+
+        用于『逐层目标锐度粗化』（fdr_layer_sigmas）：把两点线性插值标签替换为
+        bin 值域 W∈[-1,1] 上的高斯核 exp(-(W-d)²/2σ²)（归一化）。σ 越大目标越宽
+        （只要求把概率质量堆到 d 附近大致区域），σ→0 时收敛回原精确监督。
+        越界目标：质量截断在边界 bin 并归一化（overflow 统计保留，便于诊断）。
+        """
+        n = bin_values.shape[0]
+        dev = bin_values - target.unsqueeze(-1)               # [*, N]
+        w = torch.exp(-0.5 * (dev / float(sigma)) ** 2)
+        w = w / w.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+        overflow = (target < bin_values[0]) | (target > bin_values[-1])
+        return w, overflow
+
     def forward(self, fdr_logits: Tensor, target_offsets: Tensor,
-                bin_values: Tensor) -> dict:
+                bin_values: Tensor, gauss_sigma=None) -> dict:
         """软标签交叉熵。
 
         Args:
@@ -181,7 +198,10 @@ class DistributionBoundaryLoss(nn.Module):
                     'overflow_ratio': zero.detach(), 'exp_offset_err': zero.detach()}
 
         tgt = target_offsets.float()
-        weights, overflow = self.soft_labels(tgt, bin_values)      # [M,2,N]
+        if gauss_sigma is not None and float(gauss_sigma) > 0:
+            weights, overflow = self.gaussian_soft_labels(tgt, bin_values, float(gauss_sigma))
+        else:
+            weights, overflow = self.soft_labels(tgt, bin_values)      # [M,2,N]
         log_p = F.log_softmax(fdr_logits.float(), dim=-1)          # [M,2,N]
         ce = -(weights * log_p).sum(dim=-1)                        # [M,2]
 

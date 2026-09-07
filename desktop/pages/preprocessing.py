@@ -14,7 +14,7 @@ PreprocessingPage 作为这两个卡片的容器，被 app.py 的侧边栏路由
 import logging
 import os
 from pathlib import Path
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
@@ -491,6 +491,11 @@ class ConversionCard(QFrame):
         import sys
         print(f"[ConversionCard Error] {message}", file=sys.stderr)
 
+    def _shutdown(self):
+        """窗口关闭时回收转换线程（至多等待 3s，超时则随进程退出）。"""
+        if self._converter is not None and self._converter.isRunning():
+            self._converter.wait(3000)
+
 
 # ============================================================
 # 功能卡片 2: 离子天顶
@@ -502,7 +507,7 @@ class IonZenithCard(QFrame):
 
     提供 mzML MS1 谱图遍历 → CSV 输出的界面：
       - 输入/输出文件选择行
-      - 可折叠高级参数面板（QPropertyAnimation 平滑展开/收起）
+      - 可折叠高级参数面板（直接切换可见性，随 QScrollArea 自适应高度）
       - 实时参数校验（不合法时禁用运行按钮）
       - 进度条 + 实时统计 + 运行按钮
     """
@@ -922,6 +927,11 @@ class IonZenithCard(QFrame):
         self._set_advanced_enabled(True)
         self._validate()  # 重新校验参数
 
+    def _shutdown(self):
+        """窗口关闭时回收离子天顶线程（至多等待 3s，超时则随进程退出）。"""
+        if self._worker is not None and self._worker.isRunning():
+            self._worker.wait(3000)
+
 
 # ============================================================
 # 前处理板块主页面
@@ -969,3 +979,8 @@ class PreprocessingPage(QWidget):
 
         scroll.setWidget(content)
         outer.addWidget(scroll)
+
+    def shutdown(self):
+        """窗口关闭钩子：回收两个功能卡片的后台线程。"""
+        self.conversion_card._shutdown()
+        self.ion_zenith_card._shutdown()
