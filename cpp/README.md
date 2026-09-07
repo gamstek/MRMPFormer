@@ -26,7 +26,9 @@ CUDA build: use the matching **GPU** ONNX Runtime package for
 `ONNXRUNTIME_ROOT`, then run the same configure/build commands.  GPU use is a
 runtime request, not a separate MRMPFormer CMake option: set
 `QfConfig.use_gpu = 0` to try CUDA then fall back to CPU, or `1` to require
-CUDA.  Set it to `-1` to force CPU.
+CUDA.  Set it to `-1` to force CPU. CPU and CUDA use the same
+`mrmpformer.dll`; a GPU package is identified by its
+`onnxruntime_providers_shared.dll` and `onnxruntime_providers_cuda.dll` files.
 
 Linux example:
 
@@ -57,8 +59,11 @@ Place the application, `mrmpformer.dll` (Windows) or `libmrmpformer.so`
 path.  The simplest layouts are the same directory on Windows
 (`mrmpformer.dll`, `onnxruntime.dll`) and either the same directory with an
 appropriate RPATH or a directory named in `LD_LIBRARY_PATH` on Linux
-(`libmrmpformer.so`, `libonnxruntime.so`).  Copy any provider DLLs required by
-the selected ONNX Runtime GPU package as well.  Deploy
+(`libmrmpformer.so`, `libonnxruntime.so`). On Windows, the build automatically
+copies `onnxruntime.dll` and, when present in `ONNXRUNTIME_ROOT`, the shared and
+CUDA provider DLLs beside `mrmpformer.dll`. CUDA and cuDNN dependencies of the
+selected ONNX Runtime package must still be available to the Windows loader.
+Deploy
 `mrmpformerv2.onnx` with the application or pass its explicit path through
 `QfConfig.model_path`; the library never assumes a developer-machine path.
 

@@ -9,6 +9,7 @@ set(_onnxruntime_include_path "${ONNXRUNTIME_ROOT}/include/onnxruntime_cxx_api.h
 
 if(WIN32)
     set(_onnxruntime_library_path "${ONNXRUNTIME_ROOT}/lib/onnxruntime.lib")
+    set(_onnxruntime_runtime_path "${ONNXRUNTIME_ROOT}/lib/onnxruntime.dll")
 else()
     set(_onnxruntime_library_path "${ONNXRUNTIME_ROOT}/lib/libonnxruntime.so")
 endif()
@@ -20,10 +21,33 @@ endif()
 if(NOT EXISTS "${_onnxruntime_library_path}")
     list(APPEND _onnxruntime_missing_paths "${_onnxruntime_library_path}")
 endif()
+if(WIN32 AND NOT EXISTS "${_onnxruntime_runtime_path}")
+    list(APPEND _onnxruntime_missing_paths "${_onnxruntime_runtime_path}")
+endif()
 
 if(_onnxruntime_missing_paths)
     string(JOIN "\n  " _onnxruntime_missing_message ${_onnxruntime_missing_paths})
     message(FATAL_ERROR "ONNX Runtime is incomplete under ${ONNXRUNTIME_ROOT}. Missing required path(s):\n  ${_onnxruntime_missing_message}")
+endif()
+
+if(WIN32)
+    set(ONNXRUNTIME_RUNTIME_DLLS "${_onnxruntime_runtime_path}")
+    set(_onnxruntime_shared_provider
+        "${ONNXRUNTIME_ROOT}/lib/onnxruntime_providers_shared.dll")
+    set(_onnxruntime_cuda_provider
+        "${ONNXRUNTIME_ROOT}/lib/onnxruntime_providers_cuda.dll")
+    if(EXISTS "${_onnxruntime_shared_provider}" AND
+       EXISTS "${_onnxruntime_cuda_provider}")
+        list(APPEND ONNXRUNTIME_RUNTIME_DLLS
+            "${_onnxruntime_shared_provider}"
+            "${_onnxruntime_cuda_provider}")
+    elseif(EXISTS "${_onnxruntime_shared_provider}" OR
+           EXISTS "${_onnxruntime_cuda_provider}")
+        message(FATAL_ERROR
+            "ONNX Runtime GPU providers are incomplete under ${ONNXRUNTIME_ROOT}/lib. "
+            "onnxruntime_providers_shared.dll and onnxruntime_providers_cuda.dll "
+            "must both be present.")
+    endif()
 endif()
 
 if(NOT TARGET OnnxRuntime::OnnxRuntime)

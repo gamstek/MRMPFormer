@@ -33,6 +33,14 @@ target_include_directories(mrmpformer
         "${MRMPFORMER_JSON_INCLUDE_DIR}")
 target_link_libraries(mrmpformer PRIVATE OnnxRuntime::OnnxRuntime)
 
+if(WIN32)
+    add_custom_command(TARGET mrmpformer POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            ${ONNXRUNTIME_RUNTIME_DLLS}
+            "$<TARGET_FILE_DIR:mrmpformer>"
+        COMMAND_EXPAND_LISTS)
+endif()
+
 if(MSVC)
     target_compile_options(mrmpformer PRIVATE /utf-8)
 endif()
@@ -84,12 +92,6 @@ if(BUILD_TESTS)
     target_link_libraries(test_onnx_inference PRIVATE OnnxRuntime::OnnxRuntime)
     target_compile_definitions(test_onnx_inference PRIVATE
         MRMPFORMER_TEST_MODEL_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../model/checkpoint/mrmpformerv2.onnx")
-    if(WIN32)
-        add_custom_command(TARGET test_onnx_inference POST_BUILD
-            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${ONNXRUNTIME_ROOT}/lib/onnxruntime.dll"
-                "$<TARGET_FILE_DIR:test_onnx_inference>/onnxruntime.dll")
-    endif()
     add_test(NAME onnx_inference COMMAND test_onnx_inference)
 
     add_executable(test_api tests/test_api.cpp)
@@ -99,12 +101,14 @@ if(BUILD_TESTS)
     target_link_libraries(test_api PRIVATE mrmpformer)
     target_compile_definitions(test_api PRIVATE
         MRMPFORMER_TEST_MODEL_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../model/checkpoint/mrmpformerv2.onnx")
-    if(WIN32)
-        add_custom_command(TARGET test_api POST_BUILD
-            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${ONNXRUNTIME_ROOT}/lib/onnxruntime.dll"
-                "$<TARGET_FILE_DIR:test_api>/onnxruntime.dll")
-    endif()
     add_test(NAME api COMMAND test_api)
+
+    if(WIN32)
+        add_test(NAME runtime_dlls
+            COMMAND "${CMAKE_COMMAND}"
+                "-DSOURCE_DIR=${ONNXRUNTIME_ROOT}/lib"
+                "-DTARGET_DIR=$<TARGET_FILE_DIR:mrmpformer>"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyRuntimeDlls.cmake")
+    endif()
 
 endif()
