@@ -114,8 +114,10 @@ def plot_xic_with_queries(
             continue
         sc = q.get("score")
         sc_s = "%.3f" % float(sc) if sc is not None and np.isfinite(float(sc)) else "—"
+        score_source = str(q.get("score_source") or "").strip()
+        source_s = " | %s" % score_source if score_source else ""
         ax.axvspan(lo, hi, color=color, alpha=alpha,
-                   label="query#%d (score=%s)" % (k + 1, sc_s))
+                   label="query#%d (score=%s%s)" % (k + 1, sc_s, source_s))
         legend_handles.append((lo, hi, color, k + 1, sc_s))
         # 峰顶竖线（同色点线）
         pk = q.get("rt_peak")
@@ -144,10 +146,11 @@ def plot_xic_with_queries(
             np_s = "%d" % int(np_) if np_ is not None and np.isfinite(float(np_)) else "—"
             sc = q.get("score")
             sc_s = "%.3f" % float(sc) if sc is not None and np.isfinite(float(sc)) else "—"
+            score_source = str(q.get("score_source") or "").strip() or "—"
             q1_s = "%.4f" % float(q1) if q1 is not None and np.isfinite(float(q1)) else "—"
             blocks.append(
-                "query#%d  RT=%s min  Q1(m/z)=%s\n峰高=%s  SNR=%s  区间点数=%s  置信度=%s"
-                % (k + 1, rt_s, q1_s, h_s, snr_s, np_s, sc_s)
+                "query#%d  RT=%s min  Q1(m/z)=%s\n峰高=%s  SNR=%s  区间点数=%s  峰分=%s  来源=%s"
+                % (k + 1, rt_s, q1_s, h_s, snr_s, np_s, sc_s, score_source)
             )
         info = "\n\n".join(blocks)
         ax.text(

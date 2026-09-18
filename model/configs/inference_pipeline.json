@@ -1,8 +1,8 @@
 {
   "_comment_mode": "推理模式：roi（仅ROI，单文件或目录递归）/ roi2inference（对已有ROI目录预测）/ pipeline（完整管线，单文件或目录递归）",
   "mode": "pipeline",
-  "_comment_model": "模型权重路径（相对 model/ 目录；roi 模式非必填）。当前默认 MRMPFormer v3 最终权重（grid4 对比冠军，详见 docs/model_eval_grid_test1test2_4models.md）",
-  "model": "checkpoint/mrmpformer.pth",
+  "_comment_model": "模型权重路径（相对 model/ 目录；roi 模式非必填）",
+  "model": "checkpoint/mrmpformerv2.pth",
   "_comment_labels": "[roi/pipeline] 必填：人工标注 xlsx（标注驱动 ROI，B 范式；同时开启标注 RT 一致性 QC）",
   "labels": "../data/label/test1.xlsx",
   "_comment_qc_label_rt_tol": "[roi/pipeline] 标注 RT 一致性 QC 阈值（min）：跨样品/双离子 rt 极差超此值判疑似实验有误；0=关闭",

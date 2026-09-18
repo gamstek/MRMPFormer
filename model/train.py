@@ -188,8 +188,9 @@ def get_args_parser():
     parser.add_argument('--cudnn_benchmark', action='store_true',
                         help='启用 cudnn.benchmark 自动选优卷积算法（输入尺寸固定时收益明显）')
 
-    parser.add_argument('--resume', default='checkpoint.pth',
-                        help='resume from checkpoint')
+    parser.add_argument('--resume', default='',
+                        help='checkpoint 路径（续训/微调时加载；默认空=从零训练。原 DETR 遗留默认 '
+                             'checkpoint.pth 会在裸跑时因文件不存在直接崩溃，已改为空默认）')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
     parser.add_argument('--reset_optimizer', action='store_true',

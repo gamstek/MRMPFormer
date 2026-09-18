@@ -1,0 +1,14 @@
+{
+  "model_version": "mrmpformer_special_v2",
+  "published_filename": "mrmpformerv2",
+  "files": {
+    "mrmpformerv2.pth": {
+      "bytes": 367034458,
+      "sha256": "aa5944daec6d50428f758abc363d0901e339817fe181d0da2f4c16bc9cb3cd89"
+    },
+    "mrmpformerv2.onnx": {
+      "bytes": 123230292,
+      "sha256": "d0b612a786fc937ee44170a4e60e59a59d23fe7acdc2b85f5df302ae2dbee039"
+    }
+  }
+}

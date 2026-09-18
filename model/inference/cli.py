@@ -1111,6 +1111,27 @@ def main_cli():
         help="[post] 启用小峰相对主峰的 RT 门控；不显式传入则关闭（允许多峰不按 RT 限制）",
     )
 
+    # ==================== 峰事件重组（谷深合并 + 信号足点延拓）====================
+    parser.add_argument("--disable_event_merge", action="store_true",
+                        help="[predictor] 关闭峰事件重组（默认开启：谷深合并相邻子峰框+合并事件足点延拓，"
+                             "针对开叉峰/宽峰的包络口径漏检）",
+    )
+    parser.add_argument("--event_merge_fork_frac", type=float, default=0.35,
+                        help="[event_merge] 开叉合并判据：两框 apex 间谷底/较矮峰高 > 该值（谷没落下）→ 合并",
+    )
+    parser.add_argument("--event_merge_score_floor", type=float, default=0.05,
+                        help="[event_merge] 候选框分数地板（合并前保留的下限，需 < --threshold 才生效）",
+    )
+    parser.add_argument("--event_merge_max_extend", type=float, default=0.35,
+                        help="[event_merge] 足点延拓单侧上限（分钟）",
+    )
+    parser.add_argument("--event_merge_noise_k", type=float, default=2.0,
+                        help="[event_merge] 足点判定兜底阈值：baseline + k·noise（baseline=ROI 20 分位）",
+    )
+    parser.add_argument("--event_merge_foot_frac", type=float, default=0.02,
+                        help="[event_merge] 足点判据：事件 apex 高度的该比例（与 GT 信号足点口径对齐）",
+    )
+
     # ==================== massnova（整谱全峰识别）====================
     parser.add_argument("--scan_baseline_percentile", type=float, default=25.0,
                         help="[massnova] 基线分位（global_percentile 模式）")
@@ -1150,6 +1171,22 @@ def main_cli():
                         help="[massnova] 峰面积门（0=关）")
     parser.add_argument("--scan_window_half_min", type=float, default=1.0,
                         help="[massnova] 模型验证窗口半宽（与训练一致）")
+    parser.add_argument("--scan_dup_apex_tol", type=float, default=0.2,
+                        help="[massnova] 跨候选去重的最大峰顶RT间距；0=关闭")
+    parser.add_argument("--scan_dup_min_overlap_fraction", type=float, default=0.25,
+                        help="[massnova] 去重所需的最小区间重叠比例（相对较窄区间）")
+    parser.add_argument("--scan_dup_shallow_valley_min_ratio", type=float, default=0.70,
+                        help="[massnova] 去重所需的最小谷底/较小峰顶比例（基线校正后）")
+    parser.add_argument("--scan_width_fuse_ratio", type=float, default=1.5,
+                        help="[massnova] 信号兜底边界相对半高宽的最大单侧倍数；0=关闭")
+    parser.add_argument("--signal_score_snr_pivot", type=float, default=10.0,
+                        help="[massnova] 信号峰规则分：SNR分量达到0.5时的SNR")
+    parser.add_argument("--signal_score_points_good", type=float, default=10.0,
+                        help="[massnova] 信号峰规则分：点数分量达到1的有效峰点数")
+    parser.add_argument("--signal_score_snr_weight", type=float, default=0.8,
+                        help="[massnova] 信号峰规则分中的SNR权重")
+    parser.add_argument("--signal_score_points_weight", type=float, default=0.2,
+                        help="[massnova] 信号峰规则分中的有效点数权重")
     parser.add_argument("--keep_windows", action="store_true",
                         help="[massnova] 保留模型验证窗口 JPEG")
     parser.add_argument("--no_plots", action="store_true",
@@ -1293,7 +1330,8 @@ def main_cli():
         print("=" * 64)
         print(f"MRMPFormer 推理 | {args.mode}")
         print("-" * 64)
-        print(f"模型   : {args.model} | 置信度阈值 {args.threshold} | 平滑 sigma {args.smooth_sigma}")
+        print(f"模型   : {args.model} | 置信度阈值 {args.threshold} | 平滑 sigma {args.smooth_sigma} "
+              f"| 峰事件重组 {'关' if getattr(args, 'disable_event_merge', False) else '开'}")
         if len(mzml_files) == 1:
             print(f"输入   : {mzml_files[0].name}")
         else:
@@ -1352,6 +1390,13 @@ def main_cli():
             integration_method=integration_method,
             baseline_json=None,
             verbose=False,
+            # 峰事件重组（谷深合并 + 信号足点延拓）
+            disable_event_merge=bool(getattr(args, "disable_event_merge", False)),
+            event_merge_fork_frac=float(getattr(args, "event_merge_fork_frac", 0.35)),
+            event_merge_score_floor=float(getattr(args, "event_merge_score_floor", 0.05)),
+            event_merge_max_extend=float(getattr(args, "event_merge_max_extend", 0.35)),
+            event_merge_noise_k=float(getattr(args, "event_merge_noise_k", 2.0)),
+            event_merge_foot_frac=float(getattr(args, "event_merge_foot_frac", 0.02)),
         )
         t_pred = time.perf_counter()
         newtest_main(a)
