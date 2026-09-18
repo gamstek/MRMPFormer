@@ -49,6 +49,7 @@ from utils.mzml_chromatogram_ids import filesystem_slug_for_native_id, resolve_n
 from utils.quantify import AREA_TIME_UNIT_SCALE
 from utils.roi_rt_mapping import box_to_rt_range, rt_window_bounds_minutes
 from utils.xic_peak_utils import compute_local_snr, roi_full_low_decile_mean_intensity
+from utils.peak_scores import signal_peak_score, unified_peak_score
 from preprocessing.xic_extraction import render_roi_jpeg
 from inference.two_round_detection import adjust_first_round_interval
 
@@ -552,6 +553,28 @@ def _finalize_peak_metrics(rt, intensity, peaks):
         p["snr"] = float(snr) if snr is not None and np.isfinite(float(snr)) else 0.0
 
 
+def _finalize_peak_scores(peaks, *, snr_pivot=10.0, points_good=10.0,
+                          snr_weight=0.8, points_weight=0.2):
+    """给每个保留峰补齐来源分数和统一峰分；信号分不是模型概率。"""
+    for p in peaks:
+        if p.get("boundary_source") == "signal":
+            score_signal, conf_snr, conf_points = signal_peak_score(
+                p.get("snr", np.nan), p.get("n_points", np.nan),
+                snr_pivot=snr_pivot, points_good=points_good,
+                snr_weight=snr_weight, points_weight=points_weight,
+            )
+        else:
+            score_signal = conf_snr = conf_points = np.nan
+        score_peak, score_source = unified_peak_score(
+            p.get("boundary_source", ""), p.get("model_score", np.nan), score_signal,
+        )
+        p["signal_score"] = score_signal
+        p["signal_score_snr_component"] = conf_snr
+        p["signal_score_points_component"] = conf_points
+        p["peak_score"] = score_peak
+        p["score_source"] = score_source
+
+
 def plot_massnova_stage_windows(rt, intensity, peaks, stage_dir, chrom_index, uid, q1,
                                 window_half_min=1.0, sigma=1.0, title_prefix="",
                                 boundary_source=None):
@@ -597,7 +620,7 @@ def plot_massnova_stage_windows(rt, intensity, peaks, stage_dir, chrom_index, ui
                 continue
             if float(pk["rt_max"]) < lo_w or float(pk["rt_min"]) > hi_w:
                 continue
-            sc = pk.get("model_score")
+            sc = pk.get("peak_score")
             queries.append({
                 "rt_lo": float(pk["rt_min"]),
                 "rt_hi": float(pk["rt_max"]),
@@ -606,6 +629,7 @@ def plot_massnova_stage_windows(rt, intensity, peaks, stage_dir, chrom_index, ui
                 "snr": float(pk["snr"]),
                 "n_points": int(pk["n_points"]),
                 "score": float(sc) if sc is not None and np.isfinite(float(sc)) else None,
+                "score_source": pk.get("score_source", "missing"),
             })
         if not queries:
             continue
@@ -657,9 +681,10 @@ def plot_massnova_scan(rt, intensity, peaks, out_path, uid, q1):
         ax.axvspan(p["rt_min"], p["rt_max"], alpha=0.22, color=color)
         ax.axvline(p["rt_min"], color=color, linestyle="--", linewidth=0.8)
         ax.axvline(p["rt_max"], color=color, linestyle="--", linewidth=0.8)
-        sc = p.get("model_score")
+        sc = p.get("peak_score")
         sc_txt = "" if sc is None or not np.isfinite(float(sc)) else " %.2f" % float(sc)
-        ax.text(p["rt_peak"], y_top * 0.98, "#%d%s" % (p["peak_no"], sc_txt),
+        source_txt = " M" if p.get("score_source") == "model" else " S"
+        ax.text(p["rt_peak"], y_top * 0.98, "#%d%s%s" % (p["peak_no"], sc_txt, source_txt),
                 fontsize=8, color=color, rotation=45, ha="right", va="top")
     ax.set_xlim(float(np.min(rt)), float(np.max(rt)))
     ax.set_xlabel("Retention Time (min)")
@@ -688,7 +713,7 @@ def plot_massnova_model_xic(rt, intensity, peaks, out_path, uid, q1, sigma=1.0):
         lo, hi = float(p["rt_min"]), float(p["rt_max"])
         if not (np.isfinite(lo) and np.isfinite(hi) and hi > lo):
             continue
-        sc = p.get("model_score")
+        sc = p.get("peak_score")
         sc = float(sc) if sc is not None and np.isfinite(float(sc)) else None
         queries.append({
             "rt_lo": lo,
@@ -698,6 +723,7 @@ def plot_massnova_model_xic(rt, intensity, peaks, out_path, uid, q1, sigma=1.0):
             "snr": float(p["snr"]),
             "n_points": int(p["n_points"]),
             "score": sc,
+            "score_source": p.get("score_source", "missing"),
         })
     if not queries:
         return False
@@ -763,6 +789,11 @@ def write_outputs(mzml_stem, features, peaks_by_channel, qc_excluded, out_root, 
                 "n_points": p["n_points"],
                 "validated": bool(p.get("validated", False)),
                 "model_score": p.get("model_score", np.nan),
+                "signal_score": p.get("signal_score", np.nan),
+                "signal_score_snr_component": p.get("signal_score_snr_component", np.nan),
+                "signal_score_points_component": p.get("signal_score_points_component", np.nan),
+                "peak_score": p.get("peak_score", np.nan),
+                "score_source": p.get("score_source", "missing"),
                 "boundary_source": p.get("boundary_source", "signal"),
             })
 
@@ -836,8 +867,6 @@ def write_outputs(mzml_stem, features, peaks_by_channel, qc_excluded, out_root, 
                     pass
 
     return peak_rows
-
-
 def _compound_of(uid):
     """uid 形如 '阿维菌素-1'（化合物名-离子通道）→ 化合物名（矩阵按化合物合并离子通道）。"""
     m = re.match(r"^(.+)-[12]$", str(uid or "").strip())
@@ -867,6 +896,7 @@ def write_massnova_report(out_root, exp_name, sample_infos, args, total_seconds=
     L.append(f"- 生成时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     L.append(f"- 推理模式: `massnova`（整谱 XIC 全峰识别，模型前置、精修兜底） | 输出目录: `{out_root}`")
     L.append(f"- 模型: `{model_path or '未启用（纯信号路径）'}` | 置信度阈值: {threshold}")
+    L.append("- Phase1 候选检测器: SciPy find_peaks + prominence")
     if total_seconds is not None:
         L.append(f"- 样本数: {len(samples)} | 总耗时: {total_seconds:.1f}s")
     L.append("")
@@ -947,7 +977,7 @@ def write_massnova_report(out_root, exp_name, sample_infos, args, total_seconds=
     L.append("| P1 | 多候选架构下同一色谱簇被多个候选独立切窗验证，输出重叠重复框（跨窗口无协调机制；"
              "pipeline 有单 ROI 天然防线 + (mz,q3) 面积去重，massnova 缺等价环节） | 架构层 | "
              "恶虫威-1 5.0–5.6 三头簇曾输出 3 个 validated 峰，面积重复计约 3 遍 | "
-             "✅ 已修：跨候选去重（区间重叠且 apex 间距 ≤ scan_dup_apex_tol 判同一峰；"
+             "✅ 已修：仅在 apex 接近、区间明显重叠且峰间无深谷时去重；"
              "模型框优先保留代表框） |")
     L.append("| P2 | 边界走查截停阈值（stable_tail_mean）在宽峰/双驼峰缓降尾上不收敛，"
              "兜底框远大于真实峰跨度 | 信号层 | 莠去津-1 兜底框 1.59min vs 真实 0.71min；"
@@ -965,6 +995,8 @@ def write_massnova_report(out_root, exp_name, sample_infos, args, total_seconds=
              "ℹ️ 已知现象：阈值附近峰建议结合 boundary_source 列人工复核 |")
     L.append("")
     L.append("P1/P2 对应参数：`scan_dup_apex_tol`（默认 0.2min，0=关闭）、"
+             "`scan_dup_min_overlap_fraction`（默认 0.25）、"
+             "`scan_dup_shallow_valley_min_ratio`（默认 0.70）、"
              "`scan_width_fuse_ratio`（默认 1.5，0=关闭）。")
     L.append("")
     # 空白样本假阳性预警（对齐 pipeline 报告行为）
@@ -997,16 +1029,57 @@ def write_massnova_report(out_root, exp_name, sample_infos, args, total_seconds=
 # ---------------------------------------------------------------------------
 
 
-def _dedup_overlapping_peaks(peaks, apex_tol=0.2):
-    """跨候选去重：区间重叠且 apex 间距 <= apex_tol（min）视为同一峰的重复框。
+def _dedup_overlapping_peaks(
+        peaks, apex_tol=0.2, rt=None, intensity=None,
+        min_overlap_fraction=0.25, shallow_valley_min_ratio=0.70):
+    """仅在区间明显重叠且峰间没有深谷时删除重复候选框。
 
-    多候选架构下（Phase1 过碎枚举 + 逐候选独立切窗推理），同一色谱簇会拿到多个
-    重叠的 validated 框（如恶虫威三头簇）；pipeline 有 (mz,q3) 面积去重与单 ROI 天然
-    防线，massnova 需要此等价环节。代表峰优先级：模型框 > 信号框；同源取
-    apex_intensity 更大者（主头）。返回去重后的新列表；apex_tol<=0 关闭。
+    判为重复必须同时满足：峰顶距离不超过 apex_tol、重叠宽度至少占较窄区间
+    min_overlap_fraction、基线校正后的谷底至少达到较小峰顶的
+    shallow_valley_min_ratio。这样可避免仅因边界轻微接触而误删相邻真实峰。
+    代表峰优先级仍为模型框 > 信号框；同来源保留峰顶更高者。
     """
     if apex_tol <= 0 or len(peaks) <= 1:
         return peaks
+
+    rt_arr = np.asarray(rt, dtype=np.float64) if rt is not None else None
+    y_arr = np.asarray(intensity, dtype=np.float64) if intensity is not None else None
+    has_signal = (rt_arr is not None and y_arr is not None and rt_arr.size == y_arr.size
+                  and rt_arr.size > 0)
+    baseline = (roi_full_low_decile_mean_intensity(y_arr, bottom_frac=0.10)
+                if has_signal else np.nan)
+
+    def _apex_index(p):
+        idx = p.get("apex_idx")
+        if has_signal and idx is not None:
+            try:
+                idx = int(idx)
+                if 0 <= idx < y_arr.size:
+                    return idx
+            except (TypeError, ValueError):
+                pass
+        if has_signal:
+            return int(np.argmin(np.abs(rt_arr - float(p["rt_peak"]))))
+        return None
+
+    def _has_no_deep_valley(a, b):
+        if not has_signal:
+            # Without the XIC, conservatively retain both candidates because
+            # the absence of a separating valley cannot be established.
+            return False
+        ia, ib = _apex_index(a), _apex_index(b)
+        if ia is None or ib is None:
+            return False
+        lo, hi = sorted((ia, ib))
+        if lo == hi:
+            return True
+        valley = float(np.min(y_arr[lo:hi + 1]))
+        smaller_apex = min(float(y_arr[ia]), float(y_arr[ib]))
+        denominator = smaller_apex - float(baseline)
+        if denominator <= 0:
+            return False
+        valley_ratio = (valley - float(baseline)) / denominator
+        return valley_ratio >= float(shallow_valley_min_ratio)
 
     def _rank(p):
         return (1 if p.get("boundary_source") == "model" else 0,
@@ -1018,10 +1091,16 @@ def _dedup_overlapping_peaks(peaks, apex_tol=0.2):
             out.append(p)
             continue
         kept = out[-1]
-        overlap = (float(p["rt_min"]) < float(kept["rt_max"])
-                   and float(p["rt_max"]) > float(kept["rt_min"]))
+        overlap_width = (min(float(p["rt_max"]), float(kept["rt_max"]))
+                         - max(float(p["rt_min"]), float(kept["rt_min"])))
+        narrower_width = min(float(p["rt_max"]) - float(p["rt_min"]),
+                             float(kept["rt_max"]) - float(kept["rt_min"]))
+        overlap_fraction = (overlap_width / max(narrower_width, 1e-12)
+                            if overlap_width > 0 and narrower_width > 0 else 0.0)
+        substantial_overlap = overlap_fraction >= float(min_overlap_fraction)
         near = abs(float(p["rt_peak"]) - float(kept["rt_peak"])) <= float(apex_tol)
-        if overlap and near:
+        no_deep_valley = _has_no_deep_valley(kept, p)
+        if substantial_overlap and near and no_deep_valley:
             if _rank(p) > _rank(kept):
                 out[-1] = p
         else:
@@ -1101,6 +1180,12 @@ def _scan_params_from_args(args) -> dict:
         "min_area": float(_g("scan_min_area", 0.0)),
         "window_half_min": float(_g("scan_window_half_min", 1.0)),
         "dup_apex_tol": float(_g("scan_dup_apex_tol", 0.2)),
+        "dup_min_overlap_fraction": float(_g("scan_dup_min_overlap_fraction", 0.25)),
+        "dup_shallow_valley_min_ratio": float(_g("scan_dup_shallow_valley_min_ratio", 0.70)),
+        "signal_score_snr_pivot": float(_g("signal_score_snr_pivot", 10.0)),
+        "signal_score_points_good": float(_g("signal_score_points_good", 10.0)),
+        "signal_score_snr_weight": float(_g("signal_score_snr_weight", 0.8)),
+        "signal_score_points_weight": float(_g("signal_score_points_weight", 0.2)),
         "width_fuse_ratio": float(_g("scan_width_fuse_ratio", 1.5)),
     }
 
@@ -1167,7 +1252,7 @@ def run_massnova_on_mzml(mzml_path, key, args, out_root):
         if win_dir:
             keep_win_dirs = {"all": win_dir}
 
-    # Phase2/3a（兜底）：仅对模型未命中残差做边界精修 + 门控（模型框作 peer/邻居防撞）
+    # Phase2/3a（兜底）：仅对模型未命中残差做边界精修 + 门控（模型框作 peer/邻居防撞）。
     peaks_by_channel: Dict[int, list] = {}
     n_peaks_total = 0
     for f in features:
@@ -1175,7 +1260,7 @@ def run_massnova_on_mzml(mzml_path, key, args, out_root):
         rt = f["rt"]
         y = f["intensity"]
         peaks = []
-        residual_apexes = []
+        residual_cands = []  # 未命中模型的候选（保序），与 apexes/intervals 对齐
         for c in candidates_by_channel.get(ci, []):
             if c.get("validated"):
                 peaks.append({
@@ -1193,10 +1278,11 @@ def run_massnova_on_mzml(mzml_path, key, args, out_root):
                     "boundary_source": "model",
                 })
             else:
-                residual_apexes.append(int(c["apex_idx"]))
+                residual_cands.append(c)
 
-        if residual_apexes:
+        if residual_cands:
             model_peers = [(p["rt_min"], p["rt_max"]) for p in peaks]
+            residual_apexes = [int(c["apex_idx"]) for c in residual_cands]
             intervals = refine_all_boundaries(
                 rt, y, residual_apexes,
                 init_half_width_min=sp["init_half_width_min"],
@@ -1233,20 +1319,32 @@ def run_massnova_on_mzml(mzml_path, key, args, out_root):
 
         # 跨候选去重：同一簇的多个重叠框只留代表峰（模型框优先）
         n_before_dedup = len(peaks)
-        peaks = _dedup_overlapping_peaks(peaks, apex_tol=sp["dup_apex_tol"])
+        peaks = _dedup_overlapping_peaks(
+            peaks,
+            apex_tol=sp["dup_apex_tol"],
+            rt=rt,
+            intensity=y,
+            min_overlap_fraction=sp["dup_min_overlap_fraction"],
+            shallow_valley_min_ratio=sp["dup_shallow_valley_min_ratio"],
+        )
         if getattr(args, "verbose", False) and len(peaks) < n_before_dedup:
             print(f"[massnova] 通道#{ci} {f['uid']}: 去重 {n_before_dedup - len(peaks)} 个重叠候选框")
         peaks.sort(key=lambda p: p["rt_min"])
         for i, p in enumerate(peaks, start=1):
             p["peak_no"] = i
         _finalize_peak_metrics(rt, y, peaks)
+        _finalize_peak_scores(
+            peaks, snr_pivot=sp["signal_score_snr_pivot"],
+            points_good=sp["signal_score_points_good"],
+            snr_weight=sp["signal_score_snr_weight"],
+            points_weight=sp["signal_score_points_weight"],
+        )
         peaks_by_channel[ci] = peaks
         n_peaks_total += len(peaks)
         if getattr(args, "verbose", False):
-            n_model = sum(1 for p in peaks if p["boundary_source"] == "model")
+            n_model = sum(p["boundary_source"] == "model" for p in peaks)
             print(f"[massnova] 通道#{ci} {f['uid']}: 候选 {len(candidates_by_channel.get(ci, []))}"
                   f" → 模型命中 {n_model} + 信号兜底 {len(peaks) - n_model} 峰")
-
     mzml_stem = Path(mzml_path).stem
     peak_rows = write_outputs(mzml_stem, features, peaks_by_channel, qc_excluded,
                               out_root, key,
@@ -1345,9 +1443,19 @@ def build_parser():
     ap.add_argument("--scan_min_area", type=float, default=0.0)
     ap.add_argument("--scan_window_half_min", type=float, default=1.0)
     ap.add_argument("--scan_dup_apex_tol", type=float, default=0.2,
-                    help="跨候选去重：区间重叠且 apex 间距 <= 此值（min）视为同一峰，保留代表框；0=关闭")
+                    help="跨候选去重：峰顶间距上限；还需明显区间重叠且没有深谷；0=关闭")
+    ap.add_argument("--scan_dup_min_overlap_fraction", type=float, default=0.25,
+                    help="跨候选去重：重叠宽度至少占较窄区间的比例")
+    ap.add_argument("--scan_dup_shallow_valley_min_ratio", type=float, default=0.70,
+                    help="跨候选去重：基线校正后谷底/较小峰顶不低于该比例才视为无深谷")
     ap.add_argument("--scan_width_fuse_ratio", type=float, default=1.5,
                     help="兜底宽度保险丝：单侧跨度超过 ratio×半高跨度时回缩；0=关闭")
+    ap.add_argument("--signal_score_snr_pivot", type=float, default=10.0,
+                    help="信号峰规则分：SNR分量达到0.5时的SNR")
+    ap.add_argument("--signal_score_points_good", type=float, default=10.0,
+                    help="信号峰规则分：点数分量达到1的有效峰点数")
+    ap.add_argument("--signal_score_snr_weight", type=float, default=0.8)
+    ap.add_argument("--signal_score_points_weight", type=float, default=0.2)
     ap.add_argument("--keep_windows", action="store_true")
     ap.add_argument("--no_plots", action="store_true")
     ap.add_argument("--plot", action="store_true",
