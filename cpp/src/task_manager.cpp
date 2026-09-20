@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -53,11 +54,12 @@ double pixel_to_rt(float pixel_x, const RoiImage& image) {
     return image.rt_min + fraction * (image.rt_max - image.rt_min);
 }
 
-std::optional<PeakResult> refine_detection(const CompoundData& compound,
-                                           const RoiImage& image,
-                                           const Detection& detection) {
-    if (image.width <= 0 || !(image.rt_min < image.rt_max) ||
-        compound.x.size() != compound.y.size() || compound.x.size() < 2) {
+std::optional<PeakResult> detection_to_peak(const RoiImage& image,
+                                            const Detection& detection) {
+    if (image.width <= 0 || !std::isfinite(image.rt_min) ||
+        !std::isfinite(image.rt_max) || !(image.rt_min < image.rt_max) ||
+        !std::isfinite(detection.x1) || !std::isfinite(detection.x2) ||
+        !std::isfinite(detection.score) || !(detection.x1 < detection.x2)) {
         return std::nullopt;
     }
 
@@ -66,39 +68,7 @@ std::optional<PeakResult> refine_detection(const CompoundData& compound,
     if (!(mapped_left < mapped_right)) {
         return std::nullopt;
     }
-
-    auto left_it = std::lower_bound(compound.x.begin(), compound.x.end(), mapped_left);
-    auto right_it = std::upper_bound(compound.x.begin(), compound.x.end(), mapped_right);
-    if (left_it == compound.x.end() || right_it == compound.x.begin()) {
-        return std::nullopt;
-    }
-    std::size_t left = static_cast<std::size_t>(
-        std::distance(compound.x.begin(), left_it));
-    std::size_t right = static_cast<std::size_t>(
-        std::distance(compound.x.begin(), right_it - 1));
-    if (right < left) {
-        return std::nullopt;
-    }
-
-    const auto apex_it = std::max_element(
-        compound.y.begin() + static_cast<std::ptrdiff_t>(left),
-        compound.y.begin() + static_cast<std::ptrdiff_t>(right + 1));
-    const std::size_t apex = static_cast<std::size_t>(
-        std::distance(compound.y.begin(), apex_it));
-
-    left = apex;
-    while (left > 0 && compound.y[left - 1] <= compound.y[left]) {
-        --left;
-    }
-    right = apex;
-    while (right + 1 < compound.y.size() &&
-           compound.y[right + 1] <= compound.y[right]) {
-        ++right;
-    }
-    if (left >= right || !(compound.x[left] < compound.x[right])) {
-        return std::nullopt;
-    }
-    return PeakResult{compound.x[left], compound.x[right], detection.score};
+    return PeakResult{mapped_left, mapped_right, detection.score};
 }
 
 CompoundResult low_intensity_result(const CompoundData& compound,
@@ -120,7 +90,7 @@ CompoundResult detection_result(const CompoundData& compound,
     CompoundResult result;
     result.uid = compound.uid;
     for (const Detection& detection : detections) {
-        if (const auto peak = refine_detection(compound, image, detection)) {
+        if (const auto peak = detection_to_peak(image, detection)) {
             result.peaks.push_back(*peak);
         }
     }

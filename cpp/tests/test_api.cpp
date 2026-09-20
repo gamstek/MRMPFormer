@@ -320,21 +320,31 @@ void test_mixed_batch_callback_and_result_ownership(const fs::path& work_dir) {
     const json output = result_json(task_id, &result_path);
     assert(output["items"].size() == 3);
     assert(output["items"][0]["uid"] == "normal");
-    assert(output["items"][0]["status"] == "ok");
-    assert(!output["items"][0]["peaks"].empty());
-    assert(output["items"][0]["alerts"].empty());
+    assert(output["items"][0]["status"] == "review");
+    assert(output["items"][0]["peaks"].size() == 1);
+    assert(output["items"][0]["alerts"].size() == 1);
 
-    const json& fallback = output["items"][1];
-    assert(fallback["uid"] == "fallback");
-    assert(fallback["status"] == "review");
-    assert(fallback["peaks"].size() == 1);
-    assert(fallback["alerts"].size() == 1);
+    const json& fallback = output["items"][0];
+    assert(fallback["uid"] == "normal");
     assert(fallback["alerts"][0]["level"] == "review");
     assert(fallback["alerts"][0]["code"] == "SIGNAL_FALLBACK");
     for (const char* field : {"a", "b", "c"}) {
         assert(fallback["alerts"][0]["detail"][field] ==
                fallback["peaks"][0][field]);
     }
+
+    const json& detected = output["items"][1];
+    assert(detected["uid"] == "fallback");
+    assert(detected["status"] == "ok");
+    assert(detected["peaks"].size() == 1);
+    assert(detected["alerts"].empty());
+    const double detected_left = detected["peaks"][0]["a"];
+    const double detected_right = detected["peaks"][0]["b"];
+    assert(detected_left < detected_right);
+    assert(std::fabs(detected_left * 10.0 - std::round(detected_left * 10.0)) >
+               1.0e-6 ||
+           std::fabs(detected_right * 10.0 - std::round(detected_right * 10.0)) >
+               1.0e-6);
 
     const json& low = output["items"][2];
     assert(low["uid"] == "low");

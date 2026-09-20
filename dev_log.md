@@ -27,6 +27,12 @@ MRMPFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 
 ## 开发时间线
 
+### 2026-09-18
+
+- 测试(软件集成 runtime 新版 ONNX): 使用 `TQ8000Server/third_party/mrmpformer/runtime/windows` 的 DLL 与更新后 `mrmpformerv2.onnx` 运行纯 C++ 十档 threshold 扫描；模型输出分数变为 0.258288/0.506118/0.347113，threshold=0.5 保留最高分峰，threshold≥0.79 切换为 `SIGNAL_FALLBACK`。
+- 重构(cpp/src/task_manager.cpp+tests/test_api.cpp): 移除检测结果的信号峰顶搜索与边界扩展，仅校验检测框并按 ROI 坐标映射为 RT，保持模型预测边界；更新当前 ONNX 对应的 API 回归断言，完整 6 项 CTest 通过。
+- 代码生成(cpp/third_party/onnxruntime+cmake): 内置 ONNX Runtime 1.23.2 Windows x64 GPU SDK（头文件、导入库及运行时 DLL），补充 MIT 许可证与 Git LFS 规则，CMake 在 Windows 默认使用项目内 SDK；无外部 `ONNXRUNTIME_ROOT` 的全新 Release 构建及 6 项 CTest 通过。
+
 ### 2026-09-03
 
 - 代码生成(cpp/): 新建 C++20 MRMPFormer 共享库骨架与公开 C ABI，定义异步任务接口、结构化单条色谱提交结构和 ONNX Runtime 查找模块；补充 ABI 编译契约测试与构建目录忽略规则。

@@ -1,7 +1,14 @@
 if(NOT DEFINED ONNXRUNTIME_ROOT OR ONNXRUNTIME_ROOT STREQUAL "")
-    message(FATAL_ERROR
-        "ONNXRUNTIME_ROOT is required. Set it to an ONNX Runtime directory containing "
-        "include/onnxruntime_cxx_api.h and lib/onnxruntime.lib (Windows) or lib/libonnxruntime.so (Linux).")
+    set(_bundled_onnxruntime_root
+        "${CMAKE_CURRENT_LIST_DIR}/../third_party/onnxruntime")
+    if(WIN32 AND EXISTS
+       "${_bundled_onnxruntime_root}/include/onnxruntime_cxx_api.h")
+        set(ONNXRUNTIME_ROOT "${_bundled_onnxruntime_root}")
+    else()
+        message(FATAL_ERROR
+            "ONNXRUNTIME_ROOT is required. Set it to an ONNX Runtime directory containing "
+            "include/onnxruntime_cxx_api.h and lib/onnxruntime.lib (Windows) or lib/libonnxruntime.so (Linux).")
+    endif()
 endif()
 
 get_filename_component(ONNXRUNTIME_ROOT "${ONNXRUNTIME_ROOT}" ABSOLUTE)

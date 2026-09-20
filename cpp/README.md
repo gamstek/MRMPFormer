@@ -10,21 +10,20 @@ before recompiling.
 
 ## Build
 
-Set `ONNXRUNTIME_ROOT` to an ONNX Runtime package containing `include/` and
-`lib/`.  On Windows the package must provide `lib/onnxruntime.lib`; on Linux it
-must provide `lib/libonnxruntime.so`.
+The repository includes the ONNX Runtime 1.23.2 Windows x64 GPU SDK under
+`third_party/onnxruntime`, so the default Windows build is self-contained.
 
-CPU build (PowerShell):
+Windows build (PowerShell):
 
 ```powershell
-$env:ONNXRUNTIME_ROOT = 'C:\path\to\onnxruntime-win-x64-<version>'
 cmake -S cpp -B cpp/build -DBUILD_TESTS=ON
 cmake --build cpp/build --config Release
 ```
 
-CUDA build: use the matching **GPU** ONNX Runtime package for
-`ONNXRUNTIME_ROOT`, then run the same configure/build commands.  GPU use is a
-runtime request, not a separate MRMPFormer CMake option: set
+To use a different SDK, set `ONNXRUNTIME_ROOT` to a package containing
+`include/` and `lib/`; on Windows it must provide `lib/onnxruntime.lib`, and on
+Linux it must provide `lib/libonnxruntime.so`. GPU use is a runtime request,
+not a separate MRMPFormer CMake option: set
 `QfConfig.use_gpu = 0` to try CUDA then fall back to CPU, or `1` to require
 CUDA.  Set it to `-1` to force CPU. CPU and CUDA use the same
 `mrmpformer.dll`; a GPU package is identified by its
