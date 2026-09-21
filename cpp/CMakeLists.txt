@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(MRMPFormer VERSION 0.1.0 LANGUAGES C CXX)
+project(MRMPFormer VERSION 0.2.0 LANGUAGES C CXX)
 
 option(BUILD_TESTS "Build MRMPFormer test executables" ON)
 set(MRMPFORMER_JSON_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/json" CACHE PATH
@@ -9,8 +9,7 @@ if(POLICY CMP0144)
     cmake_policy(SET CMP0144 NEW)
 endif()
 
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-find_package(OnnxRuntime REQUIRED)
+find_package(Python3 3.9 COMPONENTS Development REQUIRED)
 
 if(NOT EXISTS "${MRMPFORMER_JSON_INCLUDE_DIR}/json.hpp")
     message(FATAL_ERROR
@@ -20,26 +19,17 @@ endif()
 add_library(mrmpformer SHARED
     src/api.cpp
     src/json_protocol.cpp
-    src/onnx_inference.cpp
-    src/signal_processing.cpp
-    src/roi_renderer.cpp
+    src/python_bridge.cpp
     src/task_manager.cpp)
 target_compile_features(mrmpformer PUBLIC cxx_std_20)
-target_compile_definitions(mrmpformer PRIVATE MRMPFORMER_BUILD)
+target_compile_definitions(mrmpformer PRIVATE
+    MRMPFORMER_BUILD)
 target_include_directories(mrmpformer
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
     PRIVATE
         "${MRMPFORMER_JSON_INCLUDE_DIR}")
-target_link_libraries(mrmpformer PRIVATE OnnxRuntime::OnnxRuntime)
-
-if(WIN32)
-    add_custom_command(TARGET mrmpformer POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            ${ONNXRUNTIME_RUNTIME_DLLS}
-            "$<TARGET_FILE_DIR:mrmpformer>"
-        COMMAND_EXPAND_LISTS)
-endif()
+target_link_libraries(mrmpformer PRIVATE Python3::Python ${CMAKE_DL_LIBS})
 
 if(MSVC)
     target_compile_options(mrmpformer PRIVATE /utf-8)
@@ -82,18 +72,6 @@ if(BUILD_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/include")
     add_test(NAME signal_processing COMMAND test_signal_processing)
 
-    add_executable(test_onnx_inference
-        tests/test_onnx_inference.cpp
-        src/onnx_inference.cpp)
-    target_compile_features(test_onnx_inference PRIVATE cxx_std_20)
-    target_include_directories(test_onnx_inference PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/src"
-        "${CMAKE_CURRENT_SOURCE_DIR}/include")
-    target_link_libraries(test_onnx_inference PRIVATE OnnxRuntime::OnnxRuntime)
-    target_compile_definitions(test_onnx_inference PRIVATE
-        MRMPFORMER_TEST_MODEL_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../model/checkpoint/mrmpformerv2.onnx")
-    add_test(NAME onnx_inference COMMAND test_onnx_inference)
-
     add_executable(test_api tests/test_api.cpp)
     target_compile_features(test_api PRIVATE cxx_std_20)
     target_include_directories(test_api PRIVATE
@@ -102,13 +80,8 @@ if(BUILD_TESTS)
     target_compile_definitions(test_api PRIVATE
         MRMPFORMER_TEST_MODEL_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../model/checkpoint/mrmpformerv2.onnx")
     add_test(NAME api COMMAND test_api)
-
-    if(WIN32)
-        add_test(NAME runtime_dlls
-            COMMAND "${CMAKE_COMMAND}"
-                "-DSOURCE_DIR=${ONNXRUNTIME_ROOT}/lib"
-                "-DTARGET_DIR=$<TARGET_FILE_DIR:mrmpformer>"
-                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyRuntimeDlls.cmake")
-    endif()
+    set_tests_properties(api PROPERTIES
+        ENVIRONMENT
+            "MRMPFORMER_PYTHON_PATH=${CMAKE_CURRENT_SOURCE_DIR}/../model;PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/../.onnx_deps")
 
 endif()

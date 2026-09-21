@@ -92,14 +92,14 @@ typedef struct {
 
     /**
      * @brief 模型检测置信度阈值。
-     * @details 必须是 [0, 1] 范围内的有限数；低于阈值的检测会被过滤。
-     *          默认值为 0.99。
+     * @details 必须是 [0, 1] 范围内的有限数；只有严格大于阈值的模型检测
+     *          才作为模型峰通过。默认值为 0.5。
      */
     float threshold;
 
     /**
      * @brief 全局高斯平滑参数 sigma。
-     * @details 必须是非负有限数。0 表示不平滑；默认值为 0。单条输入的
+     * @details 必须是非负有限数。0 表示不平滑；默认值为 0.8。单条输入的
      *          QfCompoundInput::smooth_sigma 大于 0 时优先使用单条输入值。
      */
     float smooth_sigma;
@@ -342,7 +342,7 @@ QF_API const char* qf_get_error(void);
 
 /**
  * @brief 获取 MRMPFormer C API 的版本字符串。
- * @return 库持有的 NUL 结尾版本字符串，例如 `0.1.0`；调用方不得释放。
+ * @return 库持有的 NUL 结尾版本字符串，例如 `0.2.0`；调用方不得释放。
  */
 QF_API const char* qf_version(void);
 

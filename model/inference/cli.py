@@ -970,11 +970,11 @@ def main_cli():
                             "massnova=整谱 XIC 全峰识别（MassNova 集成 / 仅提供时序数据，不依赖标注）"
                         ))
     parser.add_argument("--model", type=str, default=None,
-                        help="模型路径 (.pth)；也可由 --config 提供（roi 模式非必填，其余模式必填）")
-    parser.add_argument("--threshold", type=float, default=0.99)
+                        help="模型路径（massnova 支持 .onnx/.pth；其他模式使用 .pth）；也可由 --config 提供")
+    parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--integration_method", type=str, default="linear",
                         choices=["linear", "raw", "external_baseline"])
-    parser.add_argument("--smooth_sigma", type=float, default=0.0)
+    parser.add_argument("--smooth_sigma", type=float, default=0.8)
     parser.add_argument("--output_dir", type=str, default=None,
                         help="输出根目录（统一写到 ../output/ 下）；null=按模式默认：roi→../output/inference/xic_roi，"
                              "roi2inference→../output/inference/predictions_model，pipeline→../output/inference/<实验模式>_<实验名>"
@@ -1171,6 +1171,10 @@ def main_cli():
                         help="[massnova] 峰面积门（0=关）")
     parser.add_argument("--scan_window_half_min", type=float, default=1.0,
                         help="[massnova] 模型验证窗口半宽（与训练一致）")
+    parser.add_argument("--use_gpu", type=int, choices=[-1, 0, 1], default=-1,
+                        help="[massnova/ONNX] -1=CPU，0=优先GPU失败回退CPU，1=必须GPU")
+    parser.add_argument("--batch_size", type=int, default=128,
+                        help="[massnova/ONNX] 候选窗口批大小")
     parser.add_argument("--scan_dup_apex_tol", type=float, default=0.2,
                         help="[massnova] 跨候选去重的最大峰顶RT间距；0=关闭")
     parser.add_argument("--scan_dup_min_overlap_fraction", type=float, default=0.25,

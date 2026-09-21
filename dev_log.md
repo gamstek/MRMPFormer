@@ -27,6 +27,10 @@ MRMPFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 
 ## 开发时间线
 
+### 2026-09-21
+
+- 重构(cpp/ + model/inference/massnova*): C 接口推理由 C++ 私有整通道 ONNX/单峰兜底改为同进程 CPython+Cython 桥接，公开 `qf_*` ABI 与 JSON 结构保持不变；抽取 Python 共享单通道后处理核心，新增缓存 ONNX Session 的数组入口，模型峰及通过 SNR/点数/面积门控并完成去重的所有信号峰统一进入 `peaks[]` 且通道 `status=ok`；标准 Python 与 C 运行时统一使用 `mrmpformerv2.onnx`、CPU provider、threshold/smooth_sigma=0.5/0.8，模型峰采用严格 `score > threshold`；11 项本次发布相关的 Python/真实 ONNX 回归通过，`test3_3` 前 64 个有效通道共 133 峰的两入口 `a/b/c` 最大绝对差均为 0；四个 Cython 模块完成 C 源生成，当前机器因缺少 Microsoft Visual C++ 14+ 尚未产出新 `.pyd`/DLL，二进制 C API 验收待具备 MSVC 后执行。
+
 ### 2026-09-18
 
 - 测试(软件集成 runtime 新版 ONNX): 使用 `TQ8000Server/third_party/mrmpformer/runtime/windows` 的 DLL 与更新后 `mrmpformerv2.onnx` 运行纯 C++ 十档 threshold 扫描；模型输出分数变为 0.258288/0.506118/0.347113，threshold=0.5 保留最高分峰，threshold≥0.79 切换为 `SIGNAL_FALLBACK`。

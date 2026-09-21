@@ -1,0 +1,10 @@
+# Private CPython runtime used inside mrmpformer.dll (Python 3.11).
+numpy==1.26.4
+pandas==2.2.2
+scipy==1.13.1
+matplotlib==3.9.2
+Pillow>=10,<13
+onnxruntime>=1.18,<2
+
+# Build-time only; not imported after the .pyd modules are produced.
+Cython>=3,<4

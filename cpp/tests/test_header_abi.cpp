@@ -63,8 +63,8 @@ int main() {
         std::strcmp(defaults.work_dir, "./mrmpformer_results/") != 0 ||
         defaults.log_file != nullptr ||
         defaults.max_workers != 0 ||
-        defaults.threshold != 0.99f ||
-        defaults.smooth_sigma != 0.0f ||
+        defaults.threshold != 0.5f ||
+        defaults.smooth_sigma != 0.8f ||
         defaults.task_timeout_sec != 300 ||
         defaults.use_gpu != -1 ||
         defaults.batch_size != 128 ||

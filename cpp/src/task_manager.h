@@ -3,7 +3,7 @@
 
 #include "json_protocol.h"
 #include "mrmpformer.h"
-#include "onnx_inference.h"
+#include "python_bridge.h"
 
 #include <condition_variable>
 #include <cstdint>
@@ -66,7 +66,7 @@ private:
     void dispatch_callback(const std::shared_ptr<Task>& task);
 
     std::unique_ptr<OwnedConfig> config_;
-    OnnxInference inference_;
+    PythonBridge bridge_;
 
     mutable std::mutex tasks_mutex_;
     std::condition_variable tasks_cv_;

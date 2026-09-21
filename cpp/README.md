@@ -1,39 +1,41 @@
 # MRMPFormer C API
 
-`mrmpformer` is a C++20 shared library with a C ABI.  Its public header is
-[`include/mrmpformer.h`](include/mrmpformer.h); applications written in C must
-include that header and link the produced shared library.  The checked-in model
-is [`../model/checkpoint/mrmpformerv2.onnx`](../model/checkpoint/mrmpformerv2.onnx).
+`mrmpformer` is a C++20 shared library with a stable C ABI. Its public header is
+[`include/mrmpformer.h`](include/mrmpformer.h). The DLL embeds one CPython
+runtime, imports the compiled MassNova bridge once, and keeps one ONNX session
+alive from `qf_init` through `qf_shutdown`. The C API and result JSON schema did
+not change when the implementation moved to the Python MassNova core.
 
 For incompatible QuanFormer callers, read [the API migration guide](../docs/CPP_API_DIFFERENCES.md)
 before recompiling.
 
 ## Build
 
-The repository includes the ONNX Runtime 1.23.2 Windows x64 GPU SDK under
-`third_party/onnxruntime`, so the default Windows build is self-contained.
-
-Windows build (PowerShell):
+Use a release Python environment containing NumPy, SciPy, Pillow, Matplotlib,
+pandas and ONNX Runtime. Cython and a C/C++ compiler are build-time
+requirements. `pyopenms` is not required by the DLL array-input path.
 
 ```powershell
-cmake -S cpp -B cpp/build -DBUILD_TESTS=ON
+python -m pip install -r cpp/requirements-runtime.txt
+```
+
+Build the compiled Python core and DLL (PowerShell):
+
+```powershell
+python model/tools/build_massnova_bridge.py build_ext --inplace
+cmake -S cpp -B cpp/build -DBUILD_TESTS=ON -DPython3_ROOT_DIR=$env:CONDA_PREFIX
 cmake --build cpp/build --config Release
 ```
 
-To use a different SDK, set `ONNXRUNTIME_ROOT` to a package containing
-`include/` and `lib/`; on Windows it must provide `lib/onnxruntime.lib`, and on
-Linux it must provide `lib/libonnxruntime.so`. GPU use is a runtime request,
-not a separate MRMPFormer CMake option: set
-`QfConfig.use_gpu = 0` to try CUDA then fall back to CPU, or `1` to require
-CUDA.  Set it to `-1` to force CPU. CPU and CUDA use the same
-`mrmpformer.dll`; a GPU package is identified by its
-`onnxruntime_providers_shared.dll` and `onnxruntime_providers_cuda.dll` files.
+Install `onnxruntime-gpu` in the private runtime for CUDA. Set
+`QfConfig.use_gpu = 0` to try CUDA then fall back to CPU, `1` to require CUDA,
+or `-1` to force CPU.
 
 Linux example:
 
 ```bash
-export ONNXRUNTIME_ROOT=/opt/onnxruntime-linux-x64-<version>
-cmake -S cpp -B cpp/build -DBUILD_TESTS=ON
+python model/tools/build_massnova_bridge.py build_ext --inplace
+cmake -S cpp -B cpp/build -DBUILD_TESTS=ON -DPython3_ROOT_DIR="$CONDA_PREFIX"
 cmake --build cpp/build --config Release
 ctest --test-dir cpp/build --output-on-failure
 ```
@@ -53,18 +55,27 @@ be run with a CPU ONNX Runtime package.
 
 ## Deployment
 
-Place the application, `mrmpformer.dll` (Windows) or `libmrmpformer.so`
-(Linux), and the matching ONNX Runtime dynamic library in the loader search
-path.  The simplest layouts are the same directory on Windows
-(`mrmpformer.dll`, `onnxruntime.dll`) and either the same directory with an
-appropriate RPATH or a directory named in `LD_LIBRARY_PATH` on Linux
-(`libmrmpformer.so`, `libonnxruntime.so`). On Windows, the build automatically
-copies `onnxruntime.dll` and, when present in `ONNXRUNTIME_ROOT`, the shared and
-CUDA provider DLLs beside `mrmpformer.dll`. CUDA and cuDNN dependencies of the
-selected ONNX Runtime package must still be available to the Windows loader.
-Deploy
-`mrmpformerv2.onnx` with the application or pass its explicit path through
-`QfConfig.model_path`; the library never assumes a developer-machine path.
+The end user does not need a separately installed Python environment. Ship a
+private runtime beside the DLL. A supported Windows layout is:
+
+```text
+release/
+  mrmpformer.dll
+  python311.dll
+  python311.zip              # or the equivalent private Python standard library
+  mrmpformerv2.onnx
+  python/
+    inference/                 # compiled .pyd modules + two_round_detection.py
+    utils/                     # MassNova runtime helper modules
+    preprocessing/             # masked_roi_generator.py used by boundary helpers
+    Lib/site-packages/         # numpy/scipy/matplotlib/Pillow/onnxruntime, etc.
+```
+
+The DLL adds its own directory, `python/`, and `python/Lib/site-packages/` to
+`sys.path`. `MRMPFORMER_PYTHON_PATH` is available as a development override.
+Pass the deployed ONNX path through `QfConfig.model_path` as before.
+The array-input runtime does not import `pyopenms`; it is only needed by the
+separate Python mzML input front end.
 
 ## C API lifecycle and ownership
 
@@ -93,13 +104,23 @@ it is needed after shutdown.
 
 ## JSON result interpretation
 
-Each item has `uid`, `status`, `peaks`, and `alerts`. `status="ok"` means one
-or more model-derived peaks; `review` is a signal fallback and includes
-`SIGNAL_FALLBACK`; `alert` has no accepted peak. `CHANNEL_LOW_INTENSITY` means
-the channel had too few RT points or insufficient smoothed maximum intensity;
-`NO_PEAK_FOUND` means both model detections and the signal fallback failed.
-`status` and alerts are emitted by C++ QC/post-processing, never directly by
-the ONNX network.  See the migration guide for the JSON and ONNX contracts.
+Each item has `uid`, `status`, `peaks`, and `alerts`. `status="ok"` means the
+shared Python pipeline produced at least one accepted final peak. This includes
+model peaks and signal-rule fallback peaks. Every accepted peak is returned in
+`peaks[]`; `c` is the model softmax score for a model peak or the auditable
+SNR/point-support score for a signal peak. `alert` means QC failed or no final
+peak survived. `CHANNEL_LOW_INTENSITY` and `NO_PEAK_FOUND` retain their prior
+meanings. Python assembles this JSON and C++ writes/returns it unchanged.
+
+The ONNX graph contains image scaling, ImageNet normalization, MRMPFormer,
+softmax and box conversion only. Candidate enumeration, thresholding,
+box-to-RT assignment, signal refinement, SNR/area gating, deduplication,
+scoring, JSON assembly and `status` are part of the compiled Python core.
+
+The returned per-peak `c` is the peak's own score. The DLL does not calculate
+the business comparison confidence or warning level based on traditional-peak
+RT, area and paired-transition support. Those values require the traditional
+software result and remain the backend's responsibility.
 
 ## Errors
 

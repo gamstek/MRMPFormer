@@ -950,8 +950,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--threshold",
         type=float,
-        default=0.99,
-        help="Confidence threshold for predictions (default: 0.99)"
+        default=0.5,
+        help="Confidence threshold for predictions (default: 0.5)"
     )
     parser.add_argument(
         "--plot",

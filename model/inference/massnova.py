@@ -39,18 +39,18 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+from matplotlib.figure import Figure
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
 
 ROOT_DIR = Path(__file__).resolve().parent.parent  # model/ 目录
 
-from utils.mzml_load import load_ms_experiment
 from utils.mzml_chromatogram_ids import filesystem_slug_for_native_id, resolve_native_ids_for_chromatograms
 from utils.quantify import AREA_TIME_UNIT_SCALE
 from utils.roi_rt_mapping import box_to_rt_range, rt_window_bounds_minutes
 from utils.xic_peak_utils import compute_local_snr, roi_full_low_decile_mean_intensity
 from utils.peak_scores import signal_peak_score, unified_peak_score
-from preprocessing.xic_extraction import render_roi_jpeg
 from inference.two_round_detection import adjust_first_round_interval
 
 
@@ -65,6 +65,32 @@ def _native_id_to_str(native_id):
     if isinstance(native_id, bytes):
         return native_id.decode("utf-8", errors="replace")
     return str(native_id)
+
+
+def render_roi_jpeg(rt_min, intensity, rt_lo, rt_hi, out_path,
+                    color="blue", linewidth=1.5):
+    """Render the exact 400x300 axis-free ROI used for model inference.
+
+    This lightweight copy keeps the array/DLL runtime independent of
+    ``preprocessing.xic_extraction``, whose mzML front end requires pyopenms.
+    """
+    fig = Figure(figsize=(4, 3), dpi=100)
+    canvas = FigureCanvas(fig)
+    ax = fig.add_subplot(111)
+    ax.plot(
+        np.asarray(rt_min, dtype=np.float64),
+        np.asarray(intensity, dtype=np.float64),
+        color=color,
+        linewidth=linewidth,
+    )
+    if float(rt_hi) > float(rt_lo) and len(rt_min) > 0:
+        ax.set_xlim(float(rt_lo), float(rt_hi))
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    canvas.print_jpeg(out_path)
 
 
 def _parse_q1_from_text(text):
@@ -118,6 +144,8 @@ def extract_full_xics(mzml_path, smooth_sigma=0.8, min_chrom_points=0, min_max_i
       features: [{"chrom_index", "uid", "compound_name", "q1", "rt"(分钟), "intensity"}]
       qc_excluded: [{"chrom_index", "uid", "q1", "reason", "n_points", "max_intensity"}]
     """
+    from utils.mzml_load import load_ms_experiment  # mzML-only optional dependency: pyopenms
+
     if verbose:
         print(f"[INFO] massnova Phase0 读取 mzML: {mzml_path}")
     exp = load_ms_experiment(mzml_path, verbose=False)
@@ -418,8 +446,9 @@ def gate_peaks(rt, intensity, apexes, intervals, min_snr=10.0, min_peak_span_poi
 # ---------------------------------------------------------------------------
 
 
-def validate_with_model(peaks_by_channel, rts, intensities, model_path, threshold=0.99,
-                        window_half_min=1.0, keep_windows=False, verbose=True):
+def validate_with_model(peaks_by_channel, rts, intensities, model_path, threshold=0.5,
+                        window_half_min=1.0, keep_windows=False, verbose=True,
+                        predictor=None, onnx_use_gpu=-1, onnx_batch_size=128):
     """
     Phase3b（模型前置，每 mzML 一次批量验证）：全部枚举候选（未经信号精修/门控，
     仅带预估 rt）一次性渲染到同一临时目录，单轮 build_predictor 推理，
@@ -432,7 +461,12 @@ def validate_with_model(peaks_by_channel, rts, intensities, model_path, threshol
     交由 Phase2/3a 兜底）。
     返回渲染窗口目录（keep_windows=True 时保留，否则清理并返回 None）。
     """
-    from utils.predict_utils import build_predictor  # 惰性导入，避免无模型时加载 torch
+    if predictor is None and str(model_path).lower().endswith(".onnx"):
+        from inference.onnx_window_predictor import OnnxWindowPredictor
+        predictor = OnnxWindowPredictor(
+            model_path, use_gpu=onnx_use_gpu, batch_size=onnx_batch_size)
+    elif predictor is None:
+        from utils.predict_utils import build_predictor  # 惰性导入，避免无模型时加载 torch
 
     tmp_dir = tempfile.mkdtemp(prefix="massnova_windows_")
     file_map: Dict[str, Tuple[int, int, float, float]] = {}  # win_name -> (ch_idx, p_idx, rt_lo, rt_hi)
@@ -465,8 +499,15 @@ def validate_with_model(peaks_by_channel, rts, intensities, model_path, threshol
         return None
 
     # 2) 批量推理（单轮，模型只加载一次）
-    results = build_predictor(model_path=model_path, images_path=tmp_dir, threshold=threshold,
-                              plot=False, verbose=verbose)
+    try:
+        if predictor is None:
+            results = build_predictor(model_path=model_path, images_path=tmp_dir, threshold=threshold,
+                                      plot=False, verbose=verbose)
+        else:
+            results = predictor(images_path=tmp_dir, threshold=threshold, verbose=verbose)
+    except Exception:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
     img_results = {os.path.basename(str(r["image_path"])): r for r in results}
 
     # 3) 预计算候选配对（apex 落框）
@@ -505,7 +546,7 @@ def validate_with_model(peaks_by_channel, rts, intensities, model_path, threshol
             if (ch_idx, p_idx) in assigned:
                 score, left, right = assigned[(ch_idx, p_idx)]
                 p["model_score"] = score
-                p["validated"] = bool(score >= float(threshold))
+                p["validated"] = bool(score > float(threshold))
                 if p["validated"]:
                     p["rt_min"] = float(left)
                     p["rt_max"] = float(right)
@@ -886,7 +927,7 @@ def write_massnova_report(out_root, exp_name, sample_infos, args, total_seconds=
     adf = pd.DataFrame(rows)
     adf.to_csv(all_csv, index=False, encoding="utf-8-sig")
 
-    threshold = float(getattr(args, "threshold", 0.99))
+    threshold = float(getattr(args, "threshold", 0.5))
     model_path = getattr(args, "model", None)
     samples = [info["key"] for info in sample_infos]
 
@@ -962,7 +1003,7 @@ def write_massnova_report(out_root, exp_name, sample_infos, args, total_seconds=
     L.append("|---|---|")
     L.append("| rt_min / rt_peak / rt_max | 峰边界与峰顶（min）；模型框峰取模型框边界 |")
     L.append("| area / snr / n_points | 最终边界上的面积 / 本地信噪比 / baseline 以上连续点数 |")
-    L.append("| validated | 模型验证通过（model_score ≥ 阈值） |")
+    L.append("| validated | 模型验证通过（model_score > 阈值） |")
     L.append("| model_score | 模型置信度；未命中模型为空 |")
     L.append("| boundary_source | model=模型框边界；signal=信号兜底精修边界（建议人工复核） |")
     L.append("")
@@ -1190,6 +1231,103 @@ def _scan_params_from_args(args) -> dict:
     }
 
 
+def finalize_channel_peaks(rt, intensity, candidates, scan_params, *, verbose=False,
+                           channel_label=""):
+    """Build final model + signal peaks for one already-smoothed XIC channel.
+
+    This is the shared post-processing core used by both mzML inference and the
+    embedded DLL runtime.  Keeping it here prevents the C bridge from growing a
+    second, subtly different implementation of refinement, gating, scoring and
+    duplicate removal.
+    """
+    rt = np.asarray(rt, dtype=np.float64)
+    y = np.asarray(intensity, dtype=np.float64)
+    sp = scan_params
+    peaks = []
+    residual_cands = []
+    for candidate in candidates:
+        if candidate.get("validated"):
+            peaks.append({
+                "peak_no": 0,
+                "apex_idx": int(candidate["apex_idx"]),
+                "rt_peak": float(candidate["rt_peak"]),
+                "rt_min": float(candidate["rt_min"]),
+                "rt_max": float(candidate["rt_max"]),
+                "apex_intensity": float(candidate["apex_intensity"]),
+                "area": 0.0,
+                "snr": 0.0,
+                "n_points": 0,
+                "model_score": float(candidate["model_score"]),
+                "validated": True,
+                "boundary_source": "model",
+            })
+        else:
+            residual_cands.append(candidate)
+
+    if residual_cands:
+        model_peers = [(peak["rt_min"], peak["rt_max"]) for peak in peaks]
+        residual_apexes = [int(candidate["apex_idx"]) for candidate in residual_cands]
+        intervals = refine_all_boundaries(
+            rt, y, residual_apexes,
+            init_half_width_min=sp["init_half_width_min"],
+            boundary_posterior_lookahead=sp["boundary_posterior_lookahead"],
+            boundary_posterior_mean_scale=sp["boundary_posterior_mean_scale"],
+            edge_noise_stop_mode=sp["edge_noise_stop_mode"],
+            edge_max_span_min=sp["edge_max_span_min"],
+            peer_rt_intervals=model_peers or None,
+        )
+        intervals = fuse_fallback_boundaries(
+            rt, y, residual_apexes, intervals, ratio=sp["width_fuse_ratio"])
+        gated = gate_peaks(
+            rt, y, residual_apexes, intervals,
+            min_snr=sp["min_snr"],
+            min_peak_span_points=sp["min_peak_span_points"],
+            min_area=sp["min_area"],
+            neighbor_intervals=model_peers,
+        )
+        for gated_peak in gated:
+            apex_index = int(gated_peak["apex_idx"])
+            peaks.append({
+                "peak_no": 0,
+                "apex_idx": apex_index,
+                "rt_peak": float(rt[apex_index]),
+                "rt_min": float(gated_peak["rt_min"]),
+                "rt_max": float(gated_peak["rt_max"]),
+                "apex_intensity": float(y[apex_index]),
+                "area": float(gated_peak["area"]),
+                "snr": float(gated_peak["snr"]),
+                "n_points": int(gated_peak["n_points"]),
+                "model_score": np.nan,
+                "validated": False,
+                "boundary_source": "signal",
+            })
+
+    count_before_dedup = len(peaks)
+    peaks = _dedup_overlapping_peaks(
+        peaks,
+        apex_tol=sp["dup_apex_tol"],
+        rt=rt,
+        intensity=y,
+        min_overlap_fraction=sp["dup_min_overlap_fraction"],
+        shallow_valley_min_ratio=sp["dup_shallow_valley_min_ratio"],
+    )
+    if verbose and len(peaks) < count_before_dedup:
+        prefix = f" {channel_label}" if channel_label else ""
+        print(f"[massnova]{prefix}: 去重 {count_before_dedup - len(peaks)} 个重叠候选框")
+    peaks.sort(key=lambda peak: peak["rt_min"])
+    for peak_no, peak in enumerate(peaks, start=1):
+        peak["peak_no"] = peak_no
+    _finalize_peak_metrics(rt, y, peaks)
+    _finalize_peak_scores(
+        peaks,
+        snr_pivot=sp["signal_score_snr_pivot"],
+        points_good=sp["signal_score_points_good"],
+        snr_weight=sp["signal_score_snr_weight"],
+        points_weight=sp["signal_score_points_weight"],
+    )
+    return peaks
+
+
 def run_massnova_on_mzml(mzml_path, key, args, out_root):
     """对单个 mzML 执行整谱全峰识别（模型前置、精修兜底），返回 info dict（含峰明细行）。
 
@@ -1201,7 +1339,7 @@ def run_massnova_on_mzml(mzml_path, key, args, out_root):
     min_max_intensity = float(getattr(args, "pipeline_min_max_intensity", 1000.0) or 0.0)
     min_chrom_points = int(getattr(args, "pipeline_min_chrom_points", 10) or 0)
     model_path = getattr(args, "model", None)
-    threshold = float(getattr(args, "threshold", 0.99))
+    threshold = float(getattr(args, "threshold", 0.5))
     keep_windows = bool(getattr(args, "keep_windows", False))
     no_plots = bool(getattr(args, "no_plots", False))
     plot = bool(getattr(args, "plot", False))
@@ -1248,96 +1386,23 @@ def run_massnova_on_mzml(mzml_path, key, args, out_root):
             window_half_min=sp["window_half_min"],
             keep_windows=keep_windows,
             verbose=bool(getattr(args, "verbose", False)),
+            onnx_use_gpu=int(getattr(args, "use_gpu", -1)),
+            onnx_batch_size=int(getattr(args, "batch_size", 128)),
         )
         if win_dir:
             keep_win_dirs = {"all": win_dir}
 
-    # Phase2/3a（兜底）：仅对模型未命中残差做边界精修 + 门控（模型框作 peer/邻居防撞）。
+    # Phase2/3a（兜底）+ Phase4：使用与嵌入式数组入口相同的最终峰处理核心。
     peaks_by_channel: Dict[int, list] = {}
     n_peaks_total = 0
     for f in features:
         ci = f["chrom_index"]
         rt = f["rt"]
         y = f["intensity"]
-        peaks = []
-        residual_cands = []  # 未命中模型的候选（保序），与 apexes/intervals 对齐
-        for c in candidates_by_channel.get(ci, []):
-            if c.get("validated"):
-                peaks.append({
-                    "peak_no": 0,
-                    "apex_idx": int(c["apex_idx"]),
-                    "rt_peak": float(c["rt_peak"]),
-                    "rt_min": float(c["rt_min"]),
-                    "rt_max": float(c["rt_max"]),
-                    "apex_intensity": float(c["apex_intensity"]),
-                    "area": 0.0,
-                    "snr": 0.0,
-                    "n_points": 0,
-                    "model_score": float(c["model_score"]),
-                    "validated": True,
-                    "boundary_source": "model",
-                })
-            else:
-                residual_cands.append(c)
-
-        if residual_cands:
-            model_peers = [(p["rt_min"], p["rt_max"]) for p in peaks]
-            residual_apexes = [int(c["apex_idx"]) for c in residual_cands]
-            intervals = refine_all_boundaries(
-                rt, y, residual_apexes,
-                init_half_width_min=sp["init_half_width_min"],
-                boundary_posterior_lookahead=sp["boundary_posterior_lookahead"],
-                boundary_posterior_mean_scale=sp["boundary_posterior_mean_scale"],
-                edge_noise_stop_mode=sp["edge_noise_stop_mode"],
-                edge_max_span_min=sp["edge_max_span_min"],
-                peer_rt_intervals=model_peers or None,
-            )
-            # 兜底宽度保险丝：先回缩再门控，SNR 在收紧后的边界上估计更准
-            intervals = fuse_fallback_boundaries(rt, y, residual_apexes, intervals,
-                                                 ratio=sp["width_fuse_ratio"])
-            gated = gate_peaks(rt, y, residual_apexes, intervals,
-                               min_snr=sp["min_snr"],
-                               min_peak_span_points=sp["min_peak_span_points"],
-                               min_area=sp["min_area"],
-                               neighbor_intervals=model_peers)
-            for g in gated:
-                ap = int(g["apex_idx"])
-                peaks.append({
-                    "peak_no": 0,
-                    "apex_idx": ap,
-                    "rt_peak": float(rt[ap]),
-                    "rt_min": float(g["rt_min"]),
-                    "rt_max": float(g["rt_max"]),
-                    "apex_intensity": float(y[ap]),
-                    "area": float(g["area"]),
-                    "snr": float(g["snr"]),
-                    "n_points": int(g["n_points"]),
-                    "model_score": np.nan,
-                    "validated": False,
-                    "boundary_source": "signal",
-                })
-
-        # 跨候选去重：同一簇的多个重叠框只留代表峰（模型框优先）
-        n_before_dedup = len(peaks)
-        peaks = _dedup_overlapping_peaks(
-            peaks,
-            apex_tol=sp["dup_apex_tol"],
-            rt=rt,
-            intensity=y,
-            min_overlap_fraction=sp["dup_min_overlap_fraction"],
-            shallow_valley_min_ratio=sp["dup_shallow_valley_min_ratio"],
-        )
-        if getattr(args, "verbose", False) and len(peaks) < n_before_dedup:
-            print(f"[massnova] 通道#{ci} {f['uid']}: 去重 {n_before_dedup - len(peaks)} 个重叠候选框")
-        peaks.sort(key=lambda p: p["rt_min"])
-        for i, p in enumerate(peaks, start=1):
-            p["peak_no"] = i
-        _finalize_peak_metrics(rt, y, peaks)
-        _finalize_peak_scores(
-            peaks, snr_pivot=sp["signal_score_snr_pivot"],
-            points_good=sp["signal_score_points_good"],
-            snr_weight=sp["signal_score_snr_weight"],
-            points_weight=sp["signal_score_points_weight"],
+        peaks = finalize_channel_peaks(
+            rt, y, candidates_by_channel.get(ci, []), sp,
+            verbose=bool(getattr(args, "verbose", False)),
+            channel_label=f"通道#{ci} {f['uid']}",
         )
         peaks_by_channel[ci] = peaks
         n_peaks_total += len(peaks)
@@ -1411,7 +1476,10 @@ def build_parser():
     ap.add_argument("--mzml", type=str, default=None, help="单个 mzML 或包含 mzML 的目录（递归）")
     ap.add_argument("--batch_dir", type=str, default=None, help="mzML 目录（递归）")
     ap.add_argument("--model", type=str, default=None, help="模型路径（提供则开启模型验证）")
-    ap.add_argument("--threshold", type=float, default=0.99)
+    ap.add_argument("--threshold", type=float, default=0.5)
+    ap.add_argument("--use_gpu", type=int, choices=[-1, 0, 1], default=-1,
+                    help="ONNX: -1=CPU，0=优先GPU失败回退CPU，1=必须GPU")
+    ap.add_argument("--batch_size", type=int, default=128, help="ONNX 候选窗口批大小")
     ap.add_argument("--smooth_sigma", type=float, default=0.8, help="高斯平滑 sigma；0=关闭")
     ap.add_argument("--output_dir", type=str, default=None,
                     help="实验输出根目录；null=按 pipeline 规则 ../output/inference/massnova_<实验名>")
