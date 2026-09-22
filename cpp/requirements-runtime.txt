@@ -1,10 +1,9 @@
 # Private CPython runtime used inside mrmpformer.dll (Python 3.11).
 numpy==1.26.4
 pandas==2.2.2
+natsort==8.4.0
 scipy==1.13.1
 matplotlib==3.9.2
 Pillow>=10,<13
-onnxruntime>=1.18,<2
-
-# Build-time only; not imported after the .pyd modules are produced.
-Cython>=3,<4
+# One runtime includes both CUDA and CPU providers; do not install onnxruntime alongside it.
+onnxruntime-gpu==1.23.2

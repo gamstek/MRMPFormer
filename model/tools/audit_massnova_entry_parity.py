@@ -86,6 +86,7 @@ def _normal_python_results(features, args, model_path):
         peaks = finalize_channel_peaks(
             feature["rt"], feature["intensity"],
             candidates_by_channel.get(channel, []), scan_params,
+            threshold=float(args.threshold),
         )
         output.append({
             "uid": str(feature["uid"]),

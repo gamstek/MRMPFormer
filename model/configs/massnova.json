@@ -4,7 +4,7 @@
   "_comment_model": "标准部署统一使用 ONNX（相对 model/ 目录）；按候选峰切 ±1min 窗并复用缓存 Session",
   "model": "checkpoint/mrmpformerv2.onnx",
   "_comment_onnx_runtime": "与 C DLL 默认一致：-1=CPU；batch_size=候选窗口批大小",
-  "use_gpu": -1,
+  "use_gpu": 0,
   "batch_size": 128,
   "_comment_labels": "[massnova 忽略] roi/pipeline 模式的标注驱动参数；massnova 不依赖标注，保留占位",
   "labels": null,

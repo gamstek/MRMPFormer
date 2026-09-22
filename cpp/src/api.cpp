@@ -207,7 +207,7 @@ static void qf_default_config_impl(QfConfig* config) {
         return;
     }
     *config = {nullptr, "./mrmpformer_results/", nullptr, 0, 0.5f, 0.8f,
-               300, -1, 128, 10, 1000.0f};
+               300, 0, 128, 10, 1000.0f};
 }
 
 static QfError qf_init_impl(const QfConfig* config) {

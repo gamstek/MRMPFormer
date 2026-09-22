@@ -448,7 +448,7 @@ def gate_peaks(rt, intensity, apexes, intervals, min_snr=10.0, min_peak_span_poi
 
 def validate_with_model(peaks_by_channel, rts, intensities, model_path, threshold=0.5,
                         window_half_min=1.0, keep_windows=False, verbose=True,
-                        predictor=None, onnx_use_gpu=-1, onnx_batch_size=128):
+                        predictor=None, onnx_use_gpu=0, onnx_batch_size=128):
     """
     Phase3b（模型前置，每 mzML 一次批量验证）：全部枚举候选（未经信号精修/门控，
     仅带预估 rt）一次性渲染到同一临时目录，单轮 build_predictor 推理，
@@ -469,7 +469,8 @@ def validate_with_model(peaks_by_channel, rts, intensities, model_path, threshol
         from utils.predict_utils import build_predictor  # 惰性导入，避免无模型时加载 torch
 
     tmp_dir = tempfile.mkdtemp(prefix="massnova_windows_")
-    file_map: Dict[str, Tuple[int, int, float, float]] = {}  # win_name -> (ch_idx, p_idx, rt_lo, rt_hi)
+    file_map = {}  # (ch_idx, p_idx) -> (shared window name, rt_lo, rt_hi)
+    window_names = {}  # Same channel and exact bounds imply identical input arrays.
 
     # 1) 渲染全部通道的全部峰窗口
     name_idx = 0
@@ -489,10 +490,14 @@ def validate_with_model(peaks_by_channel, rts, intensities, model_path, threshol
             win_int = y[mask]
             if win_rt.size < 2:
                 continue
-            name = f"win_{name_idx:07d}.jpeg"
-            render_roi_jpeg(win_rt, win_int, rt_lo, rt_hi, os.path.join(tmp_dir, name))
-            file_map[name] = (ch_idx, p_idx, rt_lo, rt_hi)
-            name_idx += 1
+            window_key = (ch_idx, float(rt_lo), float(rt_hi))
+            name = window_names.get(window_key)
+            if name is None:
+                name = f"win_{name_idx:07d}.jpeg"
+                render_roi_jpeg(win_rt, win_int, rt_lo, rt_hi, os.path.join(tmp_dir, name))
+                window_names[window_key] = name
+                name_idx += 1
+            file_map[(ch_idx, p_idx)] = (name, rt_lo, rt_hi)
 
     if not file_map:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -512,7 +517,7 @@ def validate_with_model(peaks_by_channel, rts, intensities, model_path, threshol
 
     # 3) 预计算候选配对（apex 落框）
     candidates: List[Tuple[int, int, str, int, float, float, float, float]] = []  # (ch, p, img, box_i, score, dist, left, right)
-    for name, (ch_idx, p_idx, rt_lo, rt_hi) in file_map.items():
+    for (ch_idx, p_idx), (name, rt_lo, rt_hi) in file_map.items():
         p = peaks_by_channel[ch_idx][p_idx]
         res = img_results.get(name)
         if not res or len(res.get("boxes", [])) == 0:
@@ -1070,6 +1075,23 @@ def write_massnova_report(out_root, exp_name, sample_infos, args, total_seconds=
 # ---------------------------------------------------------------------------
 
 
+def _dedup_identical_peak_bounds(peaks, tolerance=1e-6):
+    """Keep one final box per near-identical interval, independent of apex valleys."""
+    def rank(peak):
+        score = float(peak.get("peak_score", float("-inf")))
+        return (peak.get("boundary_source") == "model",
+                score if np.isfinite(score) else float("-inf"))
+
+    kept = []
+    for peak in sorted(peaks, key=rank, reverse=True):
+        if any(abs(float(peak["rt_min"]) - float(other["rt_min"])) <= tolerance
+               and abs(float(peak["rt_max"]) - float(other["rt_max"])) <= tolerance
+               for other in kept):
+            continue
+        kept.append(peak)
+    return sorted(kept, key=lambda peak: float(peak["rt_min"]))
+
+
 def _dedup_overlapping_peaks(
         peaks, apex_tol=0.2, rt=None, intensity=None,
         min_overlap_fraction=0.25, shallow_valley_min_ratio=0.70):
@@ -1231,7 +1253,7 @@ def _scan_params_from_args(args) -> dict:
     }
 
 
-def finalize_channel_peaks(rt, intensity, candidates, scan_params, *, verbose=False,
+def finalize_channel_peaks(rt, intensity, candidates, scan_params, *, threshold=0.5, verbose=False,
                            channel_label=""):
     """Build final model + signal peaks for one already-smoothed XIC channel.
 
@@ -1325,6 +1347,13 @@ def finalize_channel_peaks(rt, intensity, candidates, scan_params, *, verbose=Fa
         snr_weight=sp["signal_score_snr_weight"],
         points_weight=sp["signal_score_points_weight"],
     )
+    # Do not let the deep-valley safeguard preserve duplicate output intervals.
+    # Scores are now available for deterministic selection within each source.
+    peaks = [peak for peak in peaks
+             if np.isfinite(peak["peak_score"]) and peak["peak_score"] > float(threshold)]
+    peaks = _dedup_identical_peak_bounds(peaks)
+    for peak_no, peak in enumerate(peaks, start=1):
+        peak["peak_no"] = peak_no
     return peaks
 
 
@@ -1386,7 +1415,7 @@ def run_massnova_on_mzml(mzml_path, key, args, out_root):
             window_half_min=sp["window_half_min"],
             keep_windows=keep_windows,
             verbose=bool(getattr(args, "verbose", False)),
-            onnx_use_gpu=int(getattr(args, "use_gpu", -1)),
+            onnx_use_gpu=int(getattr(args, "use_gpu", 0)),
             onnx_batch_size=int(getattr(args, "batch_size", 128)),
         )
         if win_dir:
@@ -1401,6 +1430,7 @@ def run_massnova_on_mzml(mzml_path, key, args, out_root):
         y = f["intensity"]
         peaks = finalize_channel_peaks(
             rt, y, candidates_by_channel.get(ci, []), sp,
+            threshold=threshold,
             verbose=bool(getattr(args, "verbose", False)),
             channel_label=f"通道#{ci} {f['uid']}",
         )
@@ -1477,7 +1507,7 @@ def build_parser():
     ap.add_argument("--batch_dir", type=str, default=None, help="mzML 目录（递归）")
     ap.add_argument("--model", type=str, default=None, help="模型路径（提供则开启模型验证）")
     ap.add_argument("--threshold", type=float, default=0.5)
-    ap.add_argument("--use_gpu", type=int, choices=[-1, 0, 1], default=-1,
+    ap.add_argument("--use_gpu", type=int, choices=[-1, 0, 1], default=0,
                     help="ONNX: -1=CPU，0=优先GPU失败回退CPU，1=必须GPU")
     ap.add_argument("--batch_size", type=int, default=128, help="ONNX 候选窗口批大小")
     ap.add_argument("--smooth_sigma", type=float, default=0.8, help="高斯平滑 sigma；0=关闭")

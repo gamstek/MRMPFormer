@@ -2,3 +2,4 @@ model/checkpoint/mrmpformerv2.pth filter=lfs diff=lfs merge=lfs -text
 model/checkpoint/mrmpformerv2.onnx filter=lfs diff=lfs merge=lfs -text
 cpp/third_party/onnxruntime/lib/*.dll filter=lfs diff=lfs merge=lfs -text
 cpp/third_party/onnxruntime/lib/*.lib filter=lfs diff=lfs merge=lfs -text
+*.sh text eol=lf

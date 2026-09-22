@@ -9,7 +9,17 @@ if(POLICY CMP0144)
     cmake_policy(SET CMP0144 NEW)
 endif()
 
-find_package(Python3 3.9 COMPONENTS Development REQUIRED)
+find_package(Python3 3.9 COMPONENTS Interpreter Development REQUIRED)
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" -c "import sys; print(sys.base_prefix)"
+    OUTPUT_VARIABLE MRMPFORMER_PYTHON_HOME
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    COMMAND_ERROR_IS_FATAL ANY)
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" -c "import sysconfig; print(sysconfig.get_paths()['purelib'])"
+    OUTPUT_VARIABLE MRMPFORMER_PYTHON_SITE_PACKAGES
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    COMMAND_ERROR_IS_FATAL ANY)
 
 if(NOT EXISTS "${MRMPFORMER_JSON_INCLUDE_DIR}/json.hpp")
     message(FATAL_ERROR
@@ -31,6 +41,13 @@ target_include_directories(mrmpformer
         "${MRMPFORMER_JSON_INCLUDE_DIR}")
 target_link_libraries(mrmpformer PRIVATE Python3::Python ${CMAKE_DL_LIBS})
 
+if(WIN32)
+    add_custom_command(TARGET mrmpformer POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "$<TARGET_FILE:Python3::Python>"
+            "$<TARGET_FILE_DIR:mrmpformer>")
+endif()
+
 if(MSVC)
     target_compile_options(mrmpformer PRIVATE /utf-8)
 endif()
@@ -49,6 +66,7 @@ set_target_properties(single_example PROPERTIES LINKER_LANGUAGE CXX)
 if(BUILD_TESTS)
     include(CTest)
     enable_testing()
+
 
     add_executable(test_header_abi tests/test_header_abi.cpp)
     target_compile_features(test_header_abi PRIVATE cxx_std_20)
@@ -80,8 +98,13 @@ if(BUILD_TESTS)
     target_compile_definitions(test_api PRIVATE
         MRMPFORMER_TEST_MODEL_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../model/checkpoint/mrmpformerv2.onnx")
     add_test(NAME api COMMAND test_api)
+    if(WIN32)
+        set(MRMPFORMER_PATH_SEPARATOR "\;")
+    else()
+        set(MRMPFORMER_PATH_SEPARATOR ":")
+    endif()
     set_tests_properties(api PROPERTIES
         ENVIRONMENT
-            "MRMPFORMER_PYTHON_PATH=${CMAKE_CURRENT_SOURCE_DIR}/../model;PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/../.onnx_deps")
+            "PYTHONHOME=${MRMPFORMER_PYTHON_HOME};MRMPFORMER_PYTHON_PATH=${CMAKE_CURRENT_SOURCE_DIR}/../model/build/python;PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/../model${MRMPFORMER_PATH_SEPARATOR}${MRMPFORMER_PYTHON_SITE_PACKAGES}")
 
 endif()

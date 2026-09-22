@@ -17,7 +17,7 @@ class OnnxWindowPredictor:
     graph and are intentionally handled by :mod:`inference.massnova`.
     """
 
-    def __init__(self, model_path, *, use_gpu=-1, batch_size=128, session=None):
+    def __init__(self, model_path, *, use_gpu=0, batch_size=128, session=None):
         self.model_path = str(model_path)
         self.batch_size = max(1, int(batch_size))
         if session is not None:
@@ -42,8 +42,18 @@ class OnnxWindowPredictor:
             providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
         else:
             providers = ["CPUExecutionProvider"]
-        self.session = ort.InferenceSession(self.model_path, providers=providers)
+        try:
+            if "CUDAExecutionProvider" in providers:
+                # Load compatible CUDA/cuDNN DLLs from the target machine's search paths.
+                ort.preload_dlls()
+            self.session = ort.InferenceSession(self.model_path, providers=providers)
+        except Exception:
+            if int(use_gpu) != 0:
+                raise
+            self.session = ort.InferenceSession(self.model_path, providers=["CPUExecutionProvider"])
         self.is_gpu_enabled = "CUDAExecutionProvider" in self.session.get_providers()
+        if int(use_gpu) == 1 and not self.is_gpu_enabled:
+            raise RuntimeError("CUDA was required but ONNX Runtime fell back to CPU")
 
     @staticmethod
     def _load_rgb(path):

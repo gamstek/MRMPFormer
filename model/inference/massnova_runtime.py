@@ -20,7 +20,7 @@ from inference.onnx_window_predictor import OnnxWindowPredictor
 DEFAULT_RUNTIME_CONFIG = {
     "threshold": 0.5,
     "smooth_sigma": 0.8,
-    "use_gpu": -1,
+    "use_gpu": 0,
     "batch_size": 128,
     "min_chrom_points": 10,
     "min_max_intensity": 1000.0,
@@ -175,6 +175,7 @@ class MassNovaArrayRuntime:
             peaks = finalize_channel_peaks(
                 feature["rt"], feature["intensity"],
                 candidates_by_channel.get(channel, []), self.scan_params,
+                threshold=float(self.config["threshold"]),
             )
             output[channel] = self._peak_result(feature, peaks)
         return {"items": output}

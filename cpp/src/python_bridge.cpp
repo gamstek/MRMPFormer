@@ -86,6 +86,22 @@ void add_python_path(const char* path) {
     Py_DECREF(value);
 }
 
+void add_python_path(const std::filesystem::path& path) {
+#if defined(_WIN32)
+    const std::wstring native_path = path.wstring();
+    PyObject* value = PyUnicode_FromWideChar(native_path.c_str(), native_path.size());
+    PyObject* sys_path = PySys_GetObject("path");
+    if (value == nullptr || sys_path == nullptr || PyList_Insert(sys_path, 0, value) != 0) {
+        Py_XDECREF(value);
+        throw std::runtime_error("failed to add MRMPFormer Python module path: " +
+                                 python_error_text());
+    }
+    Py_DECREF(value);
+#else
+    add_python_path(path.c_str());
+#endif
+}
+
 void start_python_once() {
     try {
         Py_Initialize();
@@ -94,9 +110,9 @@ void start_python_once() {
         }
         const std::filesystem::path dll_dir = library_directory();
         if (!dll_dir.empty()) {
-            add_python_path(dll_dir.string().c_str());
-            add_python_path((dll_dir / "python").string().c_str());
-            add_python_path((dll_dir / "python" / "Lib" / "site-packages").string().c_str());
+            add_python_path(dll_dir);
+            add_python_path(dll_dir / "python");
+            add_python_path(dll_dir / "python" / "Lib" / "site-packages");
         }
         if (const char* configured_path = std::getenv("MRMPFORMER_PYTHON_PATH")) {
             add_python_path(configured_path);

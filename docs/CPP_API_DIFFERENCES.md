@@ -118,21 +118,17 @@ task state; `QF_ERR_NO_WORKER` reports worker startup failure; and
 
 ## Build, deployment, and callbacks
 
-Set `ONNXRUNTIME_ROOT` to a package with `include/onnxruntime_cxx_api.h` and
-the platform library, then configure with `cmake -S cpp -B cpp/build
--DBUILD_TESTS=ON`.  Use a CPU ONNX Runtime package for a CPU build, or a
-matching GPU package for CUDA support; runtime `QfConfig.use_gpu` selects CPU,
-auto CUDA fallback, or required CUDA.  Build and test with:
+Use the Python 3.11 environment containing `cpp/requirements-runtime.txt`.
+Build intermediates remain in `cpp/build/` and `model/build/`. Generate the
+complete Windows CPU/CUDA unified package with:
 
 ```powershell
-cmake --build cpp/build --config Release --target batch_example single_example
-ctest --test-dir cpp/build -C Release --output-on-failure
+bash build.sh
 ```
 
-Deploy `mrmpformer.dll` plus `onnxruntime.dll` (and GPU provider DLLs) beside a
-Windows executable, or make `libmrmpformer.so` and `libonnxruntime.so`
-discoverable through RPATH/`LD_LIBRARY_PATH` on Linux. Deploy the
-`mrmpformerv2.onnx` file and set `model_path` explicitly.
+Deploy the entire `build/windows/` package, including its private Python runtime
+and `python/` dependencies. Set `model_path` explicitly. See
+[Windows integration](WINDOWS_INTEGRATION.md) for copying, linking and testing.
 
 There is one process-global callback. It executes synchronously at terminal
 state, usually on a worker but potentially on the cancelling caller. Keep it

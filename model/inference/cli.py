@@ -1171,7 +1171,7 @@ def main_cli():
                         help="[massnova] 峰面积门（0=关）")
     parser.add_argument("--scan_window_half_min", type=float, default=1.0,
                         help="[massnova] 模型验证窗口半宽（与训练一致）")
-    parser.add_argument("--use_gpu", type=int, choices=[-1, 0, 1], default=-1,
+    parser.add_argument("--use_gpu", type=int, choices=[-1, 0, 1], default=0,
                         help="[massnova/ONNX] -1=CPU，0=优先GPU失败回退CPU，1=必须GPU")
     parser.add_argument("--batch_size", type=int, default=128,
                         help="[massnova/ONNX] 候选窗口批大小")

@@ -6,36 +6,102 @@ runtime, imports the compiled MassNova bridge once, and keeps one ONNX session
 alive from `qf_init` through `qf_shutdown`. The C API and result JSON schema did
 not change when the implementation moved to the Python MassNova core.
 
+`QfConfig.threshold` applies both to model detections and to final returned peak
+scores: every returned `c` must be strictly greater than the threshold, including
+signal fallback peaks. A model peak uses model confidence; a signal peak uses
+its signal-rule score. If filtering removes all peaks, the channel returns
+`alert` with `NO_PEAK_FOUND`.
+
 For incompatible QuanFormer callers, read [the API migration guide](../docs/CPP_API_DIFFERENCES.md)
 before recompiling.
 
 ## Build
+
+For a complete Windows integration package, run from the repository root:
+
+```bash
+bash build.sh
+```
+
+Run in Git Bash on Windows. The root `build.sh` is a short launcher for
+`cpp/tools/build_windows_package.py` using `.venv/Scripts/python.exe`.
+Run `bash build.sh --install-deps`
+to create the environment with uv if missing and install dependencies.
+Use `--skip-build` to package existing build outputs and rerun integration validation.
+
+Give the software team only `build/windows/`; see
+[Windows integration instructions](../docs/WINDOWS_INTEGRATION.md).
+Intermediate C++ outputs stay in `cpp/build/`; Cython outputs stay in
+`model/build/` (`generated/`, `temp/`, and `python/inference/*.pyd`).
+The package command builds both, runs CTest, bundles the private runtime,
+then validates a relocated copy using the real C DLL with developer paths removed.
+It also runs 256 Python/C inference parity cases; any failure prevents publication
+of the new package.
+
+### Python/C inference comparison
+
+After building the package, run from the repository root:
+
+```powershell
+uv run tests/run_parity.py
+```
+
+The suite contains 256 real MRM chromatograms from four stratified validation sets
+in test3_cpp_validation_1d4ba0f, preserving original x/y arrays. Each case compares source Python,
+the compiled Cython modules in `model/build/python`, and the C DLL. Both batch
+and single calls are compared pairwise (1536 comparisons). The native
+driver runs in a separate process using the packaged DLL, Cython modules and
+private Python runtime. The reference explicitly requires source `.py` modules;
+a separate Python process verifies it loads all four compiled `.pyd` modules
+from `model/build/python` when running the third implementation.
+
+Assertions check UID, status, alerts, peak count/order, and every `a`/`b`/`c` value.
+Numeric tolerances are `atol=1e-12`, `rtol=1e-10`; NaN and infinity fail.
+Python batch calls match C batch calls, and Python single calls match C single
+calls: different ONNX batch shapes can produce small float32 score differences.
+At least 50 cases must produce peaks, preventing an empty-output pass.
+
+The 256 editable inputs are saved in `tests/inputs/`, with an index in its README.
+The runner reads these files without regenerating them and builds its native driver
+independently in `tests/build/`. Source files live in root `tests/`.
+Both reference modes, C results, process logs and `report.json` are saved
+under `tests/results/`; open `tests/results/README.md` for a per-case table and links.
+See [the test guide](../tests/README.md). Reports and the package manifest stay in
+`tests/results/`; development and test artifacts are excluded from `build/windows/`.
+Use `--package`, `--runner`, and `--output` to select other paths. These tests
+verify CPU implementation parity on synthetic data, not accuracy on labeled
+LC-MS samples or GPU equivalence.
 
 Use a release Python environment containing NumPy, SciPy, Pillow, Matplotlib,
 pandas and ONNX Runtime. Cython and a C/C++ compiler are build-time
 requirements. `pyopenms` is not required by the DLL array-input path.
 
 ```powershell
-python -m pip install -r cpp/requirements-runtime.txt
+python -m pip install -r cpp/requirements-build.txt
 ```
 
 Build the compiled Python core and DLL (PowerShell):
 
 ```powershell
-python model/tools/build_massnova_bridge.py build_ext --inplace
-cmake -S cpp -B cpp/build -DBUILD_TESTS=ON -DPython3_ROOT_DIR=$env:CONDA_PREFIX
+.\.venv\Scripts\Activate.ps1
+python model/tools/build_massnova_bridge.py
+cmake -S cpp -B cpp/build -DBUILD_TESTS=ON -DPython3_EXECUTABLE="$((Get-Command python).Source)"
 cmake --build cpp/build --config Release
 ```
 
-Install `onnxruntime-gpu` in the private runtime for CUDA. Set
+The single package bundles ONNX Runtime with both CPU and CUDA providers,
+obtained via `onnxruntime-gpu` on the build machine. End users do not need pip.
+GPU acceleration uses the target machine's compatible NVIDIA driver and CUDA 12/cuDNN 9
+DLLs (available on its DLL search path). Otherwise it falls back to CPU. Set
 `QfConfig.use_gpu = 0` to try CUDA then fall back to CPU, `1` to require CUDA,
-or `-1` to force CPU.
+or `-1` to force CPU. The default is `0`; `qf_is_gpu_enabled()` reports the
+actual selection. Device checks are recorded in `tests/results/device_verification.json`.
 
 Linux example:
 
 ```bash
-python model/tools/build_massnova_bridge.py build_ext --inplace
-cmake -S cpp -B cpp/build -DBUILD_TESTS=ON -DPython3_ROOT_DIR="$CONDA_PREFIX"
+python model/tools/build_massnova_bridge.py
+cmake -S cpp -B cpp/build -DBUILD_TESTS=ON -DPython3_EXECUTABLE="$(command -v python)"
 cmake --build cpp/build --config Release
 ctest --test-dir cpp/build --output-on-failure
 ```
@@ -44,27 +110,30 @@ The pure-C samples are normal build targets:
 
 ```powershell
 cmake --build cpp/build --config Release --target batch_example single_example
-.\cpp\build\Release\batch_example.exe .\model\checkpoint\mrmpformerv2.onnx .\input.json
-.\cpp\build\Release\single_example.exe .\model\checkpoint\mrmpformerv2.onnx
 ctest --test-dir cpp/build -C Release --output-on-failure
 ```
 
 `batch_example.c` submits a JSON file; `single_example.c` sets every
-`QfCompoundInput` member.  They intentionally use `use_gpu = -1` so they can
-be run with a CPU ONNX Runtime package.
+`QfCompoundInput` member. The batch example defaults to automatic device selection;
+its optional third argument is `-1` (CPU), `0` (automatic), or `1` (required GPU).
 
 ## Deployment
 
 The end user does not need a separately installed Python environment. Ship a
-private runtime beside the DLL. A supported Windows layout is:
+private runtime beside the DLL. The package command creates:
 
 ```text
-release/
+build/windows/
   mrmpformer.dll
+  mrmpformer.h
+  mrmpformer.lib
   python311.dll
-  python311.zip              # or the equivalent private Python standard library
+  python311.zip
+  python311._pth             # private paths relative to python311.dll
   mrmpformerv2.onnx
+  README_INTEGRATION.md
   python/
+    DLLs/                      # standard-library native extensions
     inference/                 # compiled .pyd modules + two_round_detection.py
     utils/                     # MassNova runtime helper modules
     preprocessing/             # masked_roi_generator.py used by boundary helpers
@@ -74,6 +143,8 @@ release/
 The DLL adds its own directory, `python/`, and `python/Lib/site-packages/` to
 `sys.path`. `MRMPFORMER_PYTHON_PATH` is available as a development override.
 Pass the deployed ONNX path through `QfConfig.model_path` as before.
+Development CTest configures the selected interpreter automatically. The
+packaged `python311._pth` removes the need for developer environment variables.
 The array-input runtime does not import `pyopenms`; it is only needed by the
 separate Python mzML input front end.
 

@@ -66,7 +66,7 @@ int main() {
         defaults.threshold != 0.5f ||
         defaults.smooth_sigma != 0.8f ||
         defaults.task_timeout_sec != 300 ||
-        defaults.use_gpu != -1 ||
+        defaults.use_gpu != 0 ||
         defaults.batch_size != 128 ||
         defaults.min_chrom_points != 10 ||
         defaults.min_max_intensity != 1000.0f) {
