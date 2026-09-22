@@ -62,7 +62,7 @@ MRMPFormer 是一个基于 **DETR（ResNet-50 + 1 层 Transformer 编解码器�
   - `roi` → `../output/inference/xic_roi`
   - `batch_dir` → `../output/inference/predictions_model`
 - **测试/试跑输出**：显式指定 `--output_dir ../output/test/<名称>` 单独存放，**禁止**与正式产物混放
-- 训练产物：`../output/train/<run>/`（每 run 保留最终 `checkpoint.pth` + `log.txt` + `config_used.txt`，中间 checkpoint 已清理），`.pth` 不入 git（.gitignore 已覆盖 `output/`）
+- 训练产物：`model/output_v2/`（微调 checkpoint）、`model/output_baseline/`（基线），`.pth` 不入 git（.gitignore 已覆盖 `output/`）
 
 ### 命令执行（强制）
 - **外部命令优先**：涉及训练（`python -m train ...`）、推理（`python -m inference.cli ...` / `predictor`）、XIC 提取（`extract_xic_with_pyopenms` / `coco_annotation`）等会实际运行模型、写文件或触发 matplotlib/pyopenms 渲染的命令，**优先整理成完整命令交给用户在系统 PowerShell 中执行**，不要反复在沙箱内自跑

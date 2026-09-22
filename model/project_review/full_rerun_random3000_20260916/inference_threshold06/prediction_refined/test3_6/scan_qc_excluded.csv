@@ -1,0 +1,8 @@
+﻿chrom_index,uid,q1,reason,n_points,max_intensity
+0,TIC_0_v_3.0.0,,tic_excluded,3460,35711675.3723911
+18,oxamyl-2,237.1,low_max_intensity,141,997.3879173434393
+496,phorate-2,261.0,low_max_intensity,115,332.4548582812739
+697,avermectin B1a-1,895.5,low_max_intensity,204,122.30728681600587
+698,avermectin B1a-2,895.5,low_max_intensity,204,163.12702495713125
+703,ivermectin B1a-1,897.5,low_max_intensity,202,230.11302397429125
+704,ivermectin B1a-2,897.5,low_max_intensity,204,284.3676136048878

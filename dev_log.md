@@ -37,6 +37,14 @@ MRMPFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 - 重构(cpp/src/task_manager.cpp+tests/test_api.cpp): 移除检测结果的信号峰顶搜索与边界扩展，仅校验检测框并按 ROI 坐标映射为 RT，保持模型预测边界；更新当前 ONNX 对应的 API 回归断言，完整 6 项 CTest 通过。
 - 代码生成(cpp/third_party/onnxruntime+cmake): 内置 ONNX Runtime 1.23.2 Windows x64 GPU SDK（头文件、导入库及运行时 DLL），补充 MIT 许可证与 Git LFS 规则，CMake 在 Windows 默认使用项目内 SDK；无外部 `ONNXRUNTIME_ROOT` 的全新 Release 构建及 6 项 CTest 通过。
 
+### 2026-09-07
+
+- 数据分析(data/label/test2.xlsx + output/special_peak_isolation/): 用户重调 test2 标注（开叉峰合并为单包络框 + 信号足点边界，特殊行 27→26）后以 0.9/0.05 组合阈值复测 special_v2：全量 P 0.785/R 0.635/F1 0.702，特殊峰 4/34=11.8%；逐 case 剖析宽峰/开叉漏检三层根因——标注口径错位（训练=谷底拆分，新评估 GT=包络合并）+ 宽度 OOD（xlsx 权威口径 19612 框 max 0.830min、≥0.86min 为 0）+ 推理管线无事件级重组；另发现 traindatav1/train COCO 与当前 traindata3.xlsx 不一致（COCO 284 框 ≥0.8min vs xlsx 3 框，抽查最宽图视觉峰宽 0.3min vs COCO 框 1.14min，过期/错位标注混入训练）
+- 代码生成(model/inference/peak_event_merge.py): [推理结构优化] 峰事件重组——①同模态 NMS 去重（低分框与保留框重叠 ≥ 较短框 60% 判为溢出/重检丢弃）；②开叉合并（两框 apex 间谷底/较矮峰高 > fork_frac=0.35，谷没落下判同一峰事件，合并包络 score 取成员最大）；③信号足点重划（从事件 apex 向两侧走到 max(baseline+noise_k·noise, foot_frac·apex) 以下，可外扩可内收，单侧 ≤ max_extend=0.35min，不越相邻事件与 ROI 窗口）；候选框以 score_floor=0.05 地板在阈值过滤前保留；像素↔RT 换算必须用 roi_windows（xic_matrix RT 轴为全谱 0-30min，不能用 t[0]/t[-1] 当窗口）
+- 调试(model/inference/predictor.py + cli.py): 重组接入 run_single（xic 加载前移，阈值过滤改为 floor→重组→final_threshold 两段式），qc3 口径统一为最终阈值；CLI 新增 --disable_event_merge/--event_merge_fork_frac/--event_merge_score_floor/--event_merge_foot_frac/--event_merge_max_extend/--event_merge_noise_k（默认开启）
+- 测试(output/special_peak_isolation/eval_run/special_v2_labeladj): 0.9/0.05 复测（test2 三样本，mrmpformer_special_v2）——全量 TP 141/FP 3/FN 37 → **P 0.979/R 0.792/F1 0.876**（基线 0.785/0.635/0.702，A/B 验证 28 通道 MISS→HIT、0 回退）；特殊峰 4/34=11.8% → **7/34=20.6%**（新增命中：丙硫多菌灵-1 开叉峰、恶虫威-1 开叉峰、乙酰甲胺磷-2 test2_3）；残余 miss 为三峰簇（啶虫脒/涕灭威）与宽峰（乙草胺/甲草胺）——需训练侧解决（标注口径统一/宽峰增强/traindatav1 COCO 对账重建），推理结构已到能力边界
+- 调试(inference/peak_event_merge.py): 三轮修复——①合并 dict 丢失 y1/y2 键 KeyError；②xic_matrix RT 轴为全谱导致 px→RT 映射错位（改用 roi_windows 逐图窗口）；③足点判据 baseline+2noise 过松（拖尾平台高于阈值延拓到窗口边缘，改 max(baseline+k·noise, foot_frac·apex)，实测 GT 足点约在峰高 0.5-1.5%）+ max_extend 由步长限制改为单侧总位移限制 + 同模态溢出框合并导致 4 通道 TP 回退（涕灭威砜-2/莎稗磷-1/2/苯螨特-2，NMS 去重后消除）
+
 ### 2026-09-03
 
 - 代码生成(cpp/): 新建 C++20 MRMPFormer 共享库骨架与公开 C ABI，定义异步任务接口、结构化单条色谱提交结构和 ONNX Runtime 查找模块；补充 ABI 编译契约测试与构建目录忽略规则。

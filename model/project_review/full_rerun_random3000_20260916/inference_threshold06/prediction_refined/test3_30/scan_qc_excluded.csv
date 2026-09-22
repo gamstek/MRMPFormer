@@ -1,0 +1,5 @@
+﻿chrom_index,uid,q1,reason,n_points,max_intensity
+0,TIC_0_v_3.0.0,,tic_excluded,3479,51565309.65686965
+199,tritosulfuron-1,446.0,low_max_intensity,100,997.3879173434393
+697,avermectin B1a-1,895.5,low_max_intensity,204,149.53147133889325
+698,avermectin B1a-2,895.5,low_max_intensity,204,100.38563982296529

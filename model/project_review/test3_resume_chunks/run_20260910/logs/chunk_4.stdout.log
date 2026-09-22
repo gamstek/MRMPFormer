@@ -1,0 +1,10 @@
+[INFO] 已加载推理配置: configs\massnova.json
+[OK] massnova test3_24: 702 通道 / 1100 候选 / 849 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_24
+[OK] massnova test3_25: 702 通道 / 1102 候选 / 844 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_25
+[OK] massnova test3_29: 702 通道 / 947 候选 / 821 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_29
+[OK] massnova test3_33: 702 通道 / 851 候选 / 780 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_33
+[OK] massnova test3_37: 702 通道 / 851 候选 / 777 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_37
+[OK] massnova test3_41: 702 通道 / 822 候选 / 775 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_41
+[OK] massnova test3_45: 702 通道 / 799 候选 / 759 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_45
+[OK] massnova test3_49: 702 通道 / 805 候选 / 758 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_49
+[OK] massnova test3_53: 702 通道 / 791 候选 / 757 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_53

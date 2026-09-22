@@ -1,0 +1,6 @@
+﻿sample_id,ai_chrom_index,uid,n_ai_peaks,n_ignored_weak,n_review_required,channel_alert_level,random_order
+test3_5,341.0,procymidone-1,1,0,1,YELLOW,1
+test3_21,80.0,mevinphos-2,1,0,0,GREEN,2
+test3_51,685.0,pyridaben-1,1,0,0,GREEN,3
+test3_39,560.0,prosulfocarb-2,1,0,0,GREEN,4
+test3_9,198.0,imazalil-2,1,0,0,GREEN,5

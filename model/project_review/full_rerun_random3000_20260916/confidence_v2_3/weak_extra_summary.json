@@ -1,0 +1,22 @@
+{
+  "policy_version": "weak_ai_extra_v1",
+  "input_rows": 48325,
+  "output_rows": 48325,
+  "ignored_weak_ai_extra": 1775,
+  "relative_height_max": 0.1,
+  "relative_area_max": 0.1,
+  "paired_transition_rt_tolerance_min": 0.1,
+  "alert_levels_before": {
+    "GREEN": 34247,
+    "RED": 10898,
+    "YELLOW": 3174,
+    "UNAVAILABLE": 6
+  },
+  "alert_levels_after": {
+    "GREEN": 34247,
+    "RED": 9123,
+    "YELLOW": 3174,
+    "INFO": 1775,
+    "UNAVAILABLE": 6
+  }
+}

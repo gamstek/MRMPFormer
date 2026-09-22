@@ -1,0 +1,23 @@
+[INFO] 已加载推理配置: configs\massnova.json
+[OK] massnova test3_28: 702 通道 / 945 候选 / 803 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_28
+[OK] massnova test3_32: 702 通道 / 940 候选 / 809 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_32
+[OK] massnova test3_36: 702 通道 / 850 候选 / 786 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_36
+[OK] massnova test3_40: 702 通道 / 823 候选 / 767 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_40
+[OK] massnova test3_44: 702 通道 / 813 候选 / 766 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_44
+[OK] massnova test3_48: 702 通道 / 802 候选 / 759 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_48
+[OK] massnova test3_5: 697 通道 / 2796 候选 / 1102 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_5
+[OK] massnova test3_52: 702 通道 / 804 候选 / 767 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_52
+[OK] massnova test3_56: 702 通道 / 792 候选 / 755 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_56
+[OK] massnova test3_9: 698 通道 / 2049 候选 / 1011 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_9
+===== 样本摘要 =====
+  test3_28: 通道=702 候选=945 峰=803 模型框=677 信号兜底=126
+  test3_32: 通道=702 候选=940 峰=809 模型框=682 信号兜底=127
+  test3_36: 通道=702 候选=850 峰=786 模型框=694 信号兜底=92
+  test3_40: 通道=702 候选=823 峰=767 模型框=693 信号兜底=74
+  test3_44: 通道=702 候选=813 峰=766 模型框=694 信号兜底=72
+  test3_48: 通道=702 候选=802 峰=759 模型框=693 信号兜底=66
+  test3_5: 通道=697 候选=2796 峰=1102 模型框=505 信号兜底=597
+  test3_52: 通道=702 候选=804 峰=767 模型框=699 信号兜底=68
+  test3_56: 通道=702 候选=792 峰=755 模型框=697 信号兜底=58
+  test3_9: 通道=698 候选=2049 峰=1011 模型框=558 信号兜底=453
+[DONE] massnova 完成: 10 个 mzML, 合计 7011 通道 / 8325 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3 | 报告: D:\yinlibo\MRMPFormer\output\inference\massnova_test3\inference_report_test3.md

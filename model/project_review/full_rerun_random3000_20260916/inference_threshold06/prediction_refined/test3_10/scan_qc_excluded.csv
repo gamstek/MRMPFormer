@@ -1,0 +1,10 @@
+﻿chrom_index,uid,q1,reason,n_points,max_intensity
+0,TIC_0_v_3.0.0,,tic_excluded,3448,33027610.616330795
+18,oxamyl-2,237.1,low_max_intensity,141,651.0410459014374
+199,tritosulfuron-1,446.0,low_max_intensity,100,907.402667418188
+496,phorate-2,261.0,low_max_intensity,115,686.9751113769321
+595,terbufos-1,289.1,low_max_intensity,127,839.4768076467572
+697,avermectin B1a-1,895.5,low_max_intensity,200,75.30025376007545
+698,avermectin B1a-2,895.5,low_max_intensity,200,87.91502905096586
+703,ivermectin B1a-1,897.5,low_max_intensity,199,265.7488978059991
+704,ivermectin B1a-2,897.5,low_max_intensity,200,337.9889302605233

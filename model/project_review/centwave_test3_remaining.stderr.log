@@ -1,0 +1,112 @@
+
+# >>>>>>>>>>>>>>>>>>>>>> ERROR REPORT <<<<<<<<<<<<<<<<<<<<<<
+
+    Traceback (most recent call last):
+      File "D:\miniconda\Lib\site-packages\conda\exception_handler.py", line 30, in __call__
+        return func(*args, **kwargs)
+      File "D:\miniconda\Lib\site-packages\conda\cli\main.py", line 53, in main_subshell
+        exit_code = do_call(args, parser)
+      File "D:\miniconda\Lib\site-packages\conda\cli\conda_argparse.py", line 190, in do_call
+        result = getattr(module, func_name)(args, parser)
+      File "D:\miniconda\Lib\site-packages\conda\cli\main_run.py", line 141, in execute
+        print(response.stdout, file=sys.stdout, end="")
+        ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    UnicodeEncodeError: 'gbk' codec can't encode character '\ufffd' in position 17: illegal multibyte sequence
+
+`$ D:\miniconda\Scripts\conda-script.py run -n gamstekpeaking python -m inference.cli --config project_review/massnova_centwave_test3_remaining.json`
+
+  environment variables:
+     BUNDLED_DEBUGPY_PATH=c:\Users\juenan\.trae-cn\extensions\ms-
+                          python.debugpy-2026.6.0-win32-x64\bundled\libs\debugpy
+                 CIO_TEST=<not set>
+        CONDA_DEFAULT_ENV=base
+                CONDA_EXE=D:\miniconda\Scripts\conda.exe
+               CONDA_EXES="D:\miniconda\Scripts\conda.exe"
+             CONDA_PREFIX=D:\miniconda
+           CONDA_PREFIX_1=D:\miniconda
+           CONDA_PREFIX_2=D:\miniconda\envs\gamstekpeaking
+    CONDA_PROMPT_MODIFIER=(base)
+         CONDA_PYTHON_EXE=D:\miniconda\python.exe
+               CONDA_ROOT=D:\miniconda
+              CONDA_SHLVL=3
+           CURL_CA_BUNDLE=<not set>
+                 HOMEPATH=\Users\juenan
+               LD_PRELOAD=<not set>
+                     PATH=C:\Users\juenan\.codex\tmp\arg0\codex-arg03bHXBx;C:\Users\juenan\AppDa
+                          ta\Local\nvm\v24.9.0\node_modules\@openai\codex\node_modules\@openai\c
+                          odex-win32-x64\vendor\x86_64-pc-windows-msvc\codex-path;D:\miniconda;D
+                          :\miniconda\Library\mingw-
+                          w64\bin;D:\miniconda\Library\usr\bin;D:\miniconda\Library\bin;D:\minic
+                          onda\Scripts;D:\miniconda\bin;D:\miniconda\condabin;C:\WINDOWS\system3
+                          2;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPower
+                          Shell\v1.0;C:\WINDOWS\System32\OpenSSH;C:\Program Files\NVIDIA
+                          Corporation\NVIDIA App\NvDLISR;C:\Program Files (x86)\NVIDIA
+                          Corporation\PhysX\Common;C:\Program
+                          Files\Git\cmd;%NVM_HOME%;%NVM_SYMLINK%;C:\Program
+                          Files\WireGuard;d:\Trae CN\bin;D:\miniconda;D:\miniconda\Library\mingw
+                          -w64\bin;D:\miniconda\Library\usr\bin;D:\miniconda\Library\bin;D:\mini
+                          conda\Scripts;C:\Users\juenan\AppData\Local\Microsoft\WindowsApps;C:\U
+                          sers\juenan\AppData\Local\Programs\DockerDesktop\resources\bin;C:\User
+                          s\juenan\AppData\Local\Programs\Microsoft VS Code\bin;C:\Users\juenan\
+                          AppData\Local\nvm;C:\nvm4w\nodejs;c:\Users\juenan\.trae-
+                          cn\extensions\ms-
+                          python.debugpy-2026.6.0-win32-x64\bundled\scripts\noConfigScripts
+             PSMODULEPATH=C:\Users\juenan\Documents\WindowsPowerShell\Modules;C:\Program Files\W
+                          indowsPowerShell\Modules;C:\WINDOWS\system32\WindowsPowerShell\v1.0\Mo
+                          dules
+            PYTHONSTARTUP=c:\Users\juenan\AppData\Roaming\Trae
+                          CN\User\workspaceStorage\680a0b6ff13614da541aa099077ec6d1\ms-
+                          python.python\pythonrc.py
+        PYTHON_BASIC_REPL=1
+       REQUESTS_CA_BUNDLE=<not set>
+            SSL_CERT_FILE=D:\miniconda\Library\ssl\cacert.pem
+      TRAE_JWT_TOKEN_PATH=C:\Users\juenan\.trae-cn\trae-jwt-token
+
+     active environment : base
+    active env location : D:\miniconda
+            shell level : 3
+       user config file : C:\Users\juenan\.condarc
+ populated config files : D:\miniconda\.condarc
+                          D:\miniconda\condarc.d\anaconda-auth.yml
+          conda version : 26.5.3
+    conda-build version : not installed
+         python version : 3.14.6.final.0
+                 solver : libmamba (default)
+       virtual packages : __archspec=1=skylake
+                          __conda=26.5.3=0
+                          __cuda=13.3=0
+                          __win=10.0.26200=0
+       base environment : D:\miniconda  (writable)
+      conda av data dir : D:\miniconda\etc\conda
+  conda av metadata url : None
+           channel URLs : https://repo.anaconda.com/pkgs/main/win-64
+                          https://repo.anaconda.com/pkgs/main/noarch
+                          https://repo.anaconda.com/pkgs/r/win-64
+                          https://repo.anaconda.com/pkgs/r/noarch
+                          https://repo.anaconda.com/pkgs/msys2/win-64
+                          https://repo.anaconda.com/pkgs/msys2/noarch
+          package cache : D:\miniconda\pkgs
+                          C:\Users\juenan\.conda\pkgs
+                          C:\Users\juenan\AppData\Local\conda\conda\pkgs
+       envs directories : D:\miniconda\envs
+                          C:\Users\juenan\.conda\envs
+                          C:\Users\juenan\AppData\Local\conda\conda\envs
+    temporary directory : C:\Users\juenan\AppData\Local\Temp
+               platform : win-64
+             user-agent : conda/26.5.3 requests/2.34.2 CPython/3.14.6 Windows/11 Windows/10.0.26200 solver/libmamba conda-libmamba-solver/26.7.0 libmambapy/2.3.2 aau/0.8.1 c/. s/. e/. i/.
+          administrator : False
+             netrc file : None
+           offline mode : False
+
+
+An unexpected error has occurred. Conda has prepared the above report.
+If you suspect this error is being caused by a malfunctioning plugin,
+consider using the --no-plugins option to turn off plugins.
+
+Example: conda --no-plugins install <package>
+
+Alternatively, you can set the CONDA_NO_PLUGINS environment variable on
+the command line to run the command without plugins enabled.
+
+Example: CONDA_NO_PLUGINS=true conda install <package>
+

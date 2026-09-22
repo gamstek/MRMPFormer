@@ -1,0 +1,12 @@
+[INFO] 已加载推理配置: configs/massnova.json
+[WARN] mzML has non-UTF-8 bytes (often GBK in userParam/method_path); decoding GBK runs and re-encoding to UTF-8 before load
+[OK] massnova test2_1: 60 通道 / 97 候选 / 89 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test2_special_v2_rerun\prediction_refined\test2_1
+[WARN] mzML has non-UTF-8 bytes (often GBK in userParam/method_path); decoding GBK runs and re-encoding to UTF-8 before load
+[OK] massnova test2_2: 60 通道 / 84 候选 / 83 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test2_special_v2_rerun\prediction_refined\test2_2
+[WARN] mzML has non-UTF-8 bytes (often GBK in userParam/method_path); decoding GBK runs and re-encoding to UTF-8 before load
+[OK] massnova test2_3: 60 通道 / 89 候选 / 85 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test2_special_v2_rerun\prediction_refined\test2_3
+===== 样本摘要 =====
+  test2_1: 通道=60 候选=97 峰=89 模型框=72 信号兜底=17
+  test2_2: 通道=60 候选=84 峰=83 模型框=71 信号兜底=12
+  test2_3: 通道=60 候选=89 峰=85 模型框=74 信号兜底=11
+[DONE] massnova 完成: 3 个 mzML, 合计 180 通道 / 257 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test2_special_v2_rerun | 报告: D:\yinlibo\MRMPFormer\output\inference\massnova_test2_special_v2_rerun\inference_report_test2_special_v2_rerun.md

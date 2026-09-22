@@ -24,7 +24,6 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent
 TRUEDATA_TEST_DIR = ROOT_DIR / "truedata" / "test"
 
-from pyopenms import MzMLFile, MSExperiment
 import matplotlib.pyplot as plt
 import numpy as np
 import os

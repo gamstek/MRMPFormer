@@ -1,0 +1,53 @@
+{
+  "model": "D:\\yinlibo\\MRMPFormer\\model\\checkpoint\\mrmpformerv2.onnx",
+  "provider": "CPUExecutionProvider",
+  "contract_compatible": true,
+  "checks": [
+    {
+      "batch": 1,
+      "height": 300,
+      "width": 400,
+      "scores_shape": [
+        1,
+        3
+      ],
+      "boxes_shape": [
+        1,
+        3,
+        4
+      ],
+      "pixel_mapping_max_error": 3.0517578125e-05
+    },
+    {
+      "batch": 2,
+      "height": 300,
+      "width": 400,
+      "scores_shape": [
+        2,
+        3
+      ],
+      "boxes_shape": [
+        2,
+        3,
+        4
+      ],
+      "pixel_mapping_max_error": 3.0517578125e-05
+    },
+    {
+      "batch": 3,
+      "height": 192,
+      "width": 448,
+      "scores_shape": [
+        3,
+        3
+      ],
+      "boxes_shape": [
+        3,
+        3,
+        4
+      ],
+      "pixel_mapping_max_error": 3.0517578125e-05
+    }
+  ],
+  "scope": "ONNX contract and runtime only; not a compiled C API integration test"
+}

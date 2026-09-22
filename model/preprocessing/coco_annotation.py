@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-从人工标注 xlsx + mzML 生成 COCO 格式训练数据集（QuanFormer/MRMPFormer 通用）。
+从人工标注 xlsx + mzML 生成 COCO 格式训练数据集（QuanFormer/MRMPFormer通用）。
 
 流程：
 1. 对每个 mzML 调用 preprocessing.xic_extraction.extract_xic_with_pyopenms 生成 ROI 图像

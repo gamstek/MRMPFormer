@@ -1,0 +1,9 @@
+﻿reason,count,reason_label,percentage_of_red_yellow,note
+SCORE_AI_MISSING,4019,AI模型分缺失,59.13772807533844,原因可以重叠，各行比例不能相加
+COMPOSITE_SCORE_THRESHOLD,1337,复合置信度低,19.673337257210125,原因可以重叠，各行比例不能相加
+TRAD_REFERENCE_LOW_QUALITY,1316,传统参照质量低,19.364331959976457,原因可以重叠，各行比例不能相加
+TRAD_ONLY_AI_MISS,1186,传统峰未匹配到AI峰,17.451442024720425,原因可以重叠，各行比例不能相加
+RT_HARD_LIMIT,287,RT差超过0.30 min,4.22307239552678,原因可以重叠，各行比例不能相加
+AREA_HARD_LIMIT,82,面积差超过4倍,1.2065921130076516,原因可以重叠，各行比例不能相加
+AI_ONLY_EXTRA,39,AI竞争性额外峰,0.5738669805768098,原因可以重叠，各行比例不能相加
+MATCH_AMBIGUOUS,38,匹配存在歧义,0.559152442613302,原因可以重叠，各行比例不能相加

@@ -1,0 +1,5 @@
+﻿mzml_stem,chrom_index,uid,compound_name,q1,peak_no,rt_min,rt_peak,rt_max,apex_intensity,area,snr,n_points,validated,model_score,signal_score,signal_score_snr_component,signal_score_points_component,peak_score,score_source,boundary_source
+test3_3,388,napropamide-2,napropamide-2,272.1,1,7.6958,7.7934,7.9254,168512.44,818213.5836,47.842,11,True,0.8605471253395081,,,,0.8605471253395081,model,model
+test3_3,388,napropamide-2,napropamide-2,272.1,2,7.89,7.9817,8.1263,159505.64,744192.9371,104.011,12,True,0.9084096550941467,,,,0.9084096550941467,model,model
+test3_3,388,napropamide-2,napropamide-2,272.1,3,8.2198,8.2751,8.3302,62707.84,235850.6742,38.3,7,False,,0.7734298640992118,0.792960696079732,0.7,0.7734298640992118,signal_rule,signal
+test3_3,641,spinetoram L-1,spinetoram L-1,760.4,1,7.5316,7.6142,7.8027,145067.17,619038.6881,2901343349150600.0,12,True,0.9724564552307129,,,,0.9724564552307129,model,model

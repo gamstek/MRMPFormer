@@ -1,0 +1,9 @@
+﻿score_source,alert_level,count
+model,GREEN,2015
+model,RED,44
+model,UNAVAILABLE,28
+model,YELLOW,70
+signal_rule,GREEN,108
+signal_rule,RED,504
+signal_rule,UNAVAILABLE,135
+signal_rule,YELLOW,96

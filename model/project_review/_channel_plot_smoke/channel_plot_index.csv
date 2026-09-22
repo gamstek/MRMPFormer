@@ -1,0 +1,6 @@
+﻿sample_id,uid,ai_chrom_index,n_ai_peaks,n_trad_peaks,n_ignored_weak,n_review_required,channel_alert_level,random_order,plot_path
+test3_5,procymidone-1,341,1,1,0,1,YELLOW,1,plots\test3_5\0003_chrom341_procymidone-1_YELLOW.png
+test3_21,mevinphos-2,80,1,1,0,0,GREEN,2,plots\test3_21\0001_chrom080_mevinphos-2_GREEN.png
+test3_51,pyridaben-1,685,1,1,0,0,GREEN,3,plots\test3_51\0004_chrom685_pyridaben-1_GREEN.png
+test3_39,prosulfocarb-2,560,1,1,0,0,GREEN,4,plots\test3_39\0002_chrom560_prosulfocarb-2_GREEN.png
+test3_9,imazalil-2,198,1,1,0,0,GREEN,5,plots\test3_9\0005_chrom198_imazalil-2_GREEN.png

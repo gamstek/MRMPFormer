@@ -1,0 +1,6 @@
+﻿chrom_index,uid,q1,reason,n_points,max_intensity
+0,TIC_0_v_3.0.0,,tic_excluded,3453,37624552.898801714
+697,avermectin B1a-1,895.5,low_max_intensity,200,193.96862570991
+698,avermectin B1a-2,895.5,low_max_intensity,200,106.1306089303616
+703,ivermectin B1a-1,897.5,low_max_intensity,199,209.48869772627586
+704,ivermectin B1a-2,897.5,low_max_intensity,200,245.44176105037826

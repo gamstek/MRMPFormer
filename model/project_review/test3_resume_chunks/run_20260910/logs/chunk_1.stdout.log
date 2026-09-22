@@ -1,0 +1,25 @@
+[INFO] 已加载推理配置: configs\massnova.json
+[OK] massnova test3_26: 702 通道 / 1102 候选 / 848 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_26
+[OK] massnova test3_3: 700 通道 / 2937 候选 / 1072 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_3
+[OK] massnova test3_30: 701 通道 / 932 候选 / 810 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_30
+[OK] massnova test3_34: 702 通道 / 857 候选 / 774 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_34
+[OK] massnova test3_38: 702 通道 / 856 候选 / 782 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_38
+[OK] massnova test3_42: 702 通道 / 819 候选 / 767 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_42
+[OK] massnova test3_46: 702 通道 / 812 候选 / 762 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_46
+[OK] massnova test3_50: 702 通道 / 802 候选 / 758 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_50
+[OK] massnova test3_54: 702 通道 / 789 候选 / 752 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_54
+[OK] massnova test3_58: 646 通道 / 5082 候选 / 1221 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_58
+[OK] massnova test3_7: 697 通道 / 2753 候选 / 1094 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3\prediction_refined\test3_7
+===== 样本摘要 =====
+  test3_26: 通道=702 候选=1102 峰=848 模型框=662 信号兜底=186
+  test3_3: 通道=700 候选=2937 峰=1072 模型框=465 信号兜底=607
+  test3_30: 通道=701 候选=932 峰=810 模型框=685 信号兜底=125
+  test3_34: 通道=702 候选=857 峰=774 模型框=690 信号兜底=84
+  test3_38: 通道=702 候选=856 峰=782 模型框=689 信号兜底=93
+  test3_42: 通道=702 候选=819 峰=767 模型框=692 信号兜底=75
+  test3_46: 通道=702 候选=812 峰=762 模型框=693 信号兜底=69
+  test3_50: 通道=702 候选=802 峰=758 模型框=695 信号兜底=63
+  test3_54: 通道=702 候选=789 峰=752 模型框=700 信号兜底=52
+  test3_58: 通道=646 候选=5082 峰=1221 模型框=190 信号兜底=1031
+  test3_7: 通道=697 候选=2753 峰=1094 模型框=493 信号兜底=601
+[DONE] massnova 完成: 11 个 mzML, 合计 7658 通道 / 9640 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test3 | 报告: D:\yinlibo\MRMPFormer\output\inference\massnova_test3\inference_report_test3.md

@@ -1,0 +1,25 @@
+[INFO] 已加载推理配置: configs/massnova.json
+[OK] massnova 农残混标-2: 12 通道 / 170 候选 / 53 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test1_special_v2_rerun\prediction_refined\农残混标-2
+[OK] massnova 农残混标-3: 12 通道 / 145 候选 / 40 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test1_special_v2_rerun\prediction_refined\农残混标-3
+[OK] massnova 农残混标-4: 12 通道 / 145 候选 / 33 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test1_special_v2_rerun\prediction_refined\农残混标-4
+[OK] massnova 农残混标-5: 12 通道 / 160 候选 / 51 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test1_special_v2_rerun\prediction_refined\农残混标-5
+[OK] massnova 农残混标-6: 12 通道 / 175 候选 / 53 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test1_special_v2_rerun\prediction_refined\农残混标-6
+[OK] massnova 农残混标-7: 12 通道 / 163 候选 / 51 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test1_special_v2_rerun\prediction_refined\农残混标-7
+[OK] massnova 农残混标-8: 12 通道 / 177 候选 / 50 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test1_special_v2_rerun\prediction_refined\农残混标-8
+[OK] massnova 农残混标: 12 通道 / 149 候选 / 36 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test1_special_v2_rerun\prediction_refined\农残混标
+[OK] massnova 空白1-2: 10 通道 / 500 候选 / 107 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test1_special_v2_rerun\prediction_refined\空白1-2
+[OK] massnova 空白1-3: 10 通道 / 470 候选 / 82 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test1_special_v2_rerun\prediction_refined\空白1-3
+[OK] massnova 空白1: 9 通道 / 450 候选 / 53 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test1_special_v2_rerun\prediction_refined\空白1
+===== 样本摘要 =====
+  农残混标-2: 通道=12 候选=170 峰=53 模型框=17 信号兜底=36
+  农残混标-3: 通道=12 候选=145 峰=40 模型框=19 信号兜底=21
+  农残混标-4: 通道=12 候选=145 峰=33 模型框=17 信号兜底=16
+  农残混标-5: 通道=12 候选=160 峰=51 模型框=16 信号兜底=35
+  农残混标-6: 通道=12 候选=175 峰=53 模型框=15 信号兜底=38
+  农残混标-7: 通道=12 候选=163 峰=51 模型框=17 信号兜底=34
+  农残混标-8: 通道=12 候选=177 峰=50 模型框=14 信号兜底=36
+  农残混标: 通道=12 候选=149 峰=36 模型框=15 信号兜底=21
+  空白1-2: 通道=10 候选=500 峰=107 模型框=7 信号兜底=100
+  空白1-3: 通道=10 候选=470 峰=82 模型框=0 信号兜底=82
+  空白1: 通道=9 候选=450 峰=53 模型框=4 信号兜底=49
+[DONE] massnova 完成: 11 个 mzML, 合计 125 通道 / 609 峰 → D:\yinlibo\MRMPFormer\output\inference\massnova_test1_special_v2_rerun | 报告: D:\yinlibo\MRMPFormer\output\inference\massnova_test1_special_v2_rerun\inference_report_test1_special_v2_rerun.md
