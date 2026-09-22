@@ -43,7 +43,7 @@ Use four-space indentation and preserve surrounding style. Python modules and fu
 
 Python tests use `unittest` in `model/tests/test_*.py`. C++ uses assertion-based `test_*.cpp` executables registered with CTest in `cpp/CMakeLists.txt`. Add regression coverage for changed behavior, especially peak boundaries, thresholds, and API ownership. ONNX integration tests require `model/checkpoint/mrmpformerv2.onnx`. No numerical coverage threshold is configured.
 
-Cross-language tests live entirely in root `tests/`. Import 256 real inputs with `uv run tests/import_inputs.py <validation-package-directory>`, then run `uv run tests/run_parity.py` after building the Windows package and Cython extensions. It builds its own native driver and compares source Python, compiled Cython, and the C DLL using the saved inputs. Read `tests/results/report.html` for complete results. Packaging runs this suite automatically. Real input JSON files stay local and are not committed.
+Cross-language tests live entirely in root `tests/`. The 256 real regression inputs in `tests/inputs/` are committed test fixtures. Run `uv run tests/run_parity.py` after building the Windows package and Cython extensions. It builds its own native driver and compares source Python, compiled Cython, and the C DLL using the saved inputs. Read `tests/results/report.html` for complete results. Packaging runs this suite automatically. Use `uv run tests/import_inputs.py <validation-package-directory> --output <empty-directory>` only to reimport the original validation inputs; preserve intentional parameter edits in the committed fixtures.
 
 ## Commit & Pull Request Guidelines
 

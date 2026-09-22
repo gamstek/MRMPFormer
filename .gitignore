@@ -13,7 +13,6 @@ __pycache__/
 /.venv/
 /tests/build/
 /tests/results/
-/tests/inputs/*.json
 
 # MRMPFormer 训练产物
 MRMPFormer/logs/
