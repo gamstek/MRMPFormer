@@ -11,7 +11,7 @@
 
 用法:
   python run_two_round_detection.py --batch_predictions results/batch_predictions --images_root xic-roi-batch --model checkpoint/quanformer.pth
-  python run_two_round_detection.py ... --min_confidence 0.99 --min_snr 10 --min_secondary_ratio 0.05
+  python run_two_round_detection.py ... --min_confidence 0.5 --min_snr 10 --min_secondary_ratio 0.05
 """
 import argparse
 import os
@@ -524,7 +524,7 @@ def filter_candidates_for_second_round(
     rt_array,
     intensity_matrix,
     roi_windows,
-    min_confidence=0.99,
+    min_confidence=0.5,
     min_snr=10.0,
     min_secondary_ratio=0.05,
     noise_barrier_ratio=0.5,
@@ -667,7 +667,7 @@ def build_masked_subdir_for_candidates(
     return len(candidates), orig_to_new
 
 
-def run_newtest_on_dir(images_path, model_path, output_dir, threshold=0.99):
+def run_newtest_on_dir(images_path, model_path, output_dir, threshold=0.5):
     """对目录运行 newtest，输出 prediction.csv 到 output_dir。"""
     pred_out = Path(output_dir) / "prediction.csv"
     pred_out.parent.mkdir(parents=True, exist_ok=True)
@@ -690,7 +690,7 @@ def merge_to_newprediction(
     orig_to_new_map,
     output_path,
     *,
-    min_confidence: float = 0.99,
+    min_confidence: float = 0.5,
     round2_skipped_images: Optional[Set[str]] = None,
 ):
     """
@@ -844,7 +844,7 @@ def main():
     parser.add_argument("--model", type=str, required=True, help="模型 checkpoint 路径")
     parser.add_argument("--output_base", type=str, default="../output/inference/two_round",
                         help="输出根目录：masked/ round2/ newprediction/ plots/")
-    parser.add_argument("--min_confidence", type=float, default=0.99)
+    parser.add_argument("--min_confidence", type=float, default=0.5)
     parser.add_argument("--min_snr", type=float, default=10.0)
     parser.add_argument("--min_secondary_ratio", type=float, default=0.05)
     parser.add_argument("--noise_barrier_ratio", type=float, default=0.5,

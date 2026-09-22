@@ -206,8 +206,8 @@ static void qf_default_config_impl(QfConfig* config) {
     if (config == nullptr) {
         return;
     }
-    *config = {nullptr, "./mrmpformer_results/", nullptr, 0, 0.99f, 0.0f,
-               300, -1, 128, 10, 1000.0f};
+    *config = {nullptr, "./mrmpformer_results/", nullptr, 0, 0.5f, 0.8f,
+               300, 0, 128, 10, 1000.0f};
 }
 
 static QfError qf_init_impl(const QfConfig* config) {
@@ -522,7 +522,7 @@ const char* qf_get_error(void) {
 
 const char* qf_version(void) {
     return guard_value<const char*>(
-        "qf_version", boundary_error, [] { return "0.1.0"; });
+        "qf_version", boundary_error, [] { return "0.2.0"; });
 }
 
 int32_t qf_is_gpu_enabled(void) {

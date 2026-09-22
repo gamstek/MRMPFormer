@@ -27,6 +27,16 @@ MRMPFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 
 ## 开发时间线
 
+### 2026-09-21
+
+- 重构(cpp/ + model/inference/massnova*): C 接口推理由 C++ 私有整通道 ONNX/单峰兜底改为同进程 CPython+Cython 桥接，公开 `qf_*` ABI 与 JSON 结构保持不变；抽取 Python 共享单通道后处理核心，新增缓存 ONNX Session 的数组入口，模型峰及通过 SNR/点数/面积门控并完成去重的所有信号峰统一进入 `peaks[]` 且通道 `status=ok`；标准 Python 与 C 运行时统一使用 `mrmpformerv2.onnx`、CPU provider、threshold/smooth_sigma=0.5/0.8，模型峰采用严格 `score > threshold`；11 项本次发布相关的 Python/真实 ONNX 回归通过，`test3_3` 前 64 个有效通道共 133 峰的两入口 `a/b/c` 最大绝对差均为 0；四个 Cython 模块完成 C 源生成，当前机器因缺少 Microsoft Visual C++ 14+ 尚未产出新 `.pyd`/DLL，二进制 C API 验收待具备 MSVC 后执行。
+
+### 2026-09-18
+
+- 测试(软件集成 runtime 新版 ONNX): 使用 `TQ8000Server/third_party/mrmpformer/runtime/windows` 的 DLL 与更新后 `mrmpformerv2.onnx` 运行纯 C++ 十档 threshold 扫描；模型输出分数变为 0.258288/0.506118/0.347113，threshold=0.5 保留最高分峰，threshold≥0.79 切换为 `SIGNAL_FALLBACK`。
+- 重构(cpp/src/task_manager.cpp+tests/test_api.cpp): 移除检测结果的信号峰顶搜索与边界扩展，仅校验检测框并按 ROI 坐标映射为 RT，保持模型预测边界；更新当前 ONNX 对应的 API 回归断言，完整 6 项 CTest 通过。
+- 代码生成(cpp/third_party/onnxruntime+cmake): 内置 ONNX Runtime 1.23.2 Windows x64 GPU SDK（头文件、导入库及运行时 DLL），补充 MIT 许可证与 Git LFS 规则，CMake 在 Windows 默认使用项目内 SDK；无外部 `ONNXRUNTIME_ROOT` 的全新 Release 构建及 6 项 CTest 通过。
+
 ### 2026-09-03
 
 - 代码生成(cpp/): 新建 C++20 MRMPFormer 共享库骨架与公开 C ABI，定义异步任务接口、结构化单条色谱提交结构和 ONNX Runtime 查找模块；补充 ABI 编译契约测试与构建目录忽略规则。
@@ -185,3 +195,14 @@ MRMPFormer 是一个基于深度学习的 LC-MS 代谢组学峰检测与定量�
 - 重构(全局整理·产物清理): output 从 7.8GB 降至 2.6GB —— output/train 各 run 删中间 checkpoint 仅留最终 checkpoint.pth + log.txt + config_used.txt（7.4GB→2.3GB）；output/evaluation 删旧 6 模型对比 cmp/cmp_m1_t05/cmp_s08/cmp_tol02 与 fdr_trace（保留 grid4/grid4_test2/grid4_test2_vis 三份四模型对比，对应 docs/model_eval_grid_test1test2_4models.md）；删 output/test（verify_step5）、output/inference/fullscan_test1_mrmv2（massnova 旧名产物）、QC 冗余（仅留 coco_traindatav1 训练数据存证）、空目录 roi/visualization/_smoke/archive；special_peak_isolation 删 special_v2_dbg 与 __pycache__（保留完整证据链：报告/v2 标签/25 张复核叠加图/评估指标/_pipeline/全部脚本）
 - 重构(全局整理·脚本与配置): 删过时配置 10 个（evaluation_cmp_×6 对应已删 cmp 产物、mrmpformer_v1_fdr/v1_multisrc 输出目录已不存在、mrmpformer_v3_cascade/v3_layered 无文档失败变体）+ 过时文档 5 个（docs/plan_debug/plan_terminal/plan_products/plan_inference_outputs_restructure 已完成工作方案、joint_evaluation_4models 旧四模型对比）+ 一次性脚本 model/_inspect_labels.py、tools/diagnostics/verify_snr_dual_matrix.py（BASE 硬编码锚定已删 verify_step5 数据）
 - 调试(全局整理·引用修正): inference_pipeline.json/massnova.json/export_onnx.py/fdr_trace.py 的权重引用由已删 mrmpformerv2.pth（或不存在 mrmpformerv3.pth）统一改指 checkpoint/mrmpformer.pth；inference_pipeline.json output_dir 由已删 ../output/test/verify_step5 改 null（走默认命名）；evaluation_baseline.json 清除指向已删 pred_v1_fixed 的复用路径改为 run_inference=1 模板；README 配置表/目录树/示例命令（6 处 --model）同步，blank_label.md 删 §10 诊断工具章并重编号后续章节
+### 2026-09-21
+
+- 构建与交付：C++ 构建恢复到 `cpp/build/`，Cython 生成代码、临时对象和扩展模块保存在 `model/build/`；新增 `tools/build_windows_package.py`，最终 Windows x64 CPU 集成包统一输出到 `build/windows/`。
+- 集成：随包提供私有 Python 3.11、运行依赖、模型、头文件、导入库、自检程序和集成说明；保持原有 C ABI，并修复 DLL 位于中文路径时的 Python 模块路径编码问题。
+- 开发环境：使用 uv 在仓库根目录创建 Python 3.11 `.venv`，安装 `cpp/requirements-runtime.txt`；一键打包默认选择该解释器，测试使用 `uv run tools/test_inference_parity.py`，无需用户目录中的长路径。
+- 三方对照组织：跨语言测试统一迁至根目录 `tests/`，120 份可编辑输入保存在 `tests/inputs/`，运行 `uv run tests/run_parity.py` 读取磁盘输入，分别调用 Python 源码、`model/build/` 的 Cython 扩展和 C DLL。原生驱动独立构建到 `tests/build/`，逐例三方数值表与原始 JSON 输出到 `tests/results/`；打包流程同步使用新入口。
+- 打包入口及交付清理：根目录 `tools/` 合并为单文件 `build.sh`（Git Bash），默认使用 `.venv`；报告、清单统一留在 `tests/results/`，自检在临时目录执行。`build/windows/` 排除示例、自检程序、测试报告及第三方编译源码/头文件/调试文件，保留运行库、模型、集成头文件/导入库和许可证。通过新 sh 入口重新打包，120 项三方对照及 CPU/自动回退验证通过。
+- 打包脚本拆分：`build.sh` 缩减为纯 Shell 入口，参数处理后调用 `model/tools/build_windows_package.py`；依赖安装和打包校验逻辑移入 Python 文件，根目录 `tools/` 不恢复。保留原命令与输出布局，验证 Shell/Python 语法、帮助参数、非法参数退出码及跨工作目录路径解析。
+- CPU/GPU 统一交付：恢复与旧集成 SDK 同版本的 ONNX Runtime 1.23.2 CUDA/CPU 发行包，默认自动选择 GPU、不可用时回退 CPU，强制 GPU 不允许静默回退。CUDA/cuDNN 使用目标机环境，不引入 NVIDIA pip 包。打包包含 CUDA provider 和 MSVC CRT，并增加真实 C 接口的设备选择验收及 HTML 三方报告。4 项 CTest、5 项设备策略单测、120 项三方对照通过；本机无 NVIDIA GPU，实测 CPU 与自动回退，GPU 实机验证待在对应硬件完成。
+- 验证：4 项 CTest、构建目录测试及源码/编译模块各 11 项 MassNova 测试通过；集成包搬移到含中文和空格的路径，隔离开发环境后执行双峰/低强度输入，C 与源码 Python 的峰坐标最大绝对差为 0。
+- 一致性回归：新增 `tools/test_inference_parity.py` 和原生 C ABI 测试驱动，120 个固定种子合成输入覆盖 12 类信号和 5 组配置，分别对比源码 Python 与 C 批量/单条接口，共 240 次对照；120 项通过，其中 90 项返回峰，同调用方式的数值最大绝对差为 0。单条和批量分别建立参考结果，保留 ONNX 批次形状导致的 float32 舍入区别；3 项比较器防漏检测试通过。打包流程自动执行回归，报告写入 `parity_report.json`，完整输入和输出保存在 `cpp/build/parity-results/`。

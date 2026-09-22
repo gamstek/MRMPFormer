@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 static int check(QfError error, const char* operation) {
     if (error == QF_OK) {
@@ -18,14 +19,14 @@ int main(int argc, char** argv) {
     char* result_json = NULL;
     int exit_code = 1;
 
-    if (argc != 3) {
-        fprintf(stderr, "usage: %s <mrmpformerv2.onnx> <input.json>\n", argv[0]);
+    if (argc != 3 && argc != 4) {
+        fprintf(stderr, "usage: %s <mrmpformerv2.onnx> <input.json> [use_gpu: -1=CPU, 0=auto, 1=GPU]\n", argv[0]);
         return 2;
     }
 
     qf_default_config(&config);
     config.model_path = argv[1];
-    config.use_gpu = -1; /* force CPU for this example */
+    config.use_gpu = argc == 4 ? atoi(argv[3]) : 0;
     config.max_workers = 1;
 
     if (!check(qf_init(&config), "qf_init")) {

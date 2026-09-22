@@ -1,5 +1,8 @@
 model/checkpoint/mrmpformerv2.pth filter=lfs diff=lfs merge=lfs -text
 model/checkpoint/mrmpformerv2.onnx filter=lfs diff=lfs merge=lfs -text
+cpp/third_party/onnxruntime/lib/*.dll filter=lfs diff=lfs merge=lfs -text
+cpp/third_party/onnxruntime/lib/*.lib filter=lfs diff=lfs merge=lfs -text
+*.sh text eol=lf
 model/checkpoint/mrmpformer_special_v2.onnx filter=lfs diff=lfs merge=lfs -text
 model/project_review/test3_cpp_validation_1d4ba0f.zip filter=lfs diff=lfs merge=lfs -text
 model/project_review/test3_cpp_validation_1d4ba0f/model/mrmpformerv2.onnx filter=lfs diff=lfs merge=lfs -text

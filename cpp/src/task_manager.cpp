@@ -1,14 +1,10 @@
 #include "task_manager.h"
 
-#include "roi_renderer.h"
-#include "signal_processing.h"
-
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
-#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -43,117 +39,6 @@ private:
 bool terminal(QfTaskStatus status) {
     return status == QF_TASK_SUCCESS || status == QF_TASK_FAILED ||
            status == QF_TASK_CANCELLED;
-}
-
-double pixel_to_rt(float pixel_x, const RoiImage& image) {
-    const double fraction = std::clamp(
-        static_cast<double>(pixel_x) / static_cast<double>(image.width),
-        0.0,
-        1.0);
-    return image.rt_min + fraction * (image.rt_max - image.rt_min);
-}
-
-std::optional<PeakResult> refine_detection(const CompoundData& compound,
-                                           const RoiImage& image,
-                                           const Detection& detection) {
-    if (image.width <= 0 || !(image.rt_min < image.rt_max) ||
-        compound.x.size() != compound.y.size() || compound.x.size() < 2) {
-        return std::nullopt;
-    }
-
-    const double mapped_left = pixel_to_rt(detection.x1, image);
-    const double mapped_right = pixel_to_rt(detection.x2, image);
-    if (!(mapped_left < mapped_right)) {
-        return std::nullopt;
-    }
-
-    auto left_it = std::lower_bound(compound.x.begin(), compound.x.end(), mapped_left);
-    auto right_it = std::upper_bound(compound.x.begin(), compound.x.end(), mapped_right);
-    if (left_it == compound.x.end() || right_it == compound.x.begin()) {
-        return std::nullopt;
-    }
-    std::size_t left = static_cast<std::size_t>(
-        std::distance(compound.x.begin(), left_it));
-    std::size_t right = static_cast<std::size_t>(
-        std::distance(compound.x.begin(), right_it - 1));
-    if (right < left) {
-        return std::nullopt;
-    }
-
-    const auto apex_it = std::max_element(
-        compound.y.begin() + static_cast<std::ptrdiff_t>(left),
-        compound.y.begin() + static_cast<std::ptrdiff_t>(right + 1));
-    const std::size_t apex = static_cast<std::size_t>(
-        std::distance(compound.y.begin(), apex_it));
-
-    left = apex;
-    while (left > 0 && compound.y[left - 1] <= compound.y[left]) {
-        --left;
-    }
-    right = apex;
-    while (right + 1 < compound.y.size() &&
-           compound.y[right + 1] <= compound.y[right]) {
-        ++right;
-    }
-    if (left >= right || !(compound.x[left] < compound.x[right])) {
-        return std::nullopt;
-    }
-    return PeakResult{compound.x[left], compound.x[right], detection.score};
-}
-
-CompoundResult low_intensity_result(const CompoundData& compound,
-                                    const SignalQc& qc) {
-    return {
-        compound.uid,
-        "alert",
-        {},
-        {{"fail",
-          "CHANNEL_LOW_INTENSITY",
-          {{"n_points", static_cast<double>(qc.n_points)},
-           {"max_intensity", qc.max_intensity}}}},
-    };
-}
-
-CompoundResult detection_result(const CompoundData& compound,
-                                const RoiImage& image,
-                                const std::vector<Detection>& detections) {
-    CompoundResult result;
-    result.uid = compound.uid;
-    for (const Detection& detection : detections) {
-        if (const auto peak = refine_detection(compound, image, detection)) {
-            result.peaks.push_back(*peak);
-        }
-    }
-    std::sort(result.peaks.begin(), result.peaks.end(),
-              [](const PeakResult& left, const PeakResult& right) {
-                  if (left.a != right.a) {
-                      return left.a < right.a;
-                  }
-                  if (left.b != right.b) {
-                      return left.b < right.b;
-                  }
-                  return left.c > right.c;
-              });
-
-    if (!result.peaks.empty()) {
-        result.status = "ok";
-        return result;
-    }
-
-    const auto fallback = find_signal_fallback(compound);
-    if (fallback && fallback->a < fallback->b && fallback->c > 0.0) {
-        result.status = "review";
-        result.peaks.push_back(*fallback);
-        result.alerts.push_back(
-            {"review",
-             "SIGNAL_FALLBACK",
-             {{"a", fallback->a}, {"b", fallback->b}, {"c", fallback->c}}});
-        return result;
-    }
-
-    result.status = "alert";
-    result.alerts.push_back({"fail", "NO_PEAK_FOUND", {}});
-    return result;
 }
 
 }  // namespace
@@ -200,8 +85,7 @@ TaskManager::~TaskManager() {
 }
 
 QfError TaskManager::start(std::string* error) {
-    if (!inference_.load_model(config_->model_path, config_->values)) {
-        *error = inference_.last_error();
+    if (!bridge_.initialize(config_->model_path, config_->values, error)) {
         return QF_ERR_MODEL_LOAD;
     }
 
@@ -259,6 +143,7 @@ void TaskManager::shutdown() {
         }
     }
     workers_.clear();
+    bridge_.shutdown();
 }
 
 QfError TaskManager::submit(std::vector<CompoundData> items,
@@ -417,7 +302,7 @@ QfError TaskManager::result_json(int64_t task_id,
 }
 
 bool TaskManager::is_gpu_enabled() const {
-    return inference_.is_gpu_enabled();
+    return bridge_.is_gpu_enabled();
 }
 
 bool TaskManager::is_worker_or_callback_context() const noexcept {
@@ -540,58 +425,27 @@ void TaskManager::worker_loop() {
 
 void TaskManager::process_task(const std::shared_ptr<Task>& task) {
     try {
-        TaskResult task_result;
-        task_result.items.resize(task->items.size());
-        std::vector<RoiImage> images;
-        std::vector<std::size_t> inferred_indices;
-        images.reserve(task->items.size());
-        inferred_indices.reserve(task->items.size());
-
-        int32_t completed = 0;
-        for (std::size_t index = 0; index < task->items.size(); ++index) {
-            if (cancellation_requested(task)) {
-                return;
-            }
-            if (processing_timed_out(task)) {
-                complete_failure(task, "task processing timed out");
-                return;
-            }
-            const CompoundData& compound = task->items[index];
-            const SignalQc qc = inspect_signal(compound, config_->values);
-            if (!qc.accepted) {
-                task_result.items[index] = low_intensity_result(compound, qc);
-                update_progress(task, ++completed);
-                continue;
-            }
-            const float sigma = compound.smooth_sigma > 0.0f
-                                    ? compound.smooth_sigma
-                                    : config_->values.smooth_sigma;
-            images.push_back(render_roi(compound, sigma));
-            inferred_indices.push_back(index);
-        }
-
         if (cancellation_requested(task)) {
             return;
         }
-        const auto detections = inference_.infer_batch(images, config_->values.threshold);
-        if (detections.size() != images.size()) {
-            throw std::runtime_error("inference result count does not match ROI count");
+        if (processing_timed_out(task)) {
+            complete_failure(task, "task processing timed out");
+            return;
         }
-        for (std::size_t inferred = 0; inferred < inferred_indices.size(); ++inferred) {
-            if (cancellation_requested(task)) {
-                return;
-            }
-            if (processing_timed_out(task)) {
-                complete_failure(task, "task processing timed out");
-                return;
-            }
-            const std::size_t item_index = inferred_indices[inferred];
-            task_result.items[item_index] = detection_result(
-                task->items[item_index], images[inferred], detections[inferred]);
-            update_progress(task, ++completed);
+        std::string output;
+        std::string bridge_error;
+        if (!bridge_.process(task->items, &output, &bridge_error)) {
+            complete_failure(task, std::move(bridge_error));
+            return;
         }
-
-        const std::string output = generate_output_json(task_result);
+        if (cancellation_requested(task)) {
+            return;
+        }
+        if (processing_timed_out(task)) {
+            complete_failure(task, "task processing timed out");
+            return;
+        }
+        update_progress(task, task->items_total);
         const fs::path result_path = fs::path(config_->work_dir) /
                                      ("result_" + std::to_string(task->id) + ".json");
         std::ofstream file(result_path, std::ios::binary | std::ios::trunc);

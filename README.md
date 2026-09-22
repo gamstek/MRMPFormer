@@ -78,7 +78,7 @@ wiff/ + msdata/ ──(converters 格式转换)──> mzml/ ──(coco_annotat
 | - | ---------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------ |
 | 1 | **标注 RT 一致性** | `label_qc` → 训练数据构建 & 推理管线          | ①跨样品：同化合物同通道在各样品间 RT 极差；②双离子：同一样品中定量/定性离子 RT 极差。**极差 >1 min 判疑似实验有误**：警示人工复核 + 涉事行剔除（不生成 ROI / 不进训练 bbox） | `--qc_label_rt_tol`(1.0)                                               | `output/QC/<run>/qc1_label_rt.csv`                     |
 | 2 | ROI 通道级          | `preprocessing/xic_extraction.py`   | 平滑后整条 XIC 最大强度过低、RT 点数过少 → 不生成 ROI                                                                        | `--pipeline_min_max_intensity`(1000)、`--pipeline_min_chrom_points`(10) | 各样品 `pipeline_qc_excluded.csv` → 汇总 `qc2_roi.csv`      |
-| 3 | 预测框级             | `inference/predictor.py`            | score < 阈值的检测框不输出；feature 无化合物则跳过                                                                         | `--threshold`(0.99)                                                    | 各样品 `qc3_threshold_<样本名>.csv` → 汇总 `qc3_threshold.csv` |
+| 3 | 预测框级             | `inference/predictor.py`            | score ≤ 阈值的检测框不输出；feature 无化合物则跳过                                                                         | `--threshold`(0.5)                                                     | 各样品 `qc3_threshold_<样本名>.csv` → 汇总 `qc3_threshold.csv` |
 | 4 | SNR 框级           | `postprocessing/snr_filter.py`      | 框外 SNR、框外噪声点数联合判定                                                                                         | `--snr_min`(10.0)、`--snr_min_noise_points`(5)                          | 各样品 `qc4_snr_<样本名>.csv` → 汇总 `qc4_snr.csv`             |
 | 5 | 精修框级             | `postprocessing/peak_refinement.py` | 精修置信度、SNR、次峰比例、框宽上限等门控                                                                                    | `--post_min_confidence`(0.99)、`--post_min_snr`(10.0) 等                 | 各样品 `qc5_refined_<样本名>.csv` → 汇总 `qc5_refined.csv`     |
 
@@ -336,7 +336,7 @@ python -m inference.cli --mode pipeline `
   --labels ../data/label/<实验>.xlsx `
   --batch_dir ../data/mzml/<实验> `
   --output_dir ../output/pipeline_batch `
-  --threshold 0.99 --plot `
+  --threshold 0.5 --plot `
   --snr_min 10.0 `
   --pipeline_min_max_intensity 1000 `
   --pipeline_min_chrom_points 10
@@ -347,7 +347,7 @@ python -m inference.cli --mode pipeline `
   --labels ../data/label/<实验>.xlsx `
   --mzml ../data/mzml/<实验>/<文件>.mzML `
   --output_dir ../output/pipeline_single_test `
-  --threshold 0.99 --plot
+  --threshold 0.5 --plot
 ```
 
 > **ROI 生成方式（B 范式）**：`roi` / `pipeline` 模式**必须传** **`--labels`**（标注驱动）——仅标注命中通道生成 ROI，窗口中心 = 标注 `rt` 字段，并由防线 1（标注 RT 一致性）把关（剔除涉事通道）；不再支持 apex（最高强度点）通道驱动。`massnova` 模式不依赖标注。
@@ -454,12 +454,12 @@ python -m inference.cli `
   --model checkpoint/quanformer.pth `
   # 【必填】人工标注 xlsx（roi/pipeline 模式标注驱动生成 ROI；massnova 模式忽略）
   --labels ../data/label/<实验>.xlsx `
-  # 置信度阈值（默认 0.99，建议 0.99 起步，过低会引入假峰）
-  --threshold 0.99 `
+  # 模型峰阈值（默认 0.5；仅 score > 0.5 的模型框通过）
+  --threshold 0.5 `
   # 积分方式（默认 linear）：linear / raw / external_baseline
   --integration_method linear `
   # 高斯平滑 sigma（默认 0.0，越大峰越平滑但可能合并近邻峰）
-  --smooth_sigma 0.0 `
+  --smooth_sigma 0.8 `
   # 输出目录（默认按模式自动生成，见「输出目录约定」）
   --output_dir ../output/pipeline_batch `
   # 实验名（用于输出目录与推理报告名 inference_report_<实验名>.md；缺省自动回退）
@@ -560,9 +560,9 @@ python -m inference.cli `
 | `--model`              | 必填（roi 除外）       | 模型 `.pth` 路径                                           |
 | `--labels`             | 必填（roi/pipeline） | 人工标注 xlsx（标注驱动 ROI；massnova 忽略）                        |
 | `--mode`               | `pipeline`       | 运行模式：`roi` / `roi2inference` / `pipeline` / `massnova` |
-| `--threshold`          | `0.99`           | 置信度阈值                                                  |
+| `--threshold`          | `0.5`            | 模型峰阈值（严格 score > threshold）                        |
 | `--integration_method` | `linear`         | `linear` / `raw` / `external_baseline`                 |
-| `--smooth_sigma`       | `0.0`            | 高斯平滑 sigma                                             |
+| `--smooth_sigma`       | `0.8`            | 高斯平滑 sigma                                             |
 | `--plot`               | —                | 生成预测框标注图                                               |
 | `--plot_style`         | `xic`            | 预测图型：`xic`（XIC 曲线）/ `roi`（原图叠框）                       |
 | `--exp_name`           | 自动回退             | 实验名（报告名/输出目录用）                                        |

@@ -25,7 +25,7 @@ class MassNovaOutputTests(unittest.TestCase):
             peak.update(model_score=0.95, validated=True, boundary_source="model",
                         rt_min=1.35, rt_max=1.65)
 
-        args = SimpleNamespace(model="fixture.pth", threshold=0.6,
+        args = SimpleNamespace(model="fixture.pth", threshold=0.5,
                                no_plots=True, plot=False, smooth_sigma=0)
         with tempfile.TemporaryDirectory() as out, \
                 patch("inference.massnova.extract_full_xics", return_value=([feature], [])), \

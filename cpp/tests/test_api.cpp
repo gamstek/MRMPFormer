@@ -229,7 +229,7 @@ void test_init_validates_and_deep_copies_config(const fs::path& work_dir) {
     config.model_path = model_path.c_str();
     config.work_dir = work_path.c_str();
     config.max_workers = 1;
-    config.threshold = 0.6f;
+    config.threshold = 0.5f;
     config.task_timeout_sec = 0;
     config.use_gpu = -1;
     config.batch_size = 8;
@@ -326,15 +326,9 @@ void test_mixed_batch_callback_and_result_ownership(const fs::path& work_dir) {
 
     const json& fallback = output["items"][1];
     assert(fallback["uid"] == "fallback");
-    assert(fallback["status"] == "review");
-    assert(fallback["peaks"].size() == 1);
-    assert(fallback["alerts"].size() == 1);
-    assert(fallback["alerts"][0]["level"] == "review");
-    assert(fallback["alerts"][0]["code"] == "SIGNAL_FALLBACK");
-    for (const char* field : {"a", "b", "c"}) {
-        assert(fallback["alerts"][0]["detail"][field] ==
-               fallback["peaks"][0][field]);
-    }
+    assert(fallback["status"] == "ok");
+    assert(!fallback["peaks"].empty());
+    assert(fallback["alerts"].empty());
 
     const json& low = output["items"][2];
     assert(low["uid"] == "low");
