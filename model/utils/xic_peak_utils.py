@@ -28,41 +28,79 @@ def get_noise_regions_outside_box(rt_array, intensity_row, rt_min, rt_max, min_p
     return left_region, right_region
 
 
-def compute_snr_outside_box(rt_array, intensity_row, rt_min, rt_max):
+def _global_quiet_noise_pp(intensity_row, low_frac=0.4, pp_lo=5.0, pp_hi=95.0):
+    """
+    全迹安静点峰-峰噪声与基线：强度 ≤ low_frac 分位的点视为安静点。
+    用于截断峰双侧框外噪声均不可用时的兜底；返回 (noise_pp, baseline)，
+    点数不足或退化时返回 (nan, nan)。
+    """
+    y = np.maximum(np.asarray(intensity_row, dtype=np.float64), 0.0)
+    if y.size < 4:
+        return np.nan, np.nan
+    thr = float(np.percentile(y, 100.0 * float(low_frac)))
+    quiet = y[y <= thr]
+    if quiet.size < 3:
+        quiet = y
+    pp = float(np.percentile(quiet, pp_hi) - np.percentile(quiet, pp_lo))
+    if pp <= 0:
+        pp = float(np.max(quiet) - np.min(quiet))
+    if pp <= 0:
+        return np.nan, np.nan
+    return pp, float(np.median(quiet))
+
+
+def compute_snr_outside_box(rt_array, intensity_row, rt_min, rt_max, tail_reject_scale=3.0):
     """
     以预测框外区域为噪声参考的峰-峰信噪比。
     SNR = 2 * (peak_max - baseline) / max(noise_pp_left, noise_pp_right)
+
+    截断峰守卫：某侧框外区中值 > tail_reject_scale × 全迹低十分位均值（仍处峰尾）时，
+    该侧不参与噪声估计；双侧均不可用时回退全迹安静点估计，最后才退回段内估计。
     """
-    mask = (rt_array >= rt_min) & (rt_array <= rt_max)
-    int_seg = intensity_row[mask].astype(np.float64)
+    rt = np.asarray(rt_array, dtype=np.float64)
+    intensity = np.asarray(intensity_row, dtype=np.float64)
+    mask = (rt >= rt_min) & (rt <= rt_max)
+    int_seg = intensity[mask].astype(np.float64)
     int_seg = np.maximum(int_seg, 0.0)
     if int_seg.size < 5 or np.max(int_seg) <= 0:
         return np.nan
     peak_max = float(np.max(int_seg))
 
+    low_ref = roi_full_low_decile_mean_intensity(intensity)
     left_region, right_region = get_noise_regions_outside_box(
-        rt_array, intensity_row, rt_min, rt_max, min_points=3, frac=0.2
+        rt, intensity, rt_min, rt_max, min_points=3, frac=0.2
     )
     all_noise = []
     noise_pp_left = np.nan
     noise_pp_right = np.nan
     if left_region.size >= 2:
         left_region = np.maximum(left_region.astype(np.float64), 0.0)
-        all_noise.extend(left_region.tolist())
-        noise_pp_left = float(np.max(left_region) - np.min(left_region))
+        if float(np.median(left_region)) <= tail_reject_scale * max(low_ref, 1e-9):
+            all_noise.extend(left_region.tolist())
+            noise_pp_left = float(np.max(left_region) - np.min(left_region))
     if right_region.size >= 2:
         right_region = np.maximum(right_region.astype(np.float64), 0.0)
-        all_noise.extend(right_region.tolist())
-        noise_pp_right = float(np.max(right_region) - np.min(right_region))
+        if float(np.median(right_region)) <= tail_reject_scale * max(low_ref, 1e-9):
+            all_noise.extend(right_region.tolist())
+            noise_pp_right = float(np.max(right_region) - np.min(right_region))
 
     if np.isnan(noise_pp_left) and np.isnan(noise_pp_right):
+        pp_glob, base_glob = _global_quiet_noise_pp(intensity)
+        if np.isfinite(pp_glob) and np.isfinite(base_glob):
+            signal = peak_max - base_glob
+            if signal <= 0:
+                return np.nan
+            return 2.0 * signal / pp_glob
         return _compute_snr_peak_to_peak(int_seg)
     noise_pp = np.nanmax([x for x in (noise_pp_left, noise_pp_right) if not np.isnan(x)])
     if noise_pp <= 0:
         noise_pp = 1e-10
     baseline = float(np.median(all_noise)) if all_noise else np.nan
     if not all_noise or np.isnan(baseline):
-        return _compute_snr_peak_to_peak(int_seg)
+        pp_glob, base_glob = _global_quiet_noise_pp(intensity)
+        if not (np.isfinite(pp_glob) and np.isfinite(base_glob)):
+            return _compute_snr_peak_to_peak(int_seg)
+        baseline = base_glob
     signal = peak_max - baseline
     if signal <= 0:
         return np.nan
@@ -271,7 +309,7 @@ def has_secondary_peak_in_roi(rt_array, intensity_row, rt_min, rt_max, rt_lo, rt
 def compute_local_snr(rt_array, intensity_row, rt_min, rt_max,
                       neighbor_intervals=None, min_noise_pts=3,
                       baseline_percentile=25.0, low_noise_frac=0.4,
-                      max_flank_span_min=2.0):
+                      max_flank_span_min=2.0, tail_reject_scale=3.0):
     """
     本地 SNR（整谱场景专用）：噪声参考取"本峰边界到最近相邻峰边界之间"的安静区段，
     避免把相邻峰计入噪声导致 SNR 低估。
@@ -285,6 +323,10 @@ def compute_local_snr(rt_array, intensity_row, rt_min, rt_max,
 
     某侧无邻居或点数不足时，回退到该侧框外扇区内的"低强度安静点"
     （强度 <= 该扇区分位 low_noise_frac 的点），再不足则用整扇区。
+
+    截断峰守卫（tail_reject_scale）：某侧区段安静点中值 >
+    tail_reject_scale × 全迹低十分位均值（仍处峰尾，常见于峰被运行末端/窗口截断）时，
+    该侧不参与噪声估计；双侧均不可用时回退全迹安静点估计。
 
     SNR = 2 * (apex - baseline) / max(noise_pp_left, noise_pp_right)
     """
@@ -302,6 +344,7 @@ def compute_local_snr(rt_array, intensity_row, rt_min, rt_max,
     if int_box.size < 5 or float(np.max(int_box)) <= 0:
         return np.nan
     apex = float(np.max(int_box))
+    low_ref = roi_full_low_decile_mean_intensity(intensity)
 
     peers = []
     if neighbor_intervals:
@@ -344,8 +387,9 @@ def compute_local_snr(rt_array, intensity_row, rt_min, rt_max,
         left_region = _quiet_points(None, left_region)
     if left_region is not None and left_region.size >= 2:
         lv = np.maximum(left_region.astype(np.float64), 0.0)
-        all_noise.extend(lv.tolist())
-        noise_pp_left = float(np.max(lv) - np.min(lv))
+        if float(np.median(lv)) <= tail_reject_scale * max(low_ref, 1e-9):
+            all_noise.extend(lv.tolist())
+            noise_pp_left = float(np.max(lv) - np.min(lv))
 
     # ---- 右侧 ----
     right_mask = rt > rt_max
@@ -368,11 +412,19 @@ def compute_local_snr(rt_array, intensity_row, rt_min, rt_max,
         right_region = _quiet_points(None, right_region)
     if right_region is not None and right_region.size >= 2:
         rv = np.maximum(right_region.astype(np.float64), 0.0)
-        all_noise.extend(rv.tolist())
-        noise_pp_right = float(np.max(rv) - np.min(rv))
+        if float(np.median(rv)) <= tail_reject_scale * max(low_ref, 1e-9):
+            all_noise.extend(rv.tolist())
+            noise_pp_right = float(np.max(rv) - np.min(rv))
 
     if np.isnan(noise_pp_left) and np.isnan(noise_pp_right):
-        return np.nan
+        # 双侧均不可用（截断/全占满）：全迹安静点兜底，避免返回 nan 误杀门控
+        pp_glob, base_glob = _global_quiet_noise_pp(intensity)
+        if not (np.isfinite(pp_glob) and np.isfinite(base_glob)):
+            return np.nan
+        signal = apex - base_glob
+        if signal <= 0:
+            return np.nan
+        return 2.0 * signal / pp_glob
     noise_pp = np.nanmax([x for x in (noise_pp_left, noise_pp_right) if not np.isnan(x)])
     if noise_pp <= 0:
         noise_pp = 1e-10

@@ -26,7 +26,7 @@
   "_comment_plot_style": "[pipeline/roi2inference] --plot 的图型：xic=XIC 曲线+多 query 阴影+置信度信息框（默认，输出 model_plots/）；roi=ROI 原图叠红框（predicted_plots/，功能保留）",
   "plot_style": "xic",
   "_comment_pipeline_min_max_intensity": "[QC] 平滑后整条 XIC 最大强度低于此值的通道不生成 ROI、不参与预测；0=关闭",
-  "pipeline_min_max_intensity": 1000.0,
+  "pipeline_min_max_intensity": 3000.0,
   "_comment_pipeline_min_chrom_points": "[QC] 单条色谱 RT 点数少于此时剔除；0=关闭",
   "pipeline_min_chrom_points": 10,
   "_comment_snr_min": "[SNR] 框外 SNR 阈值（验证：空白假阳性最大 4.7，混标真峰最小 58，取 10 可零误杀全拦空白）",

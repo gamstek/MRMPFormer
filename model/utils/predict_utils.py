@@ -35,73 +35,129 @@ def rescale_bboxes(out_bbox, size, device):
     return b
 
 
-def predict(images_path, model, transform, threshold=0.9, device='cpu', verbose=False, return_all=False, qc_stats=None):
+def _build_result(img_path, probas, pred_boxes_item, size, threshold, return_all, qc_stats):
+    """把单图输出整理成结果 dict（无检测且 return_all=False 时返回 None）。
+
+    probas: [num_queries, 1] 峰类别概率；pred_boxes_item: [num_queries, 4] 归一化 cxcywh。
+    该函数被逐图路径与批处理路径共用，保证两条路径结果完全一致。
+    """
+    # 计算置信度：DETR 约定 logits 布局为 [类别0, ..., 类别N-1, no-object]，
+    # no-object 恒在最后一列。本项目单类（num_classes=1）：峰=类别0，no-object=索引1，
+    # 故取 [..., :1]（类别 0）。不要用 [..., :-1] 或 [..., 1:]（都会取到 no-object 列）。
+    keep = probas.max(-1).values > threshold  # [num_queries]
+
+    if qc_stats is not None:
+        n_queries = int(probas.shape[0])
+        n_kept = int(keep.sum().item())
+        qc_stats.append({
+            "image": os.path.basename(img_path),
+            "n_queries": n_queries,
+            "n_kept": n_kept,
+            "n_dropped": n_queries - n_kept,
+            "max_confidence": float(probas.max().item()) if probas.numel() else None,
+        })
+
+    if keep.any():
+        boxes = pred_boxes_item[keep].cpu()
+        scores = probas[keep].cpu().squeeze(-1)
+        boxes = rescale_bboxes(boxes, size, device='cpu')
+        return {
+            'boxes': boxes.numpy(),
+            'scores': scores.numpy(),
+            'image_path': img_path,
+        }
+    if return_all:
+        return {
+            'boxes': np.empty((0, 4)),
+            'scores': np.empty((0, 1)),
+            'image_path': img_path,
+        }
+    return None
+
+
+def predict(images_path, model, transform, threshold=0.9, device='cpu', verbose=False,
+            return_all=False, qc_stats=None, batch_size=1):
     """
     对 ROI 图像列表进行预测。verbose=False 时不打印逐图 DEBUG，加快运行。
     return_all=False: 仅当某张图存在置信度 > threshold 的检测时才追加结果（与 newtest 兼容）
     return_all=True:  每张图都返回结果，无检测时 boxes/scores 为空（用于 plot 时生成全部图像）
     qc_stats (list, optional): 提供时逐图追加阈值丢弃统计 dict（image/n_queries/n_kept/n_dropped/max_confidence），
         用于 output/QC 的 qc3_threshold.csv（样本内为 qc3_threshold_<样本名>.csv）。
+    batch_size (>1): 在 PyTorch 路径上把多张 ROI 拼成一个 batch 前向，摊薄逐图 kernel/预处理的固定开销。
+        同一 batch 内图像尺寸不一致时自动退回逐图处理，结果与 batch_size=1 完全一致。
     """
     predict_results = []
+    bs = int(batch_size or 1)
 
-    for img_path in images_path:
-        with Image.open(img_path).convert('RGB') as im:
+    if bs <= 1:
+        for img_path in images_path:
+            with Image.open(img_path).convert('RGB') as im:
+                if verbose:
+                    print(f"[DEBUG] Processing: {os.path.basename(img_path)}")
+                    print(f"[DEBUG] Image size (W,H): {im.size}")
+
+                # 预处理：转 tensor + 归一化
+                img_tensor = transform(im).unsqueeze(0).to(device)  # [1, C, H, W]
+
+                # 模型推理
+                with torch.no_grad():
+                    outputs = model(img_tensor)
+
+                # 解析输出
+                pred_logits = outputs['pred_logits']  # [1, num_queries, 2]
+                pred_boxes = outputs['pred_boxes']    # [1, num_queries, 4]
+                probas = pred_logits.softmax(-1)[0, :, :1]  # [num_queries, 1]
+
+                if verbose:
+                    max_conf = probas.max().item()
+                    keep_n = int((probas.max(-1).values > threshold).sum().item())
+                    print(f"[DEBUG] Max confidence: {max_conf:.6f}, detections: {keep_n}")
+
+                res = _build_result(img_path, probas, pred_boxes[0], im.size,
+                                    threshold, return_all, qc_stats)
+                if res is not None:
+                    predict_results.append(res)
+        return predict_results
+
+    # ---- 批处理路径 ----
+    total = len(images_path)
+    for start in range(0, total, bs):
+        chunk = list(images_path[start:start + bs])
+        tensors, sizes = [], []
+        for img_path in chunk:
+            with Image.open(img_path).convert('RGB') as im:
+                tensors.append(transform(im))
+                sizes.append(im.size)
+        shapes = {(t.shape[-2], t.shape[-1]) for t in tensors}
+
+        if len(shapes) != 1:
+            # 尺寸不一致：退回逐图，保证与 batch_size=1 结果一致
+            for img_path, tensor, size in zip(chunk, tensors, sizes):
+                with torch.no_grad():
+                    outputs = model(tensor.unsqueeze(0).to(device))
+                probas = outputs['pred_logits'].softmax(-1)[0, :, :1]
+                if verbose:
+                    print(f"[DEBUG] Processing: {os.path.basename(img_path)}")
+                res = _build_result(img_path, probas, outputs['pred_boxes'][0], size,
+                                    threshold, return_all, qc_stats)
+                if res is not None:
+                    predict_results.append(res)
+            continue
+
+        batch = torch.stack(tensors).to(device)  # [B, C, H, W]
+        with torch.no_grad():
+            outputs = model(batch)
+        pred_logits = outputs['pred_logits']  # [B, num_queries, 2]
+        pred_boxes = outputs['pred_boxes']    # [B, num_queries, 4]
+        probas_all = pred_logits.softmax(-1)[:, :, :1]  # [B, num_queries, 1]
+        for k, img_path in enumerate(chunk):
             if verbose:
-                print(f"[DEBUG] Processing: {os.path.basename(img_path)}")
-                print(f"[DEBUG] Image size (W,H): {im.size}")
-            
-            # 预处理：转 tensor + 归一化
-            img_tensor = transform(im).unsqueeze(0).to(device)  # [1, C, H, W]
-            
-            # 模型推理
-            with torch.no_grad():
-                outputs = model(img_tensor)
-            
-            # 解析输出
-            pred_logits = outputs['pred_logits']  # [1, num_queries, 2]
-            pred_boxes = outputs['pred_boxes']    # [1, num_queries, 4]
-            
-            # 计算置信度：DETR 约定 logits 布局为 [类别0, ..., 类别N-1, no-object]，
-            # no-object 恒在最后一列。本项目单类（num_classes=1）：峰=类别0，no-object=索引1，
-            # 故取 [..., :1]（类别 0）。不要用 [..., :-1] 或 [..., 1:]（都会取到 no-object 列）。
-            probas = pred_logits.softmax(-1)[0, :, :1]  # [num_queries, 1]
-            keep = probas.max(-1).values > threshold     # [num_queries]
-            
-            if verbose:
-                max_conf = probas.max().item()
-                print(f"[DEBUG] Max confidence: {max_conf:.6f}, detections: {keep.sum().item()}")
-            
-            if qc_stats is not None:
-                n_queries = int(probas.shape[0])
-                n_kept = int(keep.sum().item())
-                qc_stats.append({
-                    "image": os.path.basename(img_path),
-                    "n_queries": n_queries,
-                    "n_kept": n_kept,
-                    "n_dropped": n_queries - n_kept,
-                    "max_confidence": float(probas.max().item()) if probas.numel() else None,
-                })
-            
-            if keep.any():
-                # 获取有效检测
-                boxes = pred_boxes[0, keep].cpu()
-                scores = probas[keep].cpu().squeeze(-1)
-                boxes = rescale_bboxes(boxes, im.size, device='cpu')
-                result = {
-                    'boxes': boxes.numpy(),
-                    'scores': scores.numpy(),
-                    'image_path': img_path
-                }
-                predict_results.append(result)
-            elif return_all:
-                result = {
-                    'boxes': np.empty((0, 4)),
-                    'scores': np.empty((0, 1)),
-                    'image_path': img_path
-                }
-                predict_results.append(result)
-    
+                print(f"[DEBUG] Processing: {os.path.basename(img_path)} (batch {k + 1}/{len(chunk)})")
+            res = _build_result(img_path, probas_all[k], pred_boxes[k], sizes[k],
+                                threshold, return_all, qc_stats)
+            if res is not None:
+                predict_results.append(res)
+
     return predict_results
 
 
@@ -175,6 +231,7 @@ def build_predictor(
     verbose=False,
     plot_out_filenames=None,
     qc_stats=None,
+    batch_size=1,
 ):
     device = resolve_torch_device(verbose=True)
 
@@ -293,7 +350,8 @@ def build_predictor(
     
     # ========== 执行预测 ==========
     return_all = plot
-    results = predict(image_paths, model, transform, threshold, device, verbose=verbose, return_all=return_all, qc_stats=qc_stats)
+    results = predict(image_paths, model, transform, threshold, device, verbose=verbose,
+                      return_all=return_all, qc_stats=qc_stats, batch_size=batch_size)
     n_with_det = sum(1 for r in results if len(r.get('boxes', [])) > 0)
     print(f"[INFO] Detected peaks in {n_with_det} images (total {len(results)}).")
     

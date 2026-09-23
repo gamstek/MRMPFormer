@@ -173,6 +173,47 @@ def load_timing(out_root):
     return None, None, None, None
 
 
+def load_timing_record(out_root):
+    """读取 pipeline_timing_runs.jsonl 的最后一条记录（= 本次运行的分阶段耗时）。"""
+    tl = Path(out_root) / "pipeline_timing_runs.jsonl"
+    if not tl.is_file():
+        return None
+    try:
+        last = None
+        with open(tl, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    last = line
+        return json.loads(last) if last else None
+    except Exception:
+        return None
+
+
+def render_timing_section(record):
+    """本次运行各模块耗时表（数据源：pipeline 计时记录）。"""
+    L = []
+    L.append("## 5. 运行用时（各模块）")
+    L.append("")
+    stage_seconds = (record or {}).get("stage_seconds") or {}
+    total = float((record or {}).get("total_seconds") or 0.0)
+    if not stage_seconds:
+        L.append("（本次运行未采集分模块计时；pipeline 模式默认采集，`--no_timing` 只影响日志落盘）")
+        L.append("")
+        return "\n".join(L)
+    if total <= 0:
+        total = sum(float(v) for v in stage_seconds.values())
+    L.append(f"- 本次总耗时: {total:.2f} s | 记录时间: {(record or {}).get('timestamp', '未知')}")
+    L.append("")
+    L.append("| 模块 | 耗时 (s) | 占比 |")
+    L.append("|---|---|---|")
+    for name, sec in stage_seconds.items():
+        sec = float(sec)
+        pct = (100.0 * sec / total) if total > 0 else 0.0
+        L.append(f"| {name} | {sec:.2f} | {pct:.1f}% |")
+    L.append("")
+    return "\n".join(L)
+
+
 def qc_summary_text(out_root):
     qc_dir = Path(out_root).parent.parent / "QC" / out_root.name
     if not qc_dir.is_dir():
@@ -231,14 +272,14 @@ COLUMN_GUIDE = [
 
 def _appendix(out_root, snr_root):
     L = []
-    L.append("## 5. 管线各阶段说明（模型输出之后）")
+    L.append("## 6. 管线各阶段说明（模型输出之后）")
     L.append("")
     L.append("| 阶段 | 做什么 | 产物位置 |")
     L.append("|---|---|---|")
     for name, what, where in PIPELINE_STAGES:
         L.append(f"| {name} | {what} | `{where}` |")
     L.append("")
-    L.append("## 6. 输出文件与关键列说明")
+    L.append("## 7. 输出文件与关键列说明")
     L.append("")
     L.append("| 文件 | 关键列含义 |")
     L.append("|---|---|")
@@ -251,7 +292,7 @@ def _appendix(out_root, snr_root):
 
 
 def render_report(out_root, snr_root, adf, per_sample, samples, timestamp, mode,
-                  n_samples, total_seconds, qc_path, qc_text):
+                  n_samples, total_seconds, qc_path, qc_text, timing_record=None):
     L = []
     L.append("# 推理报告")
     L.append("")
@@ -292,6 +333,9 @@ def render_report(out_root, snr_root, adf, per_sample, samples, timestamp, mode,
         L.append("")
         L.append(qc_text.strip())
         L.append("")
+    # 运行用时（各模块）
+    L.append(render_timing_section(timing_record))
+    L.append("")
     L.append(_appendix(out_root, snr_root))
     L.append("")
     L.append("---")
@@ -305,7 +349,8 @@ def _fmt(v):
 
 def generate_for_pipeline(output_dir, snr_root=None, roi_root=None,
                           exp_name=None,
-                          integration_method="snr", do_integrate=True, verbose=True):
+                          integration_method="snr", do_integrate=True, verbose=True,
+                          timing_record=None):
     """生成推理报告，返回摘要 dict。
 
     供 CLI 手动调用与 pipeline 模式跑完后自动调用共用。
@@ -339,9 +384,12 @@ def generate_for_pipeline(output_dir, snr_root=None, roi_root=None,
     adf.to_csv(all_csv, index=False, encoding="utf-8-sig")
 
     timestamp, mode, n_samples, total_seconds = load_timing(out_root)
+    if timing_record is None:
+        timing_record = load_timing_record(out_root)
     qc_path, qc_text = qc_summary_text(out_root)
     md = render_report(out_root, snr_root, adf, per_sample, samples,
-                       timestamp, mode, n_samples, total_seconds, qc_path, qc_text)
+                       timestamp, mode, n_samples, total_seconds, qc_path, qc_text,
+                       timing_record=timing_record)
     exp_name = (exp_name or "").strip() or out_root.name
     report_md = out_root / ("inference_report_%s.md" % exp_name)
     report_md.write_text(md, encoding="utf-8")

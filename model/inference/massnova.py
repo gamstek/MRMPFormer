@@ -8,13 +8,13 @@ massnova — 整谱 XIC 全峰识别推理模式（Phase 0-4）
   Phase1  enumerate_peaks       find_peaks + prominence 候选枚举（双门槛、RT 尺度 distance、
                                 前沿区排除、相邻谷不显著合并、单通道上限）；候选仅带预估 rt
   Phase3b validate_with_model   模型前置：全部候选按预估 rt 切 ±1min 窗 → 批量 build_predictor
-                                → apex 落框配对；命中者边界直接取模型框（boundary_source=model）
-  Phase2/3a 兜底                仅对模型未命中残差做两遍边界精修（复用 adjust_first_round_interval，
-                                以模型框为 peer 防撞）+ SNR/峰高/点数/面积门控（boundary_source=signal）
+                                → apex 落框配对；命中者以模型框为种子做双向基线精修
+  Phase2/3a 兜底                模型未命中残差做两遍边界精修（复用 adjust_first_round_interval，
+                                以精修模型框为 peer）+ SNR/峰高/点数/面积门控（boundary_source=signal）
   Phase4  write_outputs         实验布局输出（对齐 pipeline）：
                                 <实验根>/prediction_refined/<样本>/  最终 CSV + 2min 窗口图
                                 <实验根>/prediction_signal/<样本>/   2min 窗口图（信号兜底边界）
-                                <实验根>/prediction_model/<样本>/    2min 窗口图（模型框边界）
+                                <实验根>/prediction_model/<样本>/    2min 窗口图（模型原始框，未精修）
                                 <实验根>/scan_plots|model_plots/<样本>/  长 XIC 图
   Phase5  write_massnova_report 跨样本推理报告 inference_report_<实验名>.md + all.csv
 
@@ -34,6 +34,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -49,7 +50,12 @@ ROOT_DIR = Path(__file__).resolve().parent.parent  # model/ 目录
 from utils.mzml_chromatogram_ids import filesystem_slug_for_native_id, resolve_native_ids_for_chromatograms
 from utils.quantify import AREA_TIME_UNIT_SCALE
 from utils.roi_rt_mapping import box_to_rt_range, rt_window_bounds_minutes
-from utils.xic_peak_utils import compute_local_snr, roi_full_low_decile_mean_intensity
+from utils.xic_peak_utils import (
+    compute_local_snr,
+    one_sided_edge_stop_threshold_stable_tail_mean,
+    one_sided_low_noise_baseline,
+    roi_full_low_decile_mean_intensity,
+)
 from utils.peak_scores import signal_peak_score, unified_peak_score
 from inference.two_round_detection import adjust_first_round_interval
 
@@ -326,6 +332,7 @@ def enumerate_peaks(rt, intensity, baseline_percentile=25.0, baseline_mode="glob
 def refine_all_boundaries(rt, intensity, apexes, init_half_width_min=0.05,
                           boundary_posterior_lookahead=5, boundary_posterior_mean_scale=1.25,
                           edge_noise_stop_mode="stable_tail_mean", edge_max_span_min=1.0,
+                          edge_threshold_scale=1.0,
                           peer_rt_intervals=None):
     """
     Phase2（兜底路径）：对给定候选做两遍精修（D13）。
@@ -357,6 +364,7 @@ def refine_all_boundaries(rt, intensity, apexes, init_half_width_min=0.05,
             min_secondary_ratio=0.05,
             edge_noise_stop_mode=str(edge_noise_stop_mode),
             edge_max_span_min=float(edge_max_span_min),
+            edge_threshold_scale=float(edge_threshold_scale),
             boundary_posterior_lookahead=int(boundary_posterior_lookahead),
             boundary_posterior_mean_scale=float(boundary_posterior_mean_scale),
             peer_rt_intervals=peers,
@@ -371,6 +379,205 @@ def refine_all_boundaries(rt, intensity, apexes, init_half_width_min=0.05,
         peers = external + [(a, b) for i2, (a, b) in enumerate(pass1)
                  if i2 != j and np.isfinite(a) and np.isfinite(b) and b > a]
         pass2.append(_walk(ap, peers or None))
+    return pass2
+
+
+def _boundary_stop_levels(rt, intensity, apex_idx, edge_noise_stop_mode,
+                          edge_max_span_min, edge_noise_percentile=25.0,
+                          edge_threshold_scale=1.0, max_stop_apex_ratio=0.2):
+    """Return the same left/right stop levels used by interval adjustment.
+
+    护栏：单侧停阈值必须显著低于本峰 apex。尾窗（apex±edge_max_span_min）内若存在
+    更高的邻近峰，该侧“基线”估计会被邻居峰翼抬高——极端时可达 apex 之上，此时阈值
+    已不是基线，会让边界在 apex 后一步就截停（半峰截断）。故估计值 ≥ apex 时按
+    ``max_stop_apex_ratio``（默认 0.2，即不高于 apex 的 20%）封顶。
+    """
+    rt = np.asarray(rt, dtype=np.float64)
+    y = np.maximum(np.asarray(intensity, dtype=np.float64), 0.0)
+    apex_rt = float(rt[int(apex_idx)])
+    mode = str(edge_noise_stop_mode)
+    if mode == "low_percentile":
+        left = one_sided_low_noise_baseline(
+            rt, y, apex_rt, True,
+            max_span_min=float(edge_max_span_min),
+            noise_percentile=float(edge_noise_percentile),
+        )
+        right = one_sided_low_noise_baseline(
+            rt, y, apex_rt, False,
+            max_span_min=float(edge_max_span_min),
+            noise_percentile=float(edge_noise_percentile),
+        )
+    elif mode == "roi_bottom_decile_mean":
+        level = roi_full_low_decile_mean_intensity(y, bottom_frac=0.10)
+        left = right = level
+    else:
+        left = one_sided_edge_stop_threshold_stable_tail_mean(
+            rt, y, apex_rt, True, max_span_min=float(edge_max_span_min))
+        right = one_sided_edge_stop_threshold_stable_tail_mean(
+            rt, y, apex_rt, False, max_span_min=float(edge_max_span_min))
+    scale = float(edge_threshold_scale)
+    if not np.isfinite(scale) or scale <= 0.0:
+        scale = 1.0
+    left = float(left) * scale
+    right = float(right) * scale
+    ratio = float(max_stop_apex_ratio)
+    if not np.isfinite(ratio) or ratio <= 0.0:
+        ratio = 0.5
+    apex_y = float(y[int(apex_idx)]) if y.size else 0.0
+    if apex_y > 0.0:
+        cap = apex_y * ratio
+        if left >= apex_y:
+            left = cap
+        if right >= apex_y:
+            right = cap
+    return left, right
+
+
+def _first_stable_baseline_from_apex(rt, intensity, apex_idx, boundary_rt,
+                                     stop_level, baseline_floor, side,
+                                     lookahead, mean_scale):
+    """Find the first stable baseline crossing from the apex toward one boundary.
+
+    This is the inward-audit counterpart of the outward walkers.  A single
+    low point is not enough: the points farther away from the apex must also
+    remain close to the side-specific baseline.
+    """
+    rt = np.asarray(rt, dtype=np.float64)
+    y = np.maximum(np.asarray(intensity, dtype=np.float64), 0.0)
+    n = int(rt.size)
+    if n == 0 or side not in ("left", "right"):
+        return float(boundary_rt)
+    apex_idx = int(np.clip(int(apex_idx), 0, n - 1))
+    boundary_idx = int(np.argmin(np.abs(rt - float(boundary_rt))))
+    la = max(int(lookahead), 0)
+    scale = max(float(mean_scale), 1.0)
+    stop_level = float(stop_level)
+    baseline_floor = float(baseline_floor)
+    limit = baseline_floor + scale * max(stop_level - baseline_floor, 0.0)
+
+    if side == "left":
+        if boundary_idx >= apex_idx:
+            return float(boundary_rt)
+        indices = range(apex_idx - 1, boundary_idx - 1, -1)
+    else:
+        if boundary_idx <= apex_idx:
+            return float(boundary_rt)
+        indices = range(apex_idx + 1, boundary_idx + 1)
+
+    for idx in indices:
+        if float(y[idx]) > stop_level:
+            continue
+        if la <= 0:
+            return float(rt[idx])
+        if side == "left":
+            segment = y[max(0, idx - la + 1):idx + 1]
+        else:
+            segment = y[idx:min(n, idx + la)]
+        if segment.size and float(np.mean(segment)) <= limit:
+            return float(rt[idx])
+    return float(boundary_rt)
+
+
+def _audit_model_interval_inward(rt, intensity, apex_idx, rt_min, rt_max,
+                                 edge_noise_stop_mode="stable_tail_mean",
+                                 edge_max_span_min=1.0,
+                                 boundary_posterior_lookahead=5,
+                                 boundary_posterior_mean_scale=1.25,
+                                 baseline_proximity_ratio=0.01,
+                                 edge_threshold_scale=1.0,
+                                 min_points=5):
+    """Shrink surplus baseline from an already expanded model interval.
+
+    Each side is audited independently by walking from the candidate apex to
+    the first stable baseline crossing.  The audit can only shrink a side; it
+    never expands it and never returns a box that loses the apex or contains
+    fewer than ``min_points`` samples.
+    """
+    rt = np.asarray(rt, dtype=np.float64)
+    y = np.asarray(intensity, dtype=np.float64)
+    if rt.size != y.size or rt.size < 2:
+        return float(rt_min), float(rt_max)
+    apex_idx = int(np.clip(int(apex_idx), 0, rt.size - 1))
+    apex_rt = float(rt[apex_idx])
+    lo, hi = float(rt_min), float(rt_max)
+    if not (np.isfinite(lo) and np.isfinite(hi) and lo < apex_rt < hi):
+        return lo, hi
+
+    baseline_left, baseline_right = _boundary_stop_levels(
+        rt, y, apex_idx, edge_noise_stop_mode, edge_max_span_min,
+        edge_threshold_scale=edge_threshold_scale)
+    apex_intensity = max(float(y[apex_idx]), baseline_left, baseline_right)
+    ratio = max(float(baseline_proximity_ratio), 0.0)
+    stop_left = baseline_left + ratio * max(apex_intensity - baseline_left, 0.0)
+    stop_right = baseline_right + ratio * max(apex_intensity - baseline_right, 0.0)
+    natural_left = _first_stable_baseline_from_apex(
+        rt, y, apex_idx, lo, stop_left, baseline_left, "left",
+        boundary_posterior_lookahead, boundary_posterior_mean_scale)
+    natural_right = _first_stable_baseline_from_apex(
+        rt, y, apex_idx, hi, stop_right, baseline_right, "right",
+        boundary_posterior_lookahead, boundary_posterior_mean_scale)
+
+    audited_lo = max(lo, float(natural_left))
+    audited_hi = min(hi, float(natural_right))
+    mask = (rt >= audited_lo) & (rt <= audited_hi)
+    if (audited_lo < apex_rt < audited_hi
+            and audited_hi > audited_lo
+            and int(np.count_nonzero(mask)) >= int(min_points)):
+        return audited_lo, audited_hi
+    return lo, hi
+
+
+def refine_model_boundaries(rt, intensity, candidates, scan_params):
+    """Refine every validated model box using signal-aware boundaries.
+
+    Model boxes are seeds, not immutable final intervals.  A side whose model
+    boundary is still above its local baseline is expanded by the existing
+    posterior-aware walker.  A side already covering baseline is then audited
+    from the apex outward and shrunk to the first stable baseline crossing.
+    Two passes let other model boxes participate as peer intervals.
+    """
+    if not candidates:
+        return []
+    rt = np.asarray(rt, dtype=np.float64)
+    y = np.asarray(intensity, dtype=np.float64)
+    sp = scan_params
+    seeds = [(float(c["rt_min"]), float(c["rt_max"])) for c in candidates]
+
+    def _refine(candidate, seed, peers):
+        lo, hi = seed
+        if not (np.isfinite(lo) and np.isfinite(hi) and hi > lo):
+            return lo, hi
+        adjusted = adjust_first_round_interval(
+            rt, y, lo, hi, float(rt[0]), float(rt[-1]),
+            min_secondary_ratio=0.05,
+            edge_noise_stop_mode=sp["edge_noise_stop_mode"],
+            edge_max_span_min=sp["edge_max_span_min"],
+            edge_threshold_scale=sp["edge_threshold_scale"],
+            boundary_posterior_lookahead=sp["boundary_posterior_lookahead"],
+            boundary_posterior_mean_scale=sp["boundary_posterior_mean_scale"],
+            peer_rt_intervals=peers or None,
+            boundary_peer_thr_scale=2.0,
+        )
+        return _audit_model_interval_inward(
+            rt, y, int(candidate["apex_idx"]), adjusted[0], adjusted[1],
+            edge_noise_stop_mode=sp["edge_noise_stop_mode"],
+            edge_max_span_min=sp["edge_max_span_min"],
+            boundary_posterior_lookahead=sp["boundary_posterior_lookahead"],
+            boundary_posterior_mean_scale=sp["boundary_posterior_mean_scale"],
+            baseline_proximity_ratio=sp["model_boundary_baseline_ratio"],
+            edge_threshold_scale=sp["edge_threshold_scale"],
+            min_points=max(5, int(sp["min_peak_span_points"])),
+        )
+
+    pass1 = []
+    for index, candidate in enumerate(candidates):
+        peers = [interval for peer_index, interval in enumerate(seeds) if peer_index != index]
+        pass1.append(_refine(candidate, seeds[index], peers))
+
+    pass2 = []
+    for index, candidate in enumerate(candidates):
+        peers = [interval for peer_index, interval in enumerate(pass1) if peer_index != index]
+        pass2.append(_refine(candidate, pass1[index], peers))
     return pass2
 
 
@@ -457,9 +664,12 @@ def validate_with_model(peaks_by_channel, rts, intensities, model_path, threshol
     peaks_by_channel: {ch_idx: [candidate dicts]}（每项至少含 rt_peak）；
     rts / intensities: {ch_idx: rt/y 数组}
     就地更新每候选：model_score / validated / boundary_source / rt_min / rt_max
-    （命中 → 模型框 RT 即最终边界，boundary_source="model"；未命中候选保持原样，
+    （命中 → 模型框 RT 作为后续精修种子，boundary_source="model"；未命中候选保持原样，
     交由 Phase2/3a 兜底）。
     返回渲染窗口目录（keep_windows=True 时保留，否则清理并返回 None）。
+
+    onnx_batch_size: 候选窗口批大小，ONNX 与 torch(.pth) 两条路径共用
+    （onnx_use_gpu 仅对 ONNX 生效；torch 路径由 utils.torch_device 自动选 CUDA）。
     """
     if predictor is None and str(model_path).lower().endswith(".onnx"):
         from inference.onnx_window_predictor import OnnxWindowPredictor
@@ -506,8 +716,10 @@ def validate_with_model(peaks_by_channel, rts, intensities, model_path, threshol
     # 2) 批量推理（单轮，模型只加载一次）
     try:
         if predictor is None:
+            # torch(.pth) 路径同样支持批大小：把候选窗口拼 batch 前向，摊薄逐图开销
             results = build_predictor(model_path=model_path, images_path=tmp_dir, threshold=threshold,
-                                      plot=False, verbose=verbose)
+                                      plot=False, verbose=verbose,
+                                      batch_size=max(1, int(onnx_batch_size or 1)))
         else:
             results = predictor(images_path=tmp_dir, threshold=threshold, verbose=verbose)
     except Exception:
@@ -556,6 +768,10 @@ def validate_with_model(peaks_by_channel, rts, intensities, model_path, threshol
                     p["rt_min"] = float(left)
                     p["rt_max"] = float(right)
                     p["boundary_source"] = "model"
+                    # 保留模型原始框（后续精修只改 rt_min/rt_max，模型框另存供
+                    # prediction_model/ 出图与追溯使用）
+                    p["model_rt_min"] = float(left)
+                    p["model_rt_max"] = float(right)
             else:
                 p["model_score"] = np.nan
                 p["validated"] = False
@@ -574,7 +790,7 @@ def validate_with_model(peaks_by_channel, rts, intensities, model_path, threshol
 def _finalize_peak_metrics(rt, intensity, peaks):
     """在最终边界上统一计算 snr / n_points / area（模型框与信号框同口径）。
 
-    模型前置后，命中峰不再经过信号精修/门控，其指标需在模型框边界上补算；
+    模型前置后，命中峰会经过边界精修但不经过信号门控，其指标需在精修边界上补算；
     信号兜底峰也用同一口径重算（邻居集合含全部最终边界），保证 CSV 各行可比。
     """
     rt = np.asarray(rt, dtype=np.float64)
@@ -623,11 +839,13 @@ def _finalize_peak_scores(peaks, *, snr_pivot=10.0, points_good=10.0,
 
 def plot_massnova_stage_windows(rt, intensity, peaks, stage_dir, chrom_index, uid, q1,
                                 window_half_min=1.0, sigma=1.0, title_prefix="",
-                                boundary_source=None):
+                                boundary_source=None, model_seed=False):
     """pipeline 式 2min 窗口图：每峰 apex±window_half 切窗，窗内相交峰全部标注（多 query）。
 
     与 predictor._plot_model_xic 同用共享绘图核心 plot_xic_with_queries，样式一致；
     boundary_source=None 标注全部峰，否则只标注该来源（"signal"/"model"）的峰。
+    model_seed=True 时用模型原始框（peaks[*]["model_rt_min"/"model_rt_max"]，即精修种子）
+    画框，用于 prediction_model/；否则用最终精修边界（prediction_refined/）。
     返回本阶段实际生成的图数。
     """
     import matplotlib
@@ -649,6 +867,15 @@ def plot_massnova_stage_windows(rt, intensity, peaks, stage_dir, chrom_index, ui
     def _match(pk):
         return boundary_source is None or pk.get("boundary_source") == boundary_source
 
+    def _bounds(pk):
+        """model_seed=True → 模型原始框（未精修）；否则最终精修边界。"""
+        if model_seed:
+            lo, hi = pk.get("model_rt_min"), pk.get("model_rt_max")
+            if (lo is not None and hi is not None
+                    and np.isfinite(float(lo)) and np.isfinite(float(hi)) and float(hi) > float(lo)):
+                return float(lo), float(hi)
+        return float(pk["rt_min"]), float(pk["rt_max"])
+
     n_plots = 0
     for seed in peaks:
         if not _match(seed):
@@ -664,12 +891,13 @@ def plot_massnova_stage_windows(rt, intensity, peaks, stage_dir, chrom_index, ui
         for pk in peaks:
             if not _match(pk):
                 continue
-            if float(pk["rt_max"]) < lo_w or float(pk["rt_min"]) > hi_w:
+            pk_lo, pk_hi = _bounds(pk)
+            if pk_hi < lo_w or pk_lo > hi_w:
                 continue
             sc = pk.get("peak_score")
             queries.append({
-                "rt_lo": float(pk["rt_min"]),
-                "rt_hi": float(pk["rt_max"]),
+                "rt_lo": pk_lo,
+                "rt_hi": pk_hi,
                 "rt_peak": float(pk["rt_peak"]),
                 "height": float(pk["apex_intensity"]),
                 "snr": float(pk["snr"]),
@@ -700,10 +928,10 @@ def plot_massnova_stage_windows(rt, intensity, peaks, stage_dir, chrom_index, ui
 
 
 _MASSNOVA_WINDOW_STAGES = (
-    # (文件夹名, boundary_source 过滤（None=全部）, 图标题前缀)
-    ("prediction_signal", "signal", "Signal prediction"),
-    ("prediction_model", "model", "Model prediction"),
-    ("prediction_refined", None, "Refined prediction"),
+    # (文件夹名, boundary_source 过滤（None=全部）, 图标题前缀, 是否用模型原始框)
+    ("prediction_signal", "signal", "Signal prediction", False),
+    ("prediction_model", "model", "Model prediction", True),
+    ("prediction_refined", None, "Refined prediction", False),
 )
 
 
@@ -797,7 +1025,7 @@ def write_outputs(mzml_stem, features, peaks_by_channel, qc_excluded, out_root, 
       <实验根>/prediction_refined/<样本>/   massnova_peaks.csv / scan_summary.csv /
                                             scan_qc_excluded.csv + 2min 窗口图（最终结果）
       <实验根>/prediction_signal/<样本>/    2min 窗口图（仅信号兜底峰边界）
-      <实验根>/prediction_model/<样本>/     2min 窗口图（仅模型框峰边界）
+      <实验根>/prediction_model/<样本>/     2min 窗口图（模型原始框，未精修；含 score）
       <实验根>/scan_plots/<样本>/           长 XIC 整谱标注图（保留）
       <实验根>/model_plots/<样本>/          长 XIC 标注图（与其他模式一致，保留）
       <实验根>/scan_windows/<样本>/         模型验证窗口 JPEG（--keep_windows）
@@ -884,7 +1112,8 @@ def write_outputs(mzml_stem, features, peaks_by_channel, qc_excluded, out_root, 
             print(f"[INFO] massnova model_plots: {n_model_plots} 张 → {model_plots_dir}")
 
         # pipeline 式 2min 窗口图（三阶段：signal / model / refined，实验根级按样本分子夹）
-        for stage_name, bsrc, prefix in _MASSNOVA_WINDOW_STAGES:
+        # prediction_model/ 画模型原始框；prediction_refined/ 画精修后边界。
+        for stage_name, bsrc, prefix, use_model_seed in _MASSNOVA_WINDOW_STAGES:
             stage_dir = out_root / stage_name / key
             n_stage = 0
             for f in features:
@@ -895,7 +1124,8 @@ def write_outputs(mzml_stem, features, peaks_by_channel, qc_excluded, out_root, 
                     n_stage += plot_massnova_stage_windows(
                         f["rt"], f["intensity"], peaks, stage_dir, f["chrom_index"],
                         f["uid"], f["q1"], window_half_min=window_half_min,
-                        sigma=plot_sigma, title_prefix=prefix, boundary_source=bsrc)
+                        sigma=plot_sigma, title_prefix=prefix, boundary_source=bsrc,
+                        model_seed=use_model_seed)
                 except Exception as e:
                     print(f"[WARN] massnova {stage_name} 绘图失败 chrom{f['chrom_index']:03d}: {e}")
             if n_stage:
@@ -919,10 +1149,12 @@ def _compound_of(uid):
     return m.group(1) if m else str(uid or "").strip()
 
 
-def write_massnova_report(out_root, exp_name, sample_infos, args, total_seconds=None):
+def write_massnova_report(out_root, exp_name, sample_infos, args, total_seconds=None,
+                          stage_seconds=None):
     """Phase5：跨样本推理报告（对齐 pipeline 的 inference_report_<实验名>.md + all.csv）。
 
     sample_infos: run_massnova_on_mzml 返回的 info dict 列表。
+    stage_seconds: 各阶段累计耗时（全部样本），用于报告「运行用时（各模块）」章节。
     返回 {"report_md", "all_csv", "n_samples", "n_rows"}。
     """
     import datetime
@@ -993,7 +1225,7 @@ def write_massnova_report(out_root, exp_name, sample_infos, args, total_seconds=
     L.append("```text")
     L.append(f"{out_root.name}/")
     L.append("  prediction_signal/<样品>/    2min 窗口图（仅信号兜底峰边界，无模型分）")
-    L.append("  prediction_model/<样品>/     2min 窗口图（仅模型框峰边界，含 score）")
+    L.append("  prediction_model/<样品>/     2min 窗口图（模型原始框，未精修；含 score）")
     L.append("  prediction_refined/<样品>/   最终结果：massnova_peaks.csv / scan_summary.csv /")
     L.append("                               scan_qc_excluded.csv + 2min 窗口图（全部峰）")
     L.append("  scan_plots/<样品>/           长 XIC 整谱标注图（红=模型验证，灰=信号兜底）")
@@ -1002,19 +1234,38 @@ def write_massnova_report(out_root, exp_name, sample_infos, args, total_seconds=
     L.append("  inference_report_<实验名>.md  本报告")
     L.append("```")
     L.append("")
-    L.append("## 4. massnova_peaks.csv 关键列")
+
+    # 4. 运行用时（各模块）
+    L.append("## 4. 运行用时（各模块）")
+    L.append("")
+    if stage_seconds:
+        _total_for_pct = float(total_seconds) if total_seconds else sum(float(v) for v in stage_seconds.values())
+        L.append(f"- 本次总耗时: {_total_for_pct:.2f} s（下列阶段为全部样本累计）")
+        L.append("")
+        L.append("| 模块 | 耗时 (s) | 占比 |")
+        L.append("|---|---|---|")
+        for _name, _sec in stage_seconds.items():
+            _sec = float(_sec)
+            _pct = (100.0 * _sec / _total_for_pct) if _total_for_pct > 0 else 0.0
+            L.append(f"| {_name} | {_sec:.2f} | {_pct:.1f}% |")
+    else:
+        L.append("（本次运行未采集分模块计时）")
+    L.append("")
+
+    # 5. massnova_peaks.csv 关键列
+    L.append("## 5. massnova_peaks.csv 关键列")
     L.append("")
     L.append("| 列 | 含义 |")
     L.append("|---|---|")
-    L.append("| rt_min / rt_peak / rt_max | 峰边界与峰顶（min）；模型框峰取模型框边界 |")
+    L.append("| rt_min / rt_peak / rt_max | 峰边界与峰顶（min）；模型框与信号兜底框均经过稳定基线精修 |")
     L.append("| area / snr / n_points | 最终边界上的面积 / 本地信噪比 / baseline 以上连续点数 |")
     L.append("| validated | 模型验证通过（model_score > 阈值） |")
     L.append("| model_score | 模型置信度；未命中模型为空 |")
-    L.append("| boundary_source | model=模型框边界；signal=信号兜底精修边界（建议人工复核） |")
+    L.append("| boundary_source | model=以模型框为种子的信号精修边界；signal=纯信号兜底精修边界（建议人工复核） |")
     L.append("")
 
-    # 5. 已知问题与解决方案（实验记录）
-    L.append("## 5. 已知问题与解决方案（实验记录）")
+    # 6. 已知问题与解决方案（实验记录）
+    L.append("## 6. 已知问题与解决方案（实验记录）")
     L.append("")
     L.append("开发/实验过程中遇到的问题抽象化归档，含根因层与对策状态：")
     L.append("")
@@ -1034,16 +1285,17 @@ def write_massnova_report(out_root, exp_name, sample_infos, args, total_seconds=
              "✅ 已修：compute_local_snr 安静点过滤统一作用于邻居区段与回退扇区 |")
     L.append("| P4 | 模型对非「单峰居中」形态（多头簇/双驼峰/偏心峰）框回归偏窄、偏移甚至缺失 | "
              "模型层（训练分布：ROI 均为 2min 窗单峰居中） | 恶虫威-1 去重后保留框只罩主头；"
-             "莠去津-1 漏检、-2 只框半个峰 | ⚠️ 未根治：训练端需补多峰/偏心样本重训；"
-             "推理端可做「模型框+信号延拓」混合边界校正（待做） |")
+             "莠去津-1 漏检、-2 只框半个峰 | ✅ 推理端已增加模型框双向基线校正："
+             "框内边界仍高于基线时外推，覆盖多余基线时从 apex 向外审核并内收；训练分布问题仍需后续重训 |")
     L.append("| P5 | GPU 推理在阈值边缘（score≈阈值）存在运行间数值抖动，validated/兜底归属可能翻转 | "
              "工程层 | 联苯三唑醇-1 相邻两次运行模型命中翻转 | "
              "ℹ️ 已知现象：阈值附近峰建议结合 boundary_source 列人工复核 |")
     L.append("")
-    L.append("P1/P2 对应参数：`scan_dup_apex_tol`（默认 0.2min，0=关闭）、"
+    L.append("P1/P2/P4 对应参数：`scan_dup_apex_tol`（默认 0.2min，0=关闭）、"
              "`scan_dup_min_overlap_fraction`（默认 0.25）、"
              "`scan_dup_shallow_valley_min_ratio`（默认 0.70）、"
-             "`scan_width_fuse_ratio`（默认 1.5，0=关闭）。")
+             "`scan_width_fuse_ratio`（默认 1.5，0=关闭）、"
+             "`scan_model_boundary_baseline_ratio`（默认 0.01）。")
     L.append("")
     # 空白样本假阳性预警（对齐 pipeline 报告行为）
     blanks = [s for s in samples if s.startswith(("空白", "BLANK", "blank"))]
@@ -1238,6 +1490,7 @@ def _scan_params_from_args(args) -> dict:
         "boundary_posterior_mean_scale": float(_g("scan_boundary_posterior_mean_scale", 1.25)),
         "edge_noise_stop_mode": str(_g("scan_edge_noise_stop_mode", "stable_tail_mean")),
         "edge_max_span_min": float(_g("scan_edge_max_span_min", 1.0)),
+        "edge_threshold_scale": float(_g("scan_edge_threshold_scale", 0.8)),
         "min_snr": float(_g("scan_min_snr", 10.0)),
         "min_peak_span_points": int(_g("scan_min_peak_span_points", 5)),
         "min_area": float(_g("scan_min_area", 0.0)),
@@ -1250,6 +1503,8 @@ def _scan_params_from_args(args) -> dict:
         "signal_score_snr_weight": float(_g("signal_score_snr_weight", 0.8)),
         "signal_score_points_weight": float(_g("signal_score_points_weight", 0.2)),
         "width_fuse_ratio": float(_g("scan_width_fuse_ratio", 1.5)),
+        "model_boundary_baseline_ratio": float(
+            _g("scan_model_boundary_baseline_ratio", 0.01)),
     }
 
 
@@ -1260,31 +1515,50 @@ def finalize_channel_peaks(rt, intensity, candidates, scan_params, *, threshold=
     This is the shared post-processing core used by both mzML inference and the
     embedded DLL runtime.  Keeping it here prevents the C bridge from growing a
     second, subtly different implementation of refinement, gating, scoring and
-    duplicate removal.
+    duplicate removal.  Validated model boxes and signal fallback boxes both
+    receive boundary refinement; signal-only quality gates remain limited to
+    fallback peaks.
     """
     rt = np.asarray(rt, dtype=np.float64)
     y = np.asarray(intensity, dtype=np.float64)
     sp = scan_params
     peaks = []
+    model_cands = []
     residual_cands = []
     for candidate in candidates:
         if candidate.get("validated"):
-            peaks.append({
-                "peak_no": 0,
-                "apex_idx": int(candidate["apex_idx"]),
-                "rt_peak": float(candidate["rt_peak"]),
-                "rt_min": float(candidate["rt_min"]),
-                "rt_max": float(candidate["rt_max"]),
-                "apex_intensity": float(candidate["apex_intensity"]),
-                "area": 0.0,
-                "snr": 0.0,
-                "n_points": 0,
-                "model_score": float(candidate["model_score"]),
-                "validated": True,
-                "boundary_source": "model",
-            })
+            model_candidate = dict(candidate)
+            model_candidate["boundary_source"] = "model"
+            model_candidate["peak_score"] = float(candidate["model_score"])
+            model_cands.append(model_candidate)
         else:
             residual_cands.append(candidate)
+
+    # Remove identical model detections before apex-anchored refinement.  This
+    # preserves the one-box/one-event contract when the same box was observed
+    # through overlapping candidate windows.
+    model_cands = _dedup_identical_peak_bounds(model_cands)
+    model_intervals = refine_model_boundaries(rt, y, model_cands, sp)
+    for candidate, (rt_min, rt_max) in zip(model_cands, model_intervals):
+        # 模型原始框（精修种子）：prediction_model/ 出图与追溯用；缺省回退到候选区间。
+        seed_lo = candidate.get("model_rt_min", candidate.get("rt_min"))
+        seed_hi = candidate.get("model_rt_max", candidate.get("rt_max"))
+        peaks.append({
+            "peak_no": 0,
+            "apex_idx": int(candidate["apex_idx"]),
+            "rt_peak": float(candidate["rt_peak"]),
+            "rt_min": float(rt_min),
+            "rt_max": float(rt_max),
+            "model_rt_min": float(seed_lo) if seed_lo is not None else None,
+            "model_rt_max": float(seed_hi) if seed_hi is not None else None,
+            "apex_intensity": float(candidate["apex_intensity"]),
+            "area": 0.0,
+            "snr": 0.0,
+            "n_points": 0,
+            "model_score": float(candidate["model_score"]),
+            "validated": True,
+            "boundary_source": "model",
+        })
 
     if residual_cands:
         model_peers = [(peak["rt_min"], peak["rt_max"]) for peak in peaks]
@@ -1296,6 +1570,7 @@ def finalize_channel_peaks(rt, intensity, candidates, scan_params, *, threshold=
             boundary_posterior_mean_scale=sp["boundary_posterior_mean_scale"],
             edge_noise_stop_mode=sp["edge_noise_stop_mode"],
             edge_max_span_min=sp["edge_max_span_min"],
+            edge_threshold_scale=sp["edge_threshold_scale"],
             peer_rt_intervals=model_peers or None,
         )
         intervals = fuse_fallback_boundaries(
@@ -1360,8 +1635,8 @@ def finalize_channel_peaks(rt, intensity, candidates, scan_params, *, threshold=
 def run_massnova_on_mzml(mzml_path, key, args, out_root):
     """对单个 mzML 执行整谱全峰识别（模型前置、精修兜底），返回 info dict（含峰明细行）。
 
-    流程：Phase1 枚举候选（仅预估 rt）→ Phase3b 模型前置（全部候选切窗推理，
-    命中者边界直接取模型框）→ Phase2/3a 兜底（仅对未命中残差做边界精修 + 门控）
+    流程：Phase1 枚举候选（仅预估 rt）→ Phase3b 模型前置（全部候选切窗推理）
+    → 模型命中框执行双向稳定基线精修 → Phase2/3a 对未命中残差做边界精修 + 门控
     → 最终边界上统一补算指标 → 按实验布局写输出。
     """
     smooth_sigma = float(getattr(args, "smooth_sigma", 0.8) or 0.0)
@@ -1374,11 +1649,14 @@ def run_massnova_on_mzml(mzml_path, key, args, out_root):
     plot = bool(getattr(args, "plot", False))
     plot_sigma = float(getattr(args, "plot_smooth_sigma", 1.0) or 1.0)
     sp = _scan_params_from_args(args)
+    stage_seconds = {}
 
+    _t = time.perf_counter()
     features, qc_excluded = extract_full_xics(
         mzml_path, smooth_sigma=smooth_sigma,
         min_chrom_points=min_chrom_points, min_max_intensity=min_max_intensity,
     )
+    stage_seconds["1_XIC抽取(Phase0)"] = time.perf_counter() - _t
 
     phase1_keys = ("baseline_percentile", "baseline_mode", "min_peak_ratio",
                    "prominence_ratio", "min_prominence_abs", "min_peak_gap_points",
@@ -1386,6 +1664,7 @@ def run_massnova_on_mzml(mzml_path, key, args, out_root):
                    "valley_ratio", "min_valley_central_frac")
 
     # Phase1：候选枚举（预估 rt，不做信号精修）
+    _t = time.perf_counter()
     candidates_by_channel: Dict[int, list] = {}
     rts: Dict[int, np.ndarray] = {}
     intensities: Dict[int, np.ndarray] = {}
@@ -1406,10 +1685,12 @@ def run_massnova_on_mzml(mzml_path, key, args, out_root):
         } for ap in apexes]
         candidates_by_channel[ci] = cands
         n_candidates += len(cands)
+    stage_seconds["2_候选枚举(Phase1)"] = time.perf_counter() - _t
 
-    # Phase3b（前置）：模型验证全部候选；命中者边界直接取模型框
+    # Phase3b（前置）：模型验证全部候选；命中者以模型框作为后续精修种子
     keep_win_dirs: Dict[int, str] = {}
     if model_path:
+        _t = time.perf_counter()
         win_dir = validate_with_model(
             candidates_by_channel, rts, intensities, model_path, threshold=threshold,
             window_half_min=sp["window_half_min"],
@@ -1418,10 +1699,12 @@ def run_massnova_on_mzml(mzml_path, key, args, out_root):
             onnx_use_gpu=int(getattr(args, "use_gpu", 0)),
             onnx_batch_size=int(getattr(args, "batch_size", 128)),
         )
+        stage_seconds["3_模型验证(Phase3b)"] = time.perf_counter() - _t
         if win_dir:
             keep_win_dirs = {"all": win_dir}
 
     # Phase2/3a（兜底）+ Phase4：使用与嵌入式数组入口相同的最终峰处理核心。
+    _t = time.perf_counter()
     peaks_by_channel: Dict[int, list] = {}
     n_peaks_total = 0
     for f in features:
@@ -1440,13 +1723,16 @@ def run_massnova_on_mzml(mzml_path, key, args, out_root):
             n_model = sum(p["boundary_source"] == "model" for p in peaks)
             print(f"[massnova] 通道#{ci} {f['uid']}: 候选 {len(candidates_by_channel.get(ci, []))}"
                   f" → 模型命中 {n_model} + 信号兜底 {len(peaks) - n_model} 峰")
+    stage_seconds["4_边界精修与门控(Phase2/3a/4)"] = time.perf_counter() - _t
     mzml_stem = Path(mzml_path).stem
+    _t = time.perf_counter()
     peak_rows = write_outputs(mzml_stem, features, peaks_by_channel, qc_excluded,
                               out_root, key,
                               no_plots=no_plots,
                               keep_windows=keep_win_dirs if keep_windows else None,
                               plot=plot, plot_sigma=plot_sigma,
                               window_half_min=sp["window_half_min"])
+    stage_seconds["5_输出与绘图(Phase4)"] = time.perf_counter() - _t
     print(f"[OK] massnova {mzml_stem}: {len(features)} 通道 / {n_candidates} 候选"
           f" / {n_peaks_total} 峰 → {Path(out_root) / 'prediction_refined' / key}")
     return {
@@ -1456,6 +1742,7 @@ def run_massnova_on_mzml(mzml_path, key, args, out_root):
         "n_candidates": n_candidates,
         "n_peaks": n_peaks_total,
         "peak_rows": peak_rows,
+        "stage_seconds": stage_seconds,
     }
 
 
@@ -1467,7 +1754,7 @@ def main(args):
     scan_plots / model_plots、all.csv 与 inference_report_<实验名>.md。
     """
     import time
-    from .cli import _resolve_exp_name
+    from .cli import _resolve_exp_name, _print_pipeline_timing_summary
 
     t0 = time.perf_counter()
     mzml_inputs = _collect_mzml_inputs(getattr(args, "mzml", None), getattr(args, "batch_dir", None))
@@ -1489,11 +1776,25 @@ def main(args):
     total_ch = sum(info["n_channels"] for info in sample_infos)
     total_seconds = time.perf_counter() - t0
 
+    stage_seconds: Dict[str, float] = {}
+    for info in sample_infos:
+        for _name, _sec in (info.get("stage_seconds") or {}).items():
+            stage_seconds[_name] = stage_seconds.get(_name, 0.0) + float(_sec)
+    if stage_seconds:
+        _print_pipeline_timing_summary(
+            mode_label="massnova",
+            n_samples=len(sample_infos),
+            stage_seconds=stage_seconds,
+            per_sample_seconds=[],
+            total_seconds=total_seconds,
+        )
+
     rep = {}
     if sample_infos:
         try:
             rep = write_massnova_report(out_root, exp_name, sample_infos, args,
-                                        total_seconds=total_seconds)
+                                        total_seconds=total_seconds,
+                                        stage_seconds=stage_seconds)
         except Exception as e:
             print(f"[WARN] massnova 推理报告生成失败（不影响主流程）: {e}")
     print(f"[DONE] massnova 完成: {len(mzml_inputs)} 个 mzML, 合计 {total_ch} 通道 / "
@@ -1510,7 +1811,7 @@ def build_parser():
     ap.add_argument("--use_gpu", type=int, choices=[-1, 0, 1], default=0,
                     help="ONNX: -1=CPU，0=优先GPU失败回退CPU，1=必须GPU")
     ap.add_argument("--batch_size", type=int, default=128, help="ONNX 候选窗口批大小")
-    ap.add_argument("--smooth_sigma", type=float, default=0.8, help="高斯平滑 sigma；0=关闭")
+    ap.add_argument("--smooth_sigma", type=float, default=0, help="高斯平滑 sigma；0=关闭")
     ap.add_argument("--output_dir", type=str, default=None,
                     help="实验输出根目录；null=按 pipeline 规则 ../output/inference/massnova_<实验名>")
     ap.add_argument("--exp_name", type=str, default=None,
@@ -1536,6 +1837,10 @@ def build_parser():
                     help="边界截停阈值：stable_tail_mean=峰侧局部稳定尾噪声（默认，整谱场景稳健）")
     ap.add_argument("--scan_edge_max_span_min", type=float, default=1.0,
                     help="边界截停阈值估计的最大单侧跨度（min）")
+    ap.add_argument("--scan_edge_threshold_scale", type=float, default=0.8,
+                    help="边界截停阈值缩放系数：<1 阈值更低、外推更远（框更宽）；1.0=原行为")
+    ap.add_argument("--scan_model_boundary_baseline_ratio", type=float, default=0.01,
+                    help="模型框内收审核的基线附近带宽，占 apex-baseline 动态高度的比例")
     ap.add_argument("--scan_min_snr", type=float, default=10.0)
     ap.add_argument("--scan_min_peak_span_points", type=int, default=5)
     ap.add_argument("--scan_min_area", type=float, default=0.0)

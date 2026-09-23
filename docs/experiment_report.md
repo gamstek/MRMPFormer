@@ -5,6 +5,200 @@
 
 ---
 
+## 实验日志 004：massnova 模型框双向基线精修、停阈值护栏、截断峰 SNR 守卫与全链路分模块计时（2026-09-23）
+
+- **日期**：2026-09-23
+- **基线**：昨日最后一次提交 `9fdef78`（2026-09-22 20:23「暂时提交」；原哈希 cf6727c，大文件迁入 Git LFS 改写历史后为 9fdef78）；本节改动已随本条 feat(model) 提交入库，`git diff 9fdef78 HEAD` 可完整复现
+- **规模**：主仓 10 文件修改（+641/−138）＋ 8 个新增文件（合计 1513 行）＋ CW 子模块内 1 文件（+70/−1，子模块内未提交）
+- **状态**：代码完成；新增 4 个单测文件 19 用例全部通过（0.011 s，见 §6）
+
+### 1. 背景与动机（本日解决的四个问题）
+
+| # | 问题 | 根因 | 对策 |
+|---|---|---|---|
+| ① | P4（已知问题表）：模型框直接作为最终边界，对非「单峰居中」形态（多头簇/双驼峰/偏心峰）框回归偏窄、偏移（莠去津-2 只框半个峰） | 训练分布为 2min 窗单峰居中 | 模型框从「最终边界」降级为「精修种子」：外推 + 内收双向基线校正（`refine_model_boundaries`） |
+| ② | 半峰截断：test2 chrom052 甲羧除草醚-2（RT≈16.0 候选）积分面积仅完整峰的一半 | 右侧 ~1 min 处存在更高邻居峰，`stable_tail_mean` 尾窗（apex±1min）把邻居峰翼当本侧基线，估出停阈值达 apex 的 1.05~1.11 倍 → 内审在 apex 后一步即截停 | `_boundary_stop_levels` 加护栏：估计值 ≥ apex 时按 apex×0.2 封顶 |
+| ③ | 截断峰 SNR 低估甚至 nan 误杀 | 峰尾被运行末端/窗口截断时，框外扇区全是陡峭下降尾，峰-峰噪声被抬高 | `compute_local_snr`/`compute_snr_outside_box` 加 `tail_reject_scale=3.0` 守卫 + 全迹安静点兜底 |
+| ④ | 无分模块计时；torch(.pth) 路径逐图前向（batch_size 不生效） | 工程缺口 | massnova 五阶段计时进终端与报告；roi/roi2inference 补计时汇总；`predict` 支持批量前向 |
+
+### 2. 修改总览
+
+| 文件 | 类型 | 规模 | 主题 |
+|---|---|---|---|
+| `model/inference/massnova.py` | 修改 | +407/−83 | 模型框精修核心、停阈值护栏、五阶段计时、报告章节、参数接入 |
+| `model/inference/two_round_detection.py` | 修改 | +11/−2 | `adjust_first_round_interval` 新增 `edge_threshold_scale` |
+| `model/inference/cli.py` | 修改 | +34/−2 | 2 个新 CLI 参数；pipeline/roi/roi2inference 计时汇总 |
+| `model/inference/massnova_runtime.py` | 修改 | +1 | 嵌入式默认配置补 `scan_model_boundary_baseline_ratio` |
+| `model/utils/predict_utils.py` | 修改 | +174/−104 | torch 批量前向 + `_build_result` 公共抽取 |
+| `model/utils/xic_peak_utils.py` | 修改 | +82/−28 | 截断峰噪声守卫 + 全迹安静点兜底 |
+| `model/tools/evaluation/inference_report.py` | 修改 | +58/−5 | 推理报告新增「运行用时（各模块）」章节 |
+| `model/configs/inference_pipeline.json` | 修改 | +1/−1 | `pipeline_min_max_intensity` 1000→3000 |
+| `model/configs/massnova.json` | 修改 | +5/−5 | batch_size / threshold / scan_min_peak_ratio / scan_min_snr |
+| `model/tests/test_*.py` ×4 | 新增 | 264 行 | 回归测试，见 §5 |
+| `model/tools/evaluation/{run,evaluate,compare}_massnova_sim.py` | 新增 | 873 行 | 模拟集三档评测工具链 |
+| `model/tools/diagnostics/trace_channel_queries.py` | 新增 | 376 行 | 逐层逐 query 诊断工具 |
+| `CW/CW/Centwave`（子模块内） | 修改 | +70/−1 | `estimate_peak_bounds` 补全 + `np.trapz` 兼容 |
+
+### 3. 逐文件逐处修改明细
+
+#### 3.1 `model/inference/massnova.py`（核心，+407/−83）
+
+**A. 模型框精修核心：新增 4 个函数（约 L382-586）**
+
+| 函数 | 行为 |
+|---|---|
+| `_boundary_stop_levels(rt, y, apex_idx, edge_noise_stop_mode, edge_max_span_min, edge_noise_percentile=25.0, edge_threshold_scale=1.0, max_stop_apex_ratio=0.2)` | 复算与 `adjust_first_round_interval` 同口径的左右停阈值（三分支：`low_percentile`→`one_sided_low_noise_baseline` 单侧低分位；`roi_bottom_decile_mean`→全迹低 10% 均值双侧同值；默认 `stable_tail_mean`→`one_sided_edge_stop_threshold_stable_tail_mean` 峰侧稳定尾噪声），乘 `edge_threshold_scale`（非有限或 ≤0 回退 1.0）。**护栏**：估计值 ≥ apex 强度时封顶为 `apex_y × max_stop_apex_ratio`（默认 0.2）——邻居峰翼抬基线时防止阈值失去基线语义导致半峰截断 |
+| `_first_stable_baseline_from_apex(rt, y, apex_idx, boundary_rt, stop_level, baseline_floor, side, lookahead, mean_scale)` | 内审游走：从 apex 向一侧边界找首个「稳定」基线穿越——单点 ≤ stop_level 不足够，还需沿方向 lookahead 个点均值 ≤ `baseline_floor + mean_scale×(stop_level−baseline_floor)`；方向/参数非法或找不到时返回原边界 |
+| `_audit_model_interval_inward(...)` | 内收审核：对已外推的模型区间两侧独立游走，只收不放（`audited_lo = max(lo, natural_left)`、`audited_hi = min(hi, natural_right)`）；停阈值取 `baseline + baseline_proximity_ratio×(apex−baseline)`（默认 ratio=0.01，即基线上方 1% 动态高度带）；结果必须仍含 apex、区间有效且 ≥ `min_points`（取 `max(5, min_peak_span_points)`）个采样点，否则维持原区间 |
+| `refine_model_boundaries(rt, y, candidates, scan_params)` | 对每个模型框执行「外推→内收」：先 `adjust_first_round_interval`（`min_secondary_ratio=0.05`、`boundary_peer_thr_scale=2.0`，透传 edge 模式/跨度/缩放与 posterior 参数），再 `_audit_model_interval_inward`；跑两遍（pass2 以 pass1 结果互为 peer 防撞），逐候选返回 `(rt_min, rt_max)` |
+
+**B. `validate_with_model`（模型前置验证）**
+- docstring：「命中 → 模型框 RT 即最终边界」→「命中 → 模型框 RT 作为后续精修种子」；补 `onnx_batch_size` 说明（ONNX 与 torch(.pth) 两条路径共用；`onnx_use_gpu` 仅对 ONNX 生效，torch 由 `utils.torch_device` 自动选 CUDA）；
+- torch 路径批推理：`build_predictor(...)` 调用新增 `batch_size=max(1, int(onnx_batch_size or 1))`——候选窗口拼 batch 前向，摊薄逐图 kernel/预处理固定开销；
+- 命中分支新增两行：`p["model_rt_min"] = float(left)`、`p["model_rt_max"] = float(right)`——保留模型原始框；后续精修只改 `rt_min/rt_max`，原始框供 `prediction_model/` 出图与追溯。
+
+**C. `finalize_channel_peaks`（mzML 推理与嵌入式 C DLL 共用的最终峰处理核心）**
+- docstring 更新：validated 模型框与信号兜底框**均**做边界精修；信号类质量门控仍只作用于兜底峰；
+- 模型命中分支整体重写：原实现直接把候选 `rt_min/rt_max` 抄入 peaks；现改为——收集 `model_cands`（复制候选 dict，置 `boundary_source="model"`、`peak_score=model_score`）→ `_dedup_identical_peak_bounds` 去重（重叠候选窗观察到同一框时保「一框一事件」）→ `refine_model_boundaries` 精修 → 输出 peak 新增 `model_rt_min`/`model_rt_max` 两列（种子缺省回退候选区间），`rt_min/rt_max` 取精修结果；
+- 信号兜底分支：`refine_all_boundaries(...)` 调用新增 `edge_threshold_scale=sp["edge_threshold_scale"]` 透传。
+
+**D. `plot_massnova_stage_windows`（2min 窗口图）**
+- 新形参 `model_seed=False`（docstring：True 时用 `model_rt_min/max` 模型原始框画图，用于 `prediction_model/`）；
+- 新增内嵌 `_bounds(pk)`：model_seed=True 且模型框有限有效时返回原始框，否则返回最终精修边界；
+- 窗口相交判定与 queries 构造的 `rt_lo`/`rt_hi` 均改走 `_bounds(pk)`。
+
+**E. `_MASSNOVA_WINDOW_STAGES`**：三元组扩为四元组 `(文件夹, boundary_source, 标题前缀, 是否用模型原始框)`——`("prediction_model", "model", "Model prediction", True)`，signal/refined 为 False。
+
+**F. `write_outputs`**：docstring 同步（prediction_model = 模型原始框，未精修）；阶段循环解包四元组并传 `model_seed=use_model_seed`。
+
+**G. `write_massnova_report`**
+- 新形参 `stage_seconds=None`（docstring：各阶段累计耗时，用于「运行用时（各模块）」章节）；
+- 新增「## 4. 运行用时（各模块）」：总耗时行（分母优先 `total_seconds`）+ `| 模块 | 耗时 (s) | 占比 |` 表；无计时数据时输出提示；
+- 原第 4/5 章（CSV 关键列 / 已知问题）顺延为第 5/6 章；CSV 关键列两行措辞更新（模型框与信号兜底框均经过稳定基线精修；`boundary_source=model`=以模型框为种子的信号精修边界）；
+- 已知问题 **P4 状态 ⚠️ 未根治 → ✅**：推理端已增加模型框双向基线校正（框内边界仍高于基线时外推，覆盖多余基线时从 apex 向外审核并内收）；训练分布问题仍需后续重训；
+- 对策参数清单：`P1/P2` → `P1/P2/P4`，追加 `scan_model_boundary_baseline_ratio`（默认 0.01）。
+
+**H. `_scan_params_from_args`**：新增两键——`edge_threshold_scale = float(_g("scan_edge_threshold_scale", 0.8))`、`model_boundary_baseline_ratio = float(_g("scan_model_boundary_baseline_ratio", 0.01))`。
+
+**I. `run_massnova_on_mzml`**：五阶段 `time.perf_counter()` 计时——`1_XIC抽取(Phase0)`、`2_候选枚举(Phase1)`、`3_模型验证(Phase3b)`、`4_边界精修与门控(Phase2/3a/4)`、`5_输出与绘图(Phase4)`；返回 info dict 新增 `stage_seconds`；docstring 流程描述同步（模型命中框执行双向稳定基线精修）。
+
+**J. `main`**：跨样本聚合 `stage_seconds`（同名阶段累加）；有值时调 `_print_pipeline_timing_summary(mode_label="massnova", ...)` 打终端汇总，并传入 `write_massnova_report(..., stage_seconds=...)`。
+
+**K. `build_parser`**：`--smooth_sigma` 默认 0.8→**0**（关闭平滑、强度保持原始值；`massnova.json` 中该键仍为 0.8，仅直连入口 `python -m inference.massnova` 的默认值变化）；新增 `--scan_edge_threshold_scale`（默认 0.8）与 `--scan_model_boundary_baseline_ratio`（默认 0.01）。
+
+**L. 其他**：新增 `import time`；`utils.xic_peak_utils` 导入扩为 `compute_local_snr, one_sided_edge_stop_threshold_stable_tail_mean, one_sided_low_noise_baseline, roi_full_low_decile_mean_intensity`；模块头 Phase3b/Phase2/3a/Phase4 流程描述同步。
+
+#### 3.2 `model/inference/two_round_detection.py`（+11/−2）
+
+`adjust_first_round_interval`：
+- 签名新增形参 `edge_threshold_scale: float = 1.0`（位于 `edge_noise_stop_mode` 之后）+ docstring 一行（<1 阈值更低、外推更远即框更宽；1.0=原行为）；
+- 阈值计算改写：`edge_scale = float(edge_threshold_scale)`，非有限或 ≤0 回退 1.0；`y_threshold_left = float(baseline_left) × edge_scale`、`y_threshold_right = float(baseline_right) × edge_scale`（原为直接取 baseline 值）。
+
+pipeline 链路不传该参数（默认 1.0，行为不变）；massnova 整谱模式默认 0.8。
+
+#### 3.3 `model/inference/cli.py`（+34/−2）
+
+- L1166-1171：新增 `--scan_edge_threshold_scale`（float，默认 0.8，help：边界截停阈值缩放系数，<1 阈值更低、外推更远即框更宽，1.0=原行为）与 `--scan_model_boundary_baseline_ratio`（float，默认 0.01，help：模型框内收审核的基线附近带宽，相对 apex-baseline 动态高度）；
+- pipeline 模式（L1578-1606）：`_print_pipeline_timing_summary(...)` 返回值原来被丢弃，现接为 `timing_record` 并传入 `generate_for_pipeline(..., timing_record=timing_record)`——推理报告带上本次运行分模块耗时；
+- roi 模式（L1622-1645）：`t_roi = time.perf_counter()` 包住 XIC 提取循环；结束后打印 `[推理完成]` 横幅（模式/样本数/总耗时/输出目录）+ `_print_pipeline_timing_summary(stage_seconds={"1_ROI生成(xic_extraction)": total_sec})`；
+- roi2inference 模式（L1667-1685）：同款 `t_pred` 计时 + 完成横幅 + 汇总（阶段名 `1_模型预测(predictor)`；样本数按 `--batch_dir` 子目录计数）。
+
+#### 3.4 `model/utils/predict_utils.py`（+174/−104）
+
+- 新函数 `_build_result(img_path, probas, pred_boxes_item, size, threshold, return_all, qc_stats)`：单图输出→结果 dict 的公共整理（keep 掩码计算、qc_stats 逐图统计追加、boxes/scores 反归一化；无检测且非 return_all 返回 None）——**逐图路径与批处理路径共用，保证两条路径结果完全一致**；保留 DETR 取类关键注释（logits 布局 `[类别0, no-object]`，取 `[..., :1]` 类别 0，禁用 `[:-1]`/`[1:]`）；
+- `predict(...)` 新形参 `batch_size=1`，docstring 说明（>1 时拼 batch 前向摊薄固定开销；批内尺寸不一致自动退回逐图，结果与 batch_size=1 完全一致）：
+  - `bs<=1`：原逐图路径（行为不变），结果整理换用 `_build_result`，verbose 调试输出保留；
+  - `bs>1`：按 chunk 预处理收集 `tensors/sizes`，尺寸集合唯一时 `torch.stack` 批前向，`probas_all = pred_logits.softmax(-1)[:, :, :1]`，逐图 `_build_result` 收尾；尺寸不一致时逐图退回；
+- `build_predictor(...)` 新形参 `batch_size=1`，透传给 `predict`。
+
+#### 3.5 `model/utils/xic_peak_utils.py`（+82/−28）
+
+- 新函数 `_global_quiet_noise_pp(intensity_row, low_frac=0.4, pp_lo=5.0, pp_hi=95.0)`：全迹安静点（强度 ≤ 40 分位）峰-峰噪声 + 中位基线；点数不足或退化（pp≤0）返回 `(nan, nan)`；
+- `compute_snr_outside_box(..., tail_reject_scale=3.0)`：
+  - 入口统一 `np.asarray` 化；`low_ref = roi_full_low_decile_mean_intensity(intensity)`；
+  - 每侧框外区（≥2 点）加守卫：`median(侧) > 3 × max(low_ref, 1e-9)`（仍处峰尾，常见于运行末端截断）→ 该侧不进 `all_noise`、不产 `noise_pp_*`；
+  - 双侧均不可用：先全迹安静点兜底（`signal = peak_max − base_glob`，≤0 返回 nan），再退段内估计 `_compute_snr_peak_to_peak`；
+  - baseline 缺失分支同样先试全迹兜底，失败才退段内；
+- `compute_local_snr(..., tail_reject_scale=3.0)`：docstring 增补截断峰守卫说明；同款守卫作用于左右「安静区段」（邻居区段/回退扇区）；**双侧均不可用（截断/全占满）由返回 nan 改为全迹安静点兜底**（signal ≤0 才 nan）——避免 SNR nan 导致门控误杀。
+
+#### 3.6 `model/tools/evaluation/inference_report.py`（+58/−5）
+
+- 新函数 `load_timing_record(out_root)`：逐行读 `pipeline_timing_runs.jsonl`，返回最后一条记录（= 本次运行）；文件不存在/解析失败返回 None；
+- 新函数 `render_timing_section(record)`：渲染「## 5. 运行用时（各模块）」——总耗时 + 记录时间 + `| 模块 | 耗时 (s) | 占比 |` 表（total≤0 时以 stage_seconds 求和为分母）；无 stage_seconds 时提示「pipeline 模式默认采集，`--no_timing` 只影响日志落盘」；
+- `render_report(...)` 新形参 `timing_record=None`：QC 章节后插入上述章节；原第 5/6 章（管线各阶段说明 / 输出文件与关键列）顺延为第 6/7 章；
+- `generate_for_pipeline(..., timing_record=None)`：调用方未显式提供时自动 `load_timing_record(out_root)` 兜底。
+
+#### 3.7 `model/inference/massnova_runtime.py`（+1）
+
+`DEFAULT_RUNTIME_CONFIG` 新增 `"scan_model_boundary_baseline_ratio": 0.01`——嵌入式 DLL 桥（与 `finalize_channel_peaks` 共用精修核心）的缺省参数对齐 CLI 默认。
+
+#### 3.8 配置文件
+
+| 文件 | 键 | 旧值 | 新值 | 说明 |
+|---|---|---|---|---|
+| `model/configs/inference_pipeline.json` | `pipeline_min_max_intensity` | 1000.0 | **3000.0** | QC：平滑后整条 XIC 最大强度低于此值的通道不生成 ROI、不参与预测 |
+| `model/configs/massnova.json` | `batch_size` | 128 | **32** | 候选窗口批大小（注释更新：ONNX 与 torch .pth 路径共用） |
+| `model/configs/massnova.json` | `threshold` | 0.5 | **0.6** | 模型检测框保留阈值 |
+| `model/configs/massnova.json` | `scan_min_peak_ratio` | 0.04 | **0.05** | 峰高门 = baseline + r·dynamic |
+| `model/configs/massnova.json` | `scan_min_snr` | 10.0 | **15.0** | 峰级本地 SNR 门（模型前置架构下仅作用于信号兜底路径） |
+
+（`scan_edge_threshold_scale`/`scan_model_boundary_baseline_ratio` 未写入 json，走代码默认 0.8/0.01。）
+
+#### 3.9 `CW/CW/Centwave` 子模块（内部未提交，+70/−1）
+
+`CentreWave/centrewave/validation.py`：
+- `compute_peak_metrics` 面积积分：`np.trapezoid` → `np.trapz`（numpy < 2.0 兼容，数值口径不变）；
+- 新增 `estimate_peak_bounds(t, x, t_peak, sigma=None, n_sigma=2.0, min_side_points=5)`（72 行）：CentreWave 缺失的「峰起止时间」接口补全——峰区（t_peak±3σ，σ 未知仅剔除峰顶单点）外取中位基线 + `n_sigma × robust_std` 为阈值，从峰顶向两侧找首个强度回落点作 start/end；某侧未回落或窗口过窄时回退 `t_peak ± 3σ`；完全失败返回 `(t_peak, t_peak)`。
+
+### 4. 行为影响
+
+1. massnova 模型命中峰的边界从「模型框原值」变为「模型框种子 + 双向基线精修」——`massnova_peaks.csv` 的 `rt_min/rt_max` 及在其上重算的 `area/snr/n_points` 会变化；`boundary_source="model"` 语义改为「以模型框为种子的信号精修边界」；新增 `model_rt_min`/`model_rt_max` 列可追溯原始框；
+2. `prediction_model/` 图画模型原始框（未精修），`prediction_refined/` 画最终精修结果；
+3. 兜底路径因停阈值缩放（默认 0.8）与 apex 护栏，边界整体略宽、不再半峰截断；
+4. 截断峰不再因 SNR nan 被门控误杀；
+5. pipeline 链路 `adjust_first_round_interval` 默认参数不变（scale=1.0），行为完全兼容（单测钉死）；
+6. 推理报告（pipeline 与 massnova）均新增「运行用时（各模块）」章节；roi/roi2inference 模式补完成横幅与计时汇总；
+7. `output/inference/massnova_*/` 下 `massnova_peaks.csv` 新增两列，读方（如 all.csv 汇总）向后兼容不受影响。
+
+### 5. 新增单测（4 文件 / 19 用例）
+
+| 文件（行数） | 覆盖点 |
+|---|---|
+| `model/tests/test_edge_threshold_scale.py`（69） | 不传新参数 = 显式 1.0（pipeline 兼容钉子）；scale<1 右边界更外；0.5 比 0.8 更外（单调性）；0/负/NaN 非法值回退 1.0；`_boundary_stop_levels` 线性缩放、非法值保持原水平 |
+| `model/tests/test_massnova_model_boundary_refinement.py`（45） | 框内边界高于基线 → 外扩到稳定基线（±0.011 min 容差）；框罩多余基线 → 内收；一侧扩一侧收可同时发生；已贴基线 → 稳定不变 |
+| `model/tests/test_massnova_stop_level_apex_guard.py`（92） | 复现 test2 chrom052 甲羧除草醚-2 双峰形态（低峰 + 1 min 外更高邻居）：污染侧停阈值被压到 apex 显著比例以下；右边界越过 apex 一段距离而非 apex 后一步截停；孤立峰护栏零影响；输出 peak 保留 `model_rt_*` 且 ≠ 精修后最终边界 |
+| `model/tests/test_truncated_noise_reference.py`（58） | 运行末端截断峰只用健康侧（修复后 SNR>100，旧逻辑 `tail_reject_scale=1e9` 模拟 <30）；双侧截断回退全迹安静点不返 nan；内部峰保持有限 SNR；框占满全迹用全局兜底；陡峭右尾侧被剔除 |
+
+### 6. 验证命令与结果（2026-09-23 实测）
+
+```powershell
+cd D:\yinlibo\MRMPFormer\model
+D:\miniconda\envs\gamstekpeaking\python.exe -m unittest `
+  tests.test_edge_threshold_scale tests.test_massnova_model_boundary_refinement `
+  tests.test_massnova_stop_level_apex_guard tests.test_truncated_noise_reference -v
+```
+
+结果：**Ran 19 tests in 0.011s — OK（19/19 通过）**。
+
+### 7. 新增工具（4 文件 / 1249 行，未纳入单测，属评测/诊断脚本）
+
+| 文件（行数） | 用途 |
+|---|---|
+| `model/tools/evaluation/run_massnova_sim.py`（182） | 在 MRM-XIC 模拟集（easy/medium/hard，仅 `xic_data/*.json` 无 mzML）上运行 massnova：临时替换 Phase0 为 `_json_extract_full_xics`（uid=`compound_id\|ion_type` 对齐 label.csv 主键），其余相位（候选枚举→模型前置→兜底精修→门控→输出报告）完全复用 `inference.massnova`，与真实 mzML 同口径；`--max_channels` 冒烟、`--limit` 限量 |
+| `model/tools/evaluation/evaluate_massnova_sim.py`（469） | 对 all.csv 做精度评测：真值 = `label/label.csv` + `generation_manifest.csv`（难度/噪声子类型）；同通道内 apex RT 最近贪心一对一匹配（`--tol` min）；产出 report.md、metrics_*.csv（Precision/Recall/F1、RT 偏差、边界 IoU、面积 log-log 相关、噪声通道误报等）、matched/fp/fn 明细、figures/*.png（中文字体适配） |
+| `model/tools/evaluation/compare_massnova_sim.py`（222） | 汇总三档（test_easy/medium/hard）`metrics_headline.csv`：核心指标跨数据集对比表 + 可视化（列名中英映射） |
+| `model/tools/diagnostics/trace_channel_queries.py`（376） | 单通道 case 诊断：复现 Phase3b 同一输入（同款 transform/切窗），逐 decoder 层（L1/L2/L3）分类分（共享 class_embed 逐层各自 softmax）与 FDR 精化边界（base/L1/L2/L3）、逐 query 分数/RT 区间/框宽/中心偏移、复算 massnova 贪心分配（判断 query2/query3 是否产出重复/虚假框），并与部署 ONNX 同图 L3 分数/框做一致性校验 |
+
+### 8. 产物与位置
+
+| 产物 | 路径 |
+|---|---|
+| 全部改动 | 已提交（feat(model)，大文件经 Git LFS）；基线 `9fdef78`，`git diff 9fdef78 HEAD` 复现 |
+| 本报告 | `docs/experiment_report.md`（本节，实验日志 004） |
+| 模拟集评测输出（按工具约定） | `output/inference/massnova_<dataset>/`（run_massnova_sim.py 产出，评测明细在其 `report/` 子目录） |
+
+---
+
 ## 实验日志 002：test1 标准试卷、四模型横评与 mrmpformerv2 的诞生（多源联合训练）
 
 - **日期**：2026-08-22
@@ -270,6 +464,7 @@ top_box = boxes[top_idx:top_idx + 1]
 | 2026-08-17 | v1 F1=0.008 vs v2 F1=0.455；本报告根因分析完成 |
 | 2026-08-22 | test1 标准试卷导入（11 mzML 重命名）；四模型首轮横评 + 评估链路三处修复；test1 微调基线对照实验；架构审查定位 matcher iou_type bug；执行 P0-1/P0-2/P0-4/P2-8 → **mrmpformerv2**（multisrc 多源联合训练）；四模型联合评估完成，v2 holdout F1@0.1=0.913 全面最优（详见实验日志 002） |
 | 2026-08-22 | 考据 `checkpoint/quanformer.pth` 内嵌 args：基线实为外部下载权重（DETR COCO → autopeakV3/peak-all 微调），非本项目自训；v2 零检出根因确认为窄域微调引发的灾难性遗忘 + 域坍缩（详见实验日志 003） |
+| 2026-09-23 | massnova 模型框降级为精修种子（外推+内收双向基线校正，P4 推理端对策）；停阈值 apex 护栏修复甲羧除草醚-2 半峰截断；截断峰 SNR 守卫 + 全迹安静点兜底；torch(.pth) 批量前向；pipeline/roi/roi2inference/massnova 全模式分模块计时进终端与报告；模拟集三档（easy/medium/hard）评测工具链与逐层逐 query 诊断工具；19 个新增单测全部通过（详见实验日志 004） |
 
 ### 附录 B：涉及文件
 

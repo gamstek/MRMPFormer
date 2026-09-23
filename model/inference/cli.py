@@ -1163,6 +1163,10 @@ def main_cli():
                         help="[massnova] 边界截停阈值：stable_tail_mean=峰侧局部稳定尾噪声（默认）")
     parser.add_argument("--scan_edge_max_span_min", type=float, default=1.0,
                         help="[massnova] 边界截停阈值估计的最大单侧跨度（min）")
+    parser.add_argument("--scan_edge_threshold_scale", type=float, default=0.8,
+                        help="[massnova] 边界截停阈值缩放系数：<1 阈值更低、外推更远（框更宽）；1.0=原行为")
+    parser.add_argument("--scan_model_boundary_baseline_ratio", type=float, default=0.01,
+                        help="[massnova] 模型框内收审核的基线附近带宽（相对 apex-baseline 动态高度）")
     parser.add_argument("--scan_min_snr", type=float, default=10.0,
                         help="[massnova] 峰级本地 SNR 门")
     parser.add_argument("--scan_min_peak_span_points", type=int, default=5,
@@ -1574,7 +1578,7 @@ def main_cli():
         # Step 7b：阶段级根级汇总（predictions_model_all.csv + report；prediction_refined_all.csv + report）
         _write_predictions_model_summary(base_out)
         _write_prediction_refined_summary(base_out)
-        _print_pipeline_timing_summary(
+        timing_record = _print_pipeline_timing_summary(
             mode_label=str(args.mode),
             n_samples=len(mzml_files),
             stage_seconds=stage_seconds,
@@ -1597,6 +1601,7 @@ def main_cli():
                     integration_method="snr",
                     do_integrate=True,
                     verbose=True,
+                    timing_record=timing_record,
                 )
                 print(f"[INFO] 推理报告已生成: {_rep['report_md']}")
             except Exception as _e:
@@ -1617,6 +1622,7 @@ def main_cli():
         groups = _group_labels_by_sample(labels)
         mzml_inputs = _collect_mzml_inputs(args.mzml, args.batch_dir)
         out_base = Path(args.output_dir) if args.output_dir else Path("../output/inference/xic_roi")
+        t_roi = time.perf_counter()
         for mzml_idx, (mzml_path, key) in enumerate(mzml_inputs):
             out_dir = out_base / key
             out_dir.mkdir(parents=True, exist_ok=True)
@@ -1625,6 +1631,18 @@ def main_cli():
             extract_xic_with_pyopenms(
                 str(mzml_path), str(out_dir), smooth_sigma=args.smooth_sigma,
                 exclude_native_ids=exclude_native_ids, labels=sample_labels)
+        total_sec = time.perf_counter() - t_roi
+        print("=" * 64)
+        print(f"[推理完成] {args.mode} | {len(mzml_inputs)} 个样本 | "
+              f"总耗时 {_format_elapsed(total_sec)} | 输出 {out_base}/")
+        print("=" * 64)
+        _print_pipeline_timing_summary(
+            mode_label=str(args.mode),
+            n_samples=len(mzml_inputs),
+            stage_seconds={"1_ROI生成(xic_extraction)": total_sec},
+            per_sample_seconds=[],
+            total_seconds=total_sec,
+        )
         return
 
     if args.mode == "roi2inference":
@@ -1649,7 +1667,21 @@ def main_cli():
             baseline_json=None,
             verbose=False,
         )
+        t_pred = time.perf_counter()
         newtest_main(a)
+        total_sec = time.perf_counter() - t_pred
+        n_samples = sum(1 for p in Path(args.batch_dir).iterdir() if p.is_dir())
+        print("=" * 64)
+        print(f"[推理完成] {args.mode} | {n_samples} 个样本 | "
+              f"总耗时 {_format_elapsed(total_sec)} | 输出 {a.batch_output}/")
+        print("=" * 64)
+        _print_pipeline_timing_summary(
+            mode_label=str(args.mode),
+            n_samples=n_samples,
+            stage_seconds={"1_模型预测(predictor)": total_sec},
+            per_sample_seconds=[],
+            total_seconds=total_sec,
+        )
         return
 
 

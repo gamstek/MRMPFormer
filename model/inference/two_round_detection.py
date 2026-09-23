@@ -308,6 +308,7 @@ def adjust_first_round_interval(
     boundary_peer_thr_scale: float = 2.0,
     boundary_peer_min_overlap_rt: float = 0.02,
     edge_noise_stop_mode: str = "roi_bottom_decile_mean",
+    edge_threshold_scale: float = 1.0,
     pred_width_anchor: Optional[Tuple[float, float]] = None,
     width_max_expand_vs_pred: float = 1.08,
     width_max_frac_of_roi: float = 0.45,
@@ -318,6 +319,7 @@ def adjust_first_round_interval(
     roi_bottom_decile_mean：全 ROI 强度最低约 10% 的点取均值作为双侧同一阈值；
     stable_tail_mean：外侧 RT 尾区低波动噪声均值。
     edge_noise_stop_mode=low_percentile 时使用原单侧低分位估计。
+    edge_threshold_scale：阈值整体缩放系数；<1 使阈值更低、外推更远（框更宽），1.0 为原行为。
 
     后验（默认开启）：在首次满足 y<=阈值 的截停候选处，再要求沿外推方向共 lookahead 个点的
     平均值不超过 threshold * mean_scale，以抑制单点下穿的过早停止；若与同伴预测区间重叠且
@@ -375,8 +377,13 @@ def adjust_first_round_interval(
             rt_roi, int_roi, peak_rt, False,
             max_span_min=edge_max_span_min,
         )
-    y_threshold_left = float(baseline_left)
-    y_threshold_right = float(baseline_right)
+    # edge_threshold_scale<1 下调截停阈值 → 需要外推更远才满足 y<=阈值 → 框更宽
+    # （massnova 整谱模式用；pipeline 链路保持 1.0，即阈值原值）
+    edge_scale = float(edge_threshold_scale)
+    if not np.isfinite(edge_scale) or edge_scale <= 0.0:
+        edge_scale = 1.0
+    y_threshold_left = float(baseline_left) * edge_scale
+    y_threshold_right = float(baseline_right) * edge_scale
 
     rt_min_adj, rt_max_adj = rt_min, rt_max
 

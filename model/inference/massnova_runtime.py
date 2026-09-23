@@ -24,6 +24,7 @@ DEFAULT_RUNTIME_CONFIG = {
     "batch_size": 128,
     "min_chrom_points": 10,
     "min_max_intensity": 1000.0,
+    "scan_model_boundary_baseline_ratio": 0.01,
 }
 
 _PHASE1_KEYS = (
