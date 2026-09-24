@@ -2,7 +2,6 @@
 *.jpeg
 *.png
 *.mzML
-*.pth
 __pycache__/
 .onnx_deps/
 .superpowers/

@@ -4,11 +4,11 @@
   "files": {
     "mrmpformerv2.pth": {
       "bytes": 367034458,
-      "sha256": "f73e530fd36c6342f3ef9f692359a254ee49f6e6ced4f89a14bc4890e3297e6d"
+      "sha256": "aa5944daec6d50428f758abc363d0901e339817fe181d0da2f4c16bc9cb3cd89"
     },
     "mrmpformerv2.onnx": {
       "bytes": 123230292,
-      "sha256": "c69afcca147ecbaefe7c3f8fe2d075225c008993606574505f68c465b4cbb9a5"
+      "sha256": "d0b612a786fc937ee44170a4e60e59a59d23fe7acdc2b85f5df302ae2dbee039"
     }
   }
 }
